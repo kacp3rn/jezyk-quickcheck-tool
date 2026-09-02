@@ -398,7 +398,7 @@ function Invoke-JezykSearch {
                 # mogl nie zdazyc sie na niej znalezc. Ta sama technika, co przy zanizonej
                 # dacie logowania - doklejamy zdanie do pola Status, a powod pod "!".
                 if ($lista.PrzerwanoNumer) {
-                    $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu przerwał limit czasu - lista może być niepełna.' -f
+                    $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
                                          $k.TxtStatus.Text).Trim()
                     Set-JezykInfo 'Status' ([string]$lista.Szczegoly)
                 }

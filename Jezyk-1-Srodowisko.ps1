@@ -252,20 +252,15 @@ $Script:Config = @{
     # dzialu i lista takich osob nie odpowiada na zadne pytanie - okno prosi wtedy o inna
     # wartosc, tak samo jak przy niepelnym nazwisku.
     #
-    # TA LICZBA IDZIE NA SizeLimit ZAPYTANIA, wiec PRZERYWA PRACE KONTROLERA, a nie tylko
-    # ucina wynik. To ona jest wlasciwa obrona przed zatrzymaniem okna: filtr numeru ma
-    # gwiazdke NA POCZATKU wartosci, wiec nie korzysta z indeksow i bez limitu kontroler
-    # przeglada wszystkie obiekty w domenie. Osobne od LimitWynikow, bo tamten dotyczy
-    # zapytan po nazwie, ktore indeksy wykorzystuja i moga oddac wiecej bez kosztu.
-    LimitNumeru   = 10
-
-    # TERMIN NA WYSZUKIWANIE PO NUMERZE TELEFONU, w milisekundach. Po dolozeniu LimitNumeru
-    # to juz nie jest glowna obrona przed lagiem, tylko ZABEZPIECZENIE NA NUMER, KTOREGO
-    # W DOMENIE NIE MA: SizeLimit przerywa skan dopiero, gdy uzbiera trafienia, a zeby
-    # stwierdzic, ze czegos nie ma, kontroler musi przejrzec wszystko.
+    # TA LICZBA IDZIE TEZ NA ROZMIAR STRONY (-ResultPageSize), i to ona konczy prace
+    # KONTROLERA, a nie tylko ucina odpowiedz. Filtr numeru ma gwiazdke NA POCZATKU wartosci,
+    # wiec nie korzysta z indeksow; przy domyslnej stronie 256 wierszy numer uzywany przez
+    # kilkadziesiat osob nigdy jej nie zapelnia i kontroler przegladal cala domene - stad
+    # zatrzymania okna. Przy stronie rownej limitowi konczy szukanie po jedenastym trafieniu.
     #
-    # Wyszukiwanie po nazwisku terminu nie potrzebuje - jego gwiazdka stoi na koncu.
-    LimitCzasuNumeruMs = 4000
+    # Osobne od LimitWynikow, bo tamten dotyczy zapytan po nazwie, ktore indeksy
+    # wykorzystuja i moga oddac wiecej bez tego kosztu.
+    LimitNumeru   = 10
 
     TrybNazwa     = 'dane AD użytkownika'
     TrybKomputer  = 'nazwę komputera'
