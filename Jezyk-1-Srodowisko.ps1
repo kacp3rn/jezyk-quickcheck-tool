@@ -247,12 +247,22 @@ $Script:Config = @{
     # o doprecyzowanie, zamiast po cichu uciac wynik.
     LimitWynikow  = 50
 
-    # TERMIN NA WYSZUKIWANIE PO NUMERZE TELEFONU, w milisekundach. Numer nie zaczyna sie
-    # od wpisanego tekstu, wiec jego filtry maja gwiazdke NA POCZATKU wartosci, a takie
-    # nie korzystaja z indeksow katalogu - kontroler przeglada wtedy wszystkie obiekty.
-    # Limit liczby wynikow tego NIE ogranicza: ucina zwrocone wiersze, nie prace skanowania,
-    # wiec przy malej liczbie trafien skan i tak przechodzi cala domene. Numer infolinii
-    # trafial dokladnie w ten przypadek i zatrzymywal okno na dlugie minuty.
+    # ILE TRAFIEN PO NUMERZE TELEFONU MA JESZCZE SENS. Numer nalezy niemal zawsze do jednej
+    # osoby; kilkadziesiat kont z tym samym numerem to numer infolinii albo wspolny numer
+    # dzialu i lista takich osob nie odpowiada na zadne pytanie - okno prosi wtedy o inna
+    # wartosc, tak samo jak przy niepelnym nazwisku.
+    #
+    # TA LICZBA IDZIE NA SizeLimit ZAPYTANIA, wiec PRZERYWA PRACE KONTROLERA, a nie tylko
+    # ucina wynik. To ona jest wlasciwa obrona przed zatrzymaniem okna: filtr numeru ma
+    # gwiazdke NA POCZATKU wartosci, wiec nie korzysta z indeksow i bez limitu kontroler
+    # przeglada wszystkie obiekty w domenie. Osobne od LimitWynikow, bo tamten dotyczy
+    # zapytan po nazwie, ktore indeksy wykorzystuja i moga oddac wiecej bez kosztu.
+    LimitNumeru   = 10
+
+    # TERMIN NA WYSZUKIWANIE PO NUMERZE TELEFONU, w milisekundach. Po dolozeniu LimitNumeru
+    # to juz nie jest glowna obrona przed lagiem, tylko ZABEZPIECZENIE NA NUMER, KTOREGO
+    # W DOMENIE NIE MA: SizeLimit przerywa skan dopiero, gdy uzbiera trafienia, a zeby
+    # stwierdzic, ze czegos nie ma, kontroler musi przejrzec wszystko.
     #
     # Wyszukiwanie po nazwisku terminu nie potrzebuje - jego gwiazdka stoi na koncu.
     LimitCzasuNumeruMs = 4000

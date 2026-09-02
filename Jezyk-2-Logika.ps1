@@ -1762,183 +1762,123 @@ function Get-JezykUserStatus {
 
 <#
 .SYNOPSIS
-    Kolejka ustawien przeszukania katalogu: najpierw wlasciwe, potem zapasowe.
+    Kontekst nazewniczy domeny, czyli miejsce, od ktorego wolno zaczac przeszukanie.
 
 .DESCRIPTION
-    ODPOWIEDNIK SccmProtokolZapasowy PO STRONIE KATALOGU. Tamten probuje tej samej rzeczy
-    druga droga, bo prawo wstepu bywa nadane tylko jednej z dwoch; tutaj chodzi o to samo,
-    tyle ze rozne bywa nie prawo, a uklad domeny.
+    BAZA WYSZUKIWANIA MUSI BYC KONTEKSTEM NAZEWNICZYM, A NIE GOLA NAZWA SERWERA.
+    "LDAP://serwer" bez nazwy wyrozniajacej wiaze sie z KORZENIEM SERWERA, ktory kontekstem
+    nazewniczym NIE JEST - przeszukanie Subtree od niego kontroler odrzuca NATYCHMIAST
+    bledem operacji. Wyglada to na awarie katalogu, a jest zapytaniem zadanym w zlym miejscu.
 
-    PROBA PIERWSZA - bez stronicowania, z SizeLimit i z ServerTimeLimit. PageSize = 0 jest
-    warunkiem dzialania terminu, nie oszczednoscia: przy wlaczonym stronicowaniu
-    ClientTimeout przestaje obowiazywac, bo kazda strona jest osobnym zapytaniem, a wtedy
-    caly ten zabieg traci sens. SizeLimit dziala natomiast tylko przy stronicowaniu
-    wylaczonym, wiec obie wartosci ida w parze.
+    PYTAMY KATALOG, NIE ZGADUJEMY. Wyprowadzanie "DC=jezyk,DC=pl" z nazwy domeny byloby
+    domyslem, ktory rozjezdza sie tam, gdzie nazwa DNS nie odpowiada nazwie wyrozniajacej.
+    RootDSE zna prawdziwa odpowiedz - i dokladnie to samo robi za nas modul AD przy -Server.
 
-    PROBA DRUGA - dopiero po niepowodzeniu pierwszej: stronicowanie wlaczone, odsylacze
-    WYLACZONE, bez SizeLimit i bez ServerTimeLimit. To standardowy uklad przeszukania calej
-    domeny, taki sam, jaki podstawial modul AD przed przepisaniem na surowy LDAP - czyli
-    wtedy, gdy wyszukiwanie po numerze dzialalo.
+    JEDNO Z DWOCH MIEJSC DOTYKAJACYCH System.DirectoryServices; drugie to
+    Invoke-JezykZapytanieLdap. Ta przestrzen nazw nie istnieje pod pwsh na macOS, wiec cala
+    reszta wyszukiwania po numerze stoi POZA tymi dwiema funkcjami - zestaw weryfikacyjny
+    podstawia je atrapami i wykonuje wszystko inne naprawde. Wczesniej atrapa zastepowala
+    cale wyszukiwanie i jego wnetrze nie wykonalo sie ani razu; usterka, ktora wywracala je
+    u operatora, przechodzila przez komplet sprawdzen na zielono.
 
-    DLACZEGO WLASNIE ODSYLACZE. Pytamy pod NAZWA DOMENY, nie pod nazwa kontrolera,
-    a przeszukanie poddrzewa od korzenia domeny trafia na odsylacze do innych naziemnych
-    kontekstow. Podazanie za nimi bywa niewykonalne i konczy sie bledem operacji - tym
-    samym, ktory widac w zgloszeniu. Druga proba sprawdza te hipoteze BEZ pytania kogokolwiek
-    o zgode, bo obie drogi to zwykly odczyt.
+    ZNANE ODSTEPSTWO: ten odczyt nie ma wlasnego terminu - DirectoryEntry nie ma
+    odpowiednika ClientTimeout. Wolamy go dopiero PO udanym Get-ADUser do tego samego
+    serwera, wiec kontroler jest w tym miejscu juz dowiedziony jako odpowiadajacy.
 
-    KSZTALT JEST OSOBNA FUNKCJA, A NIE PETLA W SRODKU. Zestaw weryfikacyjny podstawia atrape
-    za cale Invoke-JezykSzukanieLdap, wiec polityka prob zamknieta w jej wnetrzu bylaby
-    niesprawdzalna. Tak da sie ja zawolac wprost, bez dotykania katalogu.
+    UWAGA PRZY CZYTANIU LOGU: RootDSE jest czytelny ANONIMOWO. Jego udany odczyt NIE dowodzi,
+    ze polaczenie zostalo uwierzytelnione - dowodzi tylko, ze serwer odpowiada.
 #>
-function Get-JezykUstawieniaSzukaniaLdap {
-    param([int]$Limit = 50)
+function Get-JezykKontekstNazewniczy {
+    param([string]$Serwer)
 
-    @(
-        [pscustomobject]@{
-            Nazwa         = 'podstawowa'
-            Strona        = 0
-            LimitRozmiaru = $Limit
-            BezOdsylaczy  = $false
-            TerminSerwera = $true
-        }
-        [pscustomobject]@{
-            Nazwa         = 'zapasowa (stronicowana, bez odsyłaczy)'
-            Strona        = 256
-            LimitRozmiaru = 0
-            BezOdsylaczy  = $true
-            TerminSerwera = $false
-        }
-    )
+    # Sprawdzenie PRZED sklejeniem sciezki LDAP - nazwa idzie do niej wprost.
+    if (-not (Test-JezykNazwaHosta $Serwer)) {
+        throw ('Nazwa serwera "{0}" nie jest poprawną nazwą hosta.' -f $Serwer)
+    }
+
+    # Zadamy podpisania i zaszyfrowania kanalu - jak w Get-JezykLastLogonZKontrolera. Puste
+    # poswiadczenia znacza kontekst zalogowanego uzytkownika; wlasnych Jezyk nie podstawia.
+    $uwierzytelnienie = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
+                        [System.DirectoryServices.AuthenticationTypes]::Sealing -bor
+                        [System.DirectoryServices.AuthenticationTypes]::Signing
+
+    $korzen   = $null
+    $kontekst = ''
+    try {
+        $korzen   = New-Object System.DirectoryServices.DirectoryEntry(
+                        ('LDAP://{0}/RootDSE' -f $Serwer), $null, $null, $uwierzytelnienie)
+        $kontekst = [string]$korzen.Properties['defaultNamingContext'].Value
+    }
+    catch {
+        # SZCZEGOLY LECA W TRESCI WYJATKU, a nie zostaja tutaj. Wolajacy zloży z tego log
+        # i pole pod "!", ale opisze juz tylko to, co dostal - a rozszerzony blad z kontrolera
+        # ("000004DC: LdapErr: ...") jest widoczny WYLACZNIE na tym poziomie, bo tylko tu mamy
+        # w reku oryginalny wyjatek katalogu. Zgubiony tutaj nie odtworzy sie nigdzie dalej.
+        $opis = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $Serwer -Proba 'odczyt RootDSE (kontekst nazewniczy)'
+        $czemu = 'Nie udało się odczytać kontekstu nazewniczego domeny "{0}": {1}' -f $Serwer, $opis.Krotki
+        throw (@($czemu, '', $opis.Szczegoly) -join [Environment]::NewLine)
+    }
+    finally {
+        if ($korzen) { try { $korzen.Dispose() } catch { } }
+    }
+
+    if (-not $kontekst) {
+        throw ('Domena "{0}" nie podała swojego kontekstu nazewniczego (defaultNamingContext).' -f $Serwer)
+    }
+
+    # Zapora przed sklejeniem sciezki - ta sama, ktora chroni DN w Get-JezykLastLogonZKontrolera.
+    # Wartosc przychodzi z katalogu, ale do sciezki trafia jako tekst, wiec sprawdzenie stoi
+    # przy sklejeniu, a nie tam, gdzie wartosc powstala.
+    if (-not (Test-JezykDn $kontekst)) {
+        throw ('Kontekst nazewniczy "{0}" nie wygląda na poprawną nazwę wyróżniającą.' -f $kontekst)
+    }
+
+    return $kontekst
 }
 
 <#
 .SYNOPSIS
-    JEDNA proba przeszukania katalogu w zadanym ustawieniu. Rzuca, gdy sie nie uda.
+    JEDNO przeszukanie katalogu surowym LDAP-em: z terminem i z twardym limitem trafien.
 
 .DESCRIPTION
-    Wydzielona z Invoke-JezykSzukanieLdap, bo to samo wywolanie sluzy trzem rzeczom: probie
-    wlasciwej, probie zapasowej i sondzie kontrolnej. Przepisane trzy razy rozjechaloby sie
-    przy pierwszej zmianie ustawien.
+    Istnieje po to, zeby na przeszukanie dalo sie nalozyc DWA ograniczenia, ktorych modul AD
+    nie ma - i kazde z nich broni przed czym innym:
+
+    1. SizeLimit PRZERYWA PRACE KONTROLERA i to jest wlasciwa obrona przed numerem infolinii.
+       -ResultSetSize w Get-ADUser ucina zwrocone WIERSZE, a nie skanowanie: modul i tak
+       przeglada strone po stronie, wiec numer przypisany kilkudziesieciu osobom kosztowal
+       pelny skan domeny i zatrzymywal okno na dlugie chwile. SizeLimit na zapytaniu BEZ
+       STRONICOWANIA konczy przeszukanie, gdy tylko uzbiera sie tyle wierszy - i wlasnie
+       dlatego stronicowania tu nie ma. Przy stronicowaniu SizeLimit nie dziala.
+
+    2. ClientTimeout KONCZY CZEKANIE po naszej stronie. Numer, ktorego w domenie nie ma,
+       wymaga pelnego skanu mimo SizeLimit - nie da sie stwierdzic, ze czegos nie ma, nie
+       zajrzawszy wszedzie. Wtedy ratuje termin.
+
+    ServerTimeLimit USTAWIAMY DOPIERO OD PELNEJ SEKUNDY - serwer liczy go w sekundach
+    i zaokragla w dol, wiec ponizej tysiaca milisekund staje sie zerem, a zero znaczy
+    co innego niz "bardzo krotko".
+
+    ODSYLACZE WYLACZONE OD RAZU. Pytamy pod NAZWA DOMENY, nie pod nazwa kontrolera,
+    a przeszukanie poddrzewa od korzenia domeny trafia na odsylacze do innych kontekstow.
+    Podazanie za nimi bywa niewykonalne i konczy sie bledem operacji. Dotad sprawdzala to
+    dopiero druga, zapasowa proba - jedna droga zamiast dwoch jest krotsza, a wybierac i tak
+    nie bylo z czego.
 
     ODWZOROWANIE WYNIKU IDZIE TUTAJ, PRZED Dispose. SearchResultCollection trzyma uchwyty
     poza sterta .NET; oddanie surowych trafien na zewnatrz znaczyloby albo wyciek, albo
     prace na kolekcji juz zwolnionej.
 
-    LICZNIK WIERSZY PO NASZEJ STRONIE, bo przy wlaczonym stronicowaniu SizeLimit NIE DZIALA
-    - kontroler oddaje wszystko strona po stronie. Bez tego licznika proba zapasowa przy
-    szerokim filtrze sciagnelaby cala domene.
+    NIE ZAMIENIA PORAZKI NA PUSTY WYNIK - tak samo jak Invoke-JezykZapytanieWmi. Pusta lista
+    znaczy "nikogo takiego nie ma", a to zupelnie co innego niz "nie mialem gdzie zapytac".
 
-    ServerTimeLimit USTAWIAMY DOPIERO OD PELNEJ SEKUNDY - serwer liczy go w sekundach
-    i zaokragla w dol, wiec ponizej tysiaca milisekund staje sie zerem, a zero znaczy
-    co innego niz "bardzo krotko".
+    FILTR PRZYCHODZI GOTOWY. Funkcja go nie sklada i niczego w nim nie zmienia - o tresc dba
+    wolajacy, tam gdzie zna pochodzenie kazdego znaku.
 #>
-function Invoke-JezykProbaLdap {
-    param([string]$Sciezka, $Uwierzytelnienie, [string]$Filtr, $Mapa,
-          [int]$LimitWierszy = 50, [int]$LimitMs = 4000,
-          [int]$Strona = 0, [int]$LimitRozmiaru = 0,
-          [bool]$BezOdsylaczy = $false, [bool]$TerminSerwera = $false)
+function Invoke-JezykZapytanieLdap {
+    param([string]$Serwer, [string]$Kontekst, [string]$Filtr,
+          [int]$LimitWierszy = 11, [int]$LimitMs = 4000)
 
-    $wejscie   = $null
-    $szukacz   = $null
-    $trafienia = $null
-    try {
-        # Puste poswiadczenia = kontekst zalogowanego uzytkownika. Poswiadczenia z okna
-        # logowania nie trafiaja tu nigdy.
-        $wejscie = New-Object System.DirectoryServices.DirectoryEntry(
-                       $Sciezka, $null, $null, $Uwierzytelnienie)
-
-        $szukacz = New-Object System.DirectoryServices.DirectorySearcher($wejscie)
-        $szukacz.SearchScope = [System.DirectoryServices.SearchScope]::Subtree
-        $szukacz.Filter      = $Filtr
-        $szukacz.PageSize    = $Strona
-        $szukacz.SizeLimit   = $LimitRozmiaru
-
-        if ($BezOdsylaczy) {
-            $szukacz.ReferralChasing = [System.DirectoryServices.ReferralChasingOption]::None
-        }
-
-        # DWA TERMINY, bo dotycza czego innego: ServerTimeLimit prosi kontroler, zeby sam
-        # przerwal przeszukiwanie, ClientTimeout konczy CZEKANIE po naszej stronie. Bez
-        # tego drugiego milczacy kontroler trzymalby watek mimo pierwszego.
-        if ($TerminSerwera -and $LimitMs -ge 1000) {
-            $szukacz.ServerTimeLimit = [timespan]::FromMilliseconds($LimitMs)
-        }
-        $szukacz.ClientTimeout = [timespan]::FromMilliseconds($LimitMs)
-
-        foreach ($pole in @($Mapa.Values)) { [void]$szukacz.PropertiesToLoad.Add($pole) }
-
-        $trafienia = $szukacz.FindAll()
-
-        $wynik = @()
-        foreach ($t in $trafienia) {
-            if ($wynik.Count -ge $LimitWierszy) { break }
-            $obiekt = [ordered]@{}
-            foreach ($klucz in $Mapa.Keys) {
-                $wartosci = $t.Properties[$Mapa[$klucz]]
-                $obiekt[$klucz] = if ($wartosci -and $wartosci.Count) { [string]$wartosci[0] } else { '' }
-            }
-            $wynik += [pscustomobject]$obiekt
-        }
-        return ,$wynik
-    }
-    finally {
-        # SearchResultCollection TRZYMA UCHWYTY POZA STERTA .NET i zwalnia je dopiero na
-        # Dispose - pominiete zostawialoby je do konca zycia procesu.
-        if ($trafienia) { try { $trafienia.Dispose() } catch { } }
-        if ($szukacz)   { try { $szukacz.Dispose() }   catch { } }
-        if ($wejscie)   { try { $wejscie.Dispose() }   catch { } }
-    }
-}
-
-<#
-.SYNOPSIS
-    Jedno zapytanie do katalogu SUROWYM LDAP-em, z TERMINEM na odpowiedz.
-
-.DESCRIPTION
-    Istnieje po to, zeby na wyszukiwanie dalo sie nalozyc zegar. Modul AD nie ma
-    odpowiednika ClientTimeout - Get-ADUser czeka tyle, ile zechce kontroler, a przy
-    filtrze bez indeksu to sa minuty. DirectorySearcher termin ma, wiec zapytania, ktore
-    moga trwac dowolnie dlugo, ida tedy. Ta sama droga i to samo zadanie podpisanego
-    i zaszyfrowanego kanalu co w Get-JezykLastLogonZKontrolera.
-
-    BAZA WYSZUKIWANIA POCHODZI Z RootDSE, a nie z samej nazwy serwera. "LDAP://serwer"
-    wiaze sie z korzeniem serwera, ktory NIE JEST kontekstem nazewniczym - przeszukanie
-    Subtree od niego serwer odrzuca natychmiast bledem operacji. Kontekst czytamy
-    z defaultNamingContext, czyli pytamy katalog zamiast wyprowadzac "DC=..." z nazwy
-    domeny. To odpowiednik tego, co modul AD robi sam przy -Server.
-
-    DWIE PROBY, NIE JEDNA - opis w Get-JezykUstawieniaSzukaniaLdap. Zegar jest WSPOLNY dla
-    obu: kazda dostaje czas pozostaly, wiec calosc nadal miesci sie w budzecie, dla ktorego
-    ta funkcja powstala. Druga proba nie rusza ponizej sekundy - tego samego progu, co etapy
-    wyszukiwania po numerze.
-
-    FILTR PRZYCHODZI GOTOWY. Funkcja go nie sklada i niczego w nim nie zmienia -
-    o bezpieczenstwo tresci dba wolajacy, tam gdzie zna pochodzenie kazdego znaku.
-    Doklada wylacznie klase obiektu, zeby zadne zapytanie nie zesliznelo sie na grupy
-    ani komputery.
-
-    NIE ZAMIENIA PORAZKI NA PUSTY WYNIK - tak samo jak Invoke-JezykZapytanieWmi. Wyjatek
-    z ostatniej proby idzie do wolajacego nietkniety; rozstrzygniecie, czy to blad do
-    pokazania, nalezy do niego. Przykrycie go pusta lista bylo by cisza nie do odroznienia
-    od "nikogo takiego nie ma".
-
-    CALY PRZEBIEG TRAFIA DO %TEMP%\Jezyk-ldap.txt, ale WYLACZNIE przy niepowodzeniu -
-    patrz Write-JezykLogLdap. Pole pod "!" miesci nazwe przyczyny, nie caly slad, a bez
-    sladu kazda kolejna poprawka jest zgadywaniem. Po udanym przeszukaniu plik jest
-    kasowany, wiec jego obecnosc zawsze opisuje stan biezacy.
-#>
-function Invoke-JezykSzukanieLdap {
-    param([string]$Serwer, [string]$Filtr, [int]$Limit = 50, [int]$LimitMs = 4000)
-
-    # Sprawdzenie PRZED sklejeniem sciezki LDAP - nazwa idzie do niej wprost.
-    #
-    # RZUCAMY, A NIE ODDAJEMY PUSTEJ LISTY. Pusta lista znaczy "nikogo takiego nie ma",
-    # a to zupelnie co innego niz "nie mialem gdzie zapytac" - i dokladnie ta zamiana
-    # ciszy na fakt jest najdrozszym bledem w historii tego narzedzia. Wolajacy ma try
-    # wokol wywolania i zamienia wyjatek na opisane przerwanie.
-    if (-not (Test-JezykNazwaHosta $Serwer)) {
-        throw ('Nazwa serwera "{0}" nie jest poprawną nazwą hosta.' -f $Serwer)
-    }
     if (-not $Filtr) { throw 'Puste zapytanie - nie ma o co pytać katalogu.' }
 
     # Nazwa atrybutu LDAP -> nazwa, pod ktora znaja go wolajacy. Mapa jest jedna i sluzy
@@ -1954,157 +1894,60 @@ function Invoke-JezykSzukanieLdap {
         MobilePhone       = 'mobile'
     }
 
-    $zegar = [System.Diagnostics.Stopwatch]::StartNew()
-    $slad  = New-Object System.Collections.ArrayList
+    # Ukosnik w nazwie wyrozniajacej rozdzielilby ADsPath w zlym miejscu - stad odwrotny.
+    $sciezka = 'LDAP://{0}/{1}' -f $Serwer, ($Kontekst -replace '/', '\/')
 
     $uwierzytelnienie = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
                         [System.DirectoryServices.AuthenticationTypes]::Sealing -bor
                         [System.DirectoryServices.AuthenticationTypes]::Signing
 
-    # BAZA WYSZUKIWANIA MUSI BYC KONTEKSTEM NAZEWNICZYM, A NIE GOLA NAZWA SERWERA.
-    # "LDAP://serwer" bez nazwy wyrozniajacej wiaze sie z KORZENIEM SERWERA, ktory
-    # kontekstem nazewniczym nie jest - przeszukanie Subtree od niego serwer odrzuca
-    # NATYCHMIAST bledem operacji (LDAP_OPERATIONS_ERROR, "Wystapil blad operacji").
-    # Wyglada to jak awaria katalogu, a jest zapytaniem zadanym w zlym miejscu.
-    #
-    # Poprzednia droga przez Get-ADUser -Server dzialala wlasnie dlatego, ze modul AD
-    # podstawial kontekst sam; przy przepisaniu na surowy LDAP ten krok wypadl.
-    #
-    # PYTAMY KATALOG, NIE ZGADUJEMY. Wyprowadzanie "DC=jezyk,DC=pl" z nazwy domeny
-    # bylo by domyslem, ktory rozjezdza sie tam, gdzie nazwa DNS nie odpowiada nazwie
-    # wyrozniajacej. RootDSE zna prawdziwa odpowiedz.
-    #
-    # ZNANE ODSTEPSTWO: ten jeden odczyt nie ma wlasnego terminu - DirectoryEntry nie
-    # ma odpowiednika ClientTimeout. To pojedynczy bind do serwera, ktory za chwile
-    # i tak przeszukujemy, ale odstepstwo od zasady "kazde wywolanie sieciowe dostaje
-    # termin" ma byc nazwane, a nie przemilczane.
-    #
-    # UWAGA PRZY CZYTANIU LOGU: RootDSE jest czytelny ANONIMOWO. Jego udany odczyt NIE
-    # dowodzi, ze polaczenie zostalo uwierzytelnione - dowodzi tylko, ze serwer odpowiada.
-    $korzen = $null
+    $wejscie   = $null
+    $szukacz   = $null
+    $trafienia = $null
     try {
-        $korzen = New-Object System.DirectoryServices.DirectoryEntry(
-                      ('LDAP://{0}/RootDSE' -f $Serwer), $null, $null, $uwierzytelnienie)
-        $kontekst = [string]$korzen.Properties['defaultNamingContext'].Value
-    }
-    catch {
-        $opis = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $Serwer -Proba 'odczyt RootDSE'
-        Write-JezykLogLdap -Wiersze @(('Serwer: {0}' -f $Serwer),
-                                      'Etap  : odczyt kontekstu nazewniczego (RootDSE)',
-                                      '', $opis.Szczegoly)
-        throw ('Nie udało się odczytać kontekstu nazewniczego domeny "{0}": {1}' -f $Serwer, $opis.Krotki)
+        $wejscie = New-Object System.DirectoryServices.DirectoryEntry(
+                       $sciezka, $null, $null, $uwierzytelnienie)
+
+        $szukacz = New-Object System.DirectoryServices.DirectorySearcher($wejscie)
+        $szukacz.SearchScope     = [System.DirectoryServices.SearchScope]::Subtree
+        $szukacz.Filter          = $Filtr
+        $szukacz.PageSize        = 0
+        $szukacz.SizeLimit       = $LimitWierszy
+        $szukacz.ReferralChasing = [System.DirectoryServices.ReferralChasingOption]::None
+        $szukacz.ClientTimeout   = [timespan]::FromMilliseconds($LimitMs)
+        if ($LimitMs -ge 1000) {
+            $szukacz.ServerTimeLimit = [timespan]::FromMilliseconds($LimitMs)
+        }
+
+        foreach ($pole in @($mapa.Values)) { [void]$szukacz.PropertiesToLoad.Add($pole) }
+
+        $trafienia = $szukacz.FindAll()
+
+        $wynik = @()
+        foreach ($t in $trafienia) {
+            $obiekt = [ordered]@{}
+            foreach ($klucz in $mapa.Keys) {
+                $wartosci = $t.Properties[$mapa[$klucz]]
+                $obiekt[$klucz] = if ($wartosci -and $wartosci.Count) { [string]$wartosci[0] } else { '' }
+            }
+            $wynik += [pscustomobject]$obiekt
+        }
+
+        # BEZ PRZECINKA PRZED $wynik. Przecinek opakowuje tablice w druga tablice, zeby
+        # PowerShell nie rozwinal jej po drodze - ale wolajacy i tak bierze wynik w @(),
+        # wiec dostawalby JEDNA pozycje, ktora sama jest lista. Liczba trafien wychodzila
+        # wtedy zawsze jako 1: limit nigdy by nie zadzialal, a odsiew po cyfrach czytalby
+        # OfficePhone calej listy naraz. @() u wolajacego zalatwia to, przed czym mial
+        # chronic przecinek - i robi to bez tego skutku ubocznego.
+        return $wynik
     }
     finally {
-        if ($korzen) { try { $korzen.Dispose() } catch { } }
+        # SearchResultCollection TRZYMA UCHWYTY POZA STERTA .NET i zwalnia je dopiero na
+        # Dispose - pominiete zostawialoby je do konca zycia procesu.
+        if ($trafienia) { try { $trafienia.Dispose() } catch { } }
+        if ($szukacz)   { try { $szukacz.Dispose() }   catch { } }
+        if ($wejscie)   { try { $wejscie.Dispose() }   catch { } }
     }
-
-    if (-not $kontekst) {
-        throw ('Domena "{0}" nie podała swojego kontekstu nazewniczego (defaultNamingContext).' -f $Serwer)
-    }
-
-    # Druga zapora przed sklejeniem sciezki - ta sama, ktora chroni DN
-    # w Get-JezykLastLogonZKontrolera. Wartosc przychodzi z katalogu, ale do sciezki
-    # trafia jako tekst, wiec sprawdzenie stoi przy sklejeniu.
-    if (-not (Test-JezykDn $kontekst)) {
-        throw ('Kontekst nazewniczy "{0}" nie wygląda na poprawną nazwę wyróżniającą.' -f $kontekst)
-    }
-
-    # Ukosnik w nazwie wyrozniajacej rozdzielilby ADsPath w zlym miejscu - jak wyzej.
-    $sciezka = 'LDAP://{0}/{1}' -f $Serwer, ($kontekst -replace '/', '\/')
-
-    # objectCategory=person razem z objectClass=user to standardowa para na konta:
-    # sama klasa user obejmuje takze konta komputerow.
-    $pelnyFiltr = '(&(objectCategory=person)(objectClass=user){0})' -f $Filtr
-
-    [void]$slad.Add('Serwer      : {0}' -f $Serwer)
-    [void]$slad.Add('Kontekst    : {0}' -f $kontekst)
-    [void]$slad.Add('Zakres      : Subtree')
-    [void]$slad.Add('Budżet      : {0} ms' -f $LimitMs)
-    # CYFRY ZAMASKOWANE - do logu idzie ksztalt zapytania, nie szukany numer.
-    [void]$slad.Add('Filtr       : {0}' -f ($pelnyFiltr -replace '[0-9]', '#'))
-    [void]$slad.Add('')
-
-    $ostatniBlad = $null
-    $ustawienia  = @(Get-JezykUstawieniaSzukaniaLdap -Limit $Limit)
-
-    for ($i = 0; $i -lt $ustawienia.Count; $i++) {
-        $u = $ustawienia[$i]
-
-        # ZEGAR JEST WSPOLNY DLA WSZYSTKICH PROB. Gdyby kazda dostawala pelny budzet, dwie
-        # proby zajelyby 2 x LimitMs i wywrocilyby termin, dla ktorego cala ta funkcja
-        # powstala - a okno stoi przez ten czas, bo wyszukiwanie jest synchroniczne.
-        $pozostalo = $LimitMs - $zegar.ElapsedMilliseconds
-
-        # Prog jak przy etapach numeru: ponizej sekundy ServerTimeLimit zaokragla sie do
-        # zera, a ClientTimeout konczy sie, zanim kontroler zdazy odpowiedziec. Pierwsza
-        # proba idzie zawsze - to ona jest wlasciwym zapytaniem, a nie ratunkiem.
-        if ($i -gt 0 -and $pozostalo -lt 1000) {
-            [void]$slad.Add('Próba "{0}": NIE ROZPOCZĘTA - zostało {1} ms z {2} ms.' -f
-                            $u.Nazwa, [math]::Max(0, $pozostalo), $LimitMs)
-            break
-        }
-        if ($pozostalo -lt 1) { $pozostalo = 1 }
-
-        try {
-            $wynik = Invoke-JezykProbaLdap -Sciezka $sciezka -Uwierzytelnienie $uwierzytelnienie `
-                                           -Filtr $pelnyFiltr -Mapa $mapa -LimitWierszy $Limit `
-                                           -LimitMs ([int]$pozostalo) -Strona $u.Strona `
-                                           -LimitRozmiaru $u.LimitRozmiaru `
-                                           -BezOdsylaczy $u.BezOdsylaczy -TerminSerwera $u.TerminSerwera
-
-            # BRAK PLIKU JEST INFORMACJA. Po udanym przeszukaniu kasujemy stary log, zeby
-            # opis naprawionej juz awarii nie udawal biezacej.
-            Write-JezykLogLdap -Skasuj
-            return $wynik
-        }
-        catch {
-            $ostatniBlad = $_
-            $opis = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $Serwer -Baza $kontekst -Proba $u.Nazwa
-            [void]$slad.Add('Próba "{0}" (strona {1}, limit rozmiaru {2}, odsyłacze {3}, termin serwera {4}, budżet {5} ms) PADŁA po {6} ms:' -f
-                            $u.Nazwa, $u.Strona, $u.LimitRozmiaru,
-                            $(if ($u.BezOdsylaczy) { 'wyłączone' } else { 'domyślne' }),
-                            $(if ($u.TerminSerwera) { 'tak' } else { 'nie' }),
-                            [int]$pozostalo, $zegar.ElapsedMilliseconds)
-            [void]$slad.Add($opis.Szczegoly)
-            [void]$slad.Add('')
-        }
-    }
-
-    # SONDA KONTROLNA - najtansze mozliwe przeszukanie poddrzewa. Rozstrzyga JEDNO pytanie,
-    # ktorego z samego bledu nie da sie odczytac: czy w tej domenie dziala przeszukanie
-    # poddrzewa w ogole, czy zawodzi tylko filtr po numerze. Bez tej odpowiedzi kazda
-    # nastepna poprawka jest zgadywaniem.
-    #
-    # RUSZA WYLACZNIE PRZY SZYBKIEJ PORAZCE. Gdy budzet zostal zjedzony, sonda tylko
-    # wydluzylaby czekanie, a i tak nie mialaby czasu sie udac.
-    $uplynelo = $zegar.ElapsedMilliseconds
-    if ($uplynelo -lt [int]($LimitMs / 2)) {
-        $czasSondy = [math]::Min(1000, [math]::Max(1, $LimitMs - $uplynelo))
-        try {
-            $ile = @(Invoke-JezykProbaLdap -Sciezka $sciezka -Uwierzytelnienie $uwierzytelnienie `
-                                           -Filtr '(objectClass=user)' -Mapa $mapa -LimitWierszy 1 `
-                                           -LimitMs ([int]$czasSondy) -Strona 0 -LimitRozmiaru 1 `
-                                           -BezOdsylaczy $true -TerminSerwera $false).Count
-            [void]$slad.Add('Sonda kontrolna (objectClass=user, 1 wiersz, {0} ms): UDAŁA SIĘ, wierszy: {1}. Przeszukanie poddrzewa w tej domenie DZIAŁA - zawodzi samo zapytanie o numer.' -f
-                            [int]$czasSondy, $ile)
-        }
-        catch {
-            $opisSondy = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $Serwer -Baza $kontekst -Proba 'sonda kontrolna'
-            [void]$slad.Add('Sonda kontrolna (objectClass=user, 1 wiersz, {0} ms): TAKŻE PADŁA - {1}. Zawodzi CAŁE przeszukanie poddrzewa, nie filtr po numerze.' -f
-                            [int]$czasSondy, $opisSondy.Krotki)
-            [void]$slad.Add($opisSondy.Szczegoly)
-        }
-    }
-    else {
-        [void]$slad.Add('Sonda kontrolna POMINIĘTA: z budżetu {0} ms zużyto {1} ms, na tanie sprawdzenie nie ma już czasu.' -f
-                        $LimitMs, $uplynelo)
-    }
-
-    Write-JezykLogLdap -Wiersze @($slad.ToArray())
-
-    # RZUCAMY DALEJ, A NIE ODDAJEMY PUSTEJ LISTY - powod jak przy sprawdzeniach na wejsciu.
-    # Wolajacy zamienia wyjatek na opisane przerwanie i dokleja sciezke logu.
-    throw $ostatniBlad
 }
 
 <#
@@ -2112,144 +1955,156 @@ function Invoke-JezykSzukanieLdap {
     Szuka kont po NUMERZE TELEFONU, niezaleznie od tego, jak zapisano go w AD.
 
 .DESCRIPTION
-    UKLAD DWUETAPOWY: szeroko w LDAP, dokladnie w PowerShellu. Katalog nie umie porownac
-    numerow po odrzuceniu separatorow, wiec z LDAP sciagamy KANDYDATOW, a rozstrzygamy
-    juz u siebie - tam, gdzie da sie znormalizowac obie strony.
+    JEDEN FILTR, Z GWIAZDKA MIEDZY KAZDA CYFRA. Ten sam numer bywa w katalogu zapisany na
+    kilka sposobow - "+48123456789", "123 456 789", "123456789", "+48 123456789" - a wzorzec
+    "*1*2*3*..." obejmuje je wszystkie naraz, bo separatory wpadaja w gwiazdki. Obejmuje tez
+    zapis dokladny, wiec osobny "szybki" etap na formy bez separatorow niczego nie dokladal:
+    telephoneNumber domyslnie NIE JEST w AD indeksowany, wiec obie formy to i tak pelny skan,
+    a numer zapisany z separatorami placil za ten skan DWA RAZY.
 
-    RDZEN to ostatnie dziewiec cyfr wpisanej wartosci: tyle ma numer abonencki w Polsce,
-    a to, co przed nim, jest kodem kraju. Szukamy po rdzeniu, a nie po calosci, zeby
-    wyszukiwanie dzialalo w OBIE strony - takze wtedy, gdy operator wpisuje numer z kodem,
-    a w AD zapisano go bez.
+    GWIAZDKI WPUSZCZAJA TRAFIENIA PRZYPADKOWE, wiec kazdy numer porownujemy jeszcze raz po
+    samych cyfrach - patrz Test-JezykNumerPasuje.
 
-    ETAP PIERWSZY - formy bez separatorow (dokladna i z dowolnym przedrostkiem). Tanie
-    i zwykle wystarcza, bo tak numery sa wpisane najczesciej.
+    LICZBA TRAFIEN JEST TWARDO OGRANICZONA I TO ONA CHRONI OKNO. Numer infolinii siedzi w AD
+    przy kilkudziesieciu osobach; zanim limit istnial, kontroler przegladal cala domene
+    i okno stalo. Limit idzie na SizeLimit zapytania, wiec kontroler PRZERYWA prace, gdy
+    tylko go osiagnie. Termin jest juz tylko zabezpieczeniem dla numeru, ktorego w domenie
+    nie ma - tam skan konczy sie dopiero po przejrzeniu wszystkiego.
 
-    ETAP DRUGI, dopiero gdy pierwszy nic nie zwrocil - wzorzec z gwiazdka MIEDZY KAZDA
-    CYFRA ("*1*2*3*..."). Dopasowuje numer niezaleznie od spacji, myslnikow i nawiasow,
-    bo separatory wpadaja w gwiazdki. Bez niego przepada najczestszy zapis w AD,
-    "+48 123 456 789" - spacje siedza w srodku rdzenia i etap pierwszy sie o nie rozbija.
+    PRZEKROCZONY LIMIT ODDAJEMY JAKO ZaDuzo, A NIE JAKO UCIETY WYNIK. Kontroler przerwal
+    prace, wiec lista jest niepelna, a niepelna lista pokazana jako calosc klamie. Dziesiec
+    przypadkowych osob z numerem infolinii i tak nie odpowiada na zadne pytanie.
 
-    ETAP TRZECI, juz w PowerShellu: wzorzec z gwiazdkami wpuszcza trafienia przypadkowe
-    (te same cyfry w tej kolejnosci, ale poprzetykane innymi). Kazdy zwrocony numer
-    porownujemy wiec jeszcze raz, po cyfrach - patrz Test-JezykNumerPasuje.
-
-    TERMIN NA CALOSC, I TO ON JEST TU NAJWAZNIEJSZY. Numer nie zaczyna sie od wpisanego
-    tekstu, wiec KAZDY z tych filtrow ma gwiazdke na poczatku wartosci, a taki filtr nie
-    korzysta z indeksow - kontroler przeglada wszystkie obiekty w domenie. Limit liczby
-    wynikow tego NIE ogranicza: ucina zwrocone wiersze, nie prace skanowania. Numer
-    infolinii trafial w najgorszy mozliwy uklad - nie pasowal dokladnie do niczyjego
-    telephoneNumber, wiec etap pierwszy konczyl sie zerem PO pelnym skanie i odpalal
-    drugi, ktory skanowal jeszcze raz. Wyszukiwanie jest synchroniczne, wiec okno stalo
-    przez caly ten czas.
-    Zegar jest LACZNY dla obu etapow: wolajacego obchodzi calkowity czas, a nie to, ktory
-    z nich go zjadl. Etap drugi w ogole nie rusza, gdy budzet sie skonczyl.
-
-    PRZERWANIE NIE MOZE UDAWAC PUSTEGO WYNIKU - stad ksztalt zwracany, a nie sama tablica.
-    "Nikogo nie znaleziono" i "nie zdazylem sprawdzic" prowadza do zupelnie innych krokow,
-    a mylenie ciszy z faktem jest najdrozszym bledem w historii tego narzedzia.
-
-    BEZPIECZENSTWO: wzorzec powstaje WYLACZNIE z cyfr i gwiazdek. Wejscie przechodzi przez
-    Get-JezykCyfry, a tuz przed sklejeniem filtra stoi jeszcze jawne sprawdzenie na same
-    cyfry - dwie niezalezne zapory zamiast jednej, tak samo jak przy zapytaniach do SCCM.
+    NUMER SKRACAMY DO DZIEWIECIU OSTATNICH CYFR, zeby "+48 123 456 789" i "123456789" byly
+    tym samym numerem. Wpisane cyfry NIE TRAFIAJA DO LOGU - patrz Write-JezykLogLdap.
 #>
 function Find-JezykUsersPoNumerze {
-    param([string]$Cyfry, [int]$Limit = 50, [string]$Serwer = '', [int]$LimitMs = 4000)
+    param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '', [int]$LimitMs = 4000)
 
-    $wynik = [pscustomobject]@{ Trafienia = @(); Przerwane = $false; Powod = '' }
+    $wynik = [pscustomobject]@{ Trafienia = @(); ZaDuzo = $false; Przerwane = $false; Powod = '' }
 
     # Druga zapora mimo sprawdzenia u wolajacego: do wzorca maja trafic same cyfry ZAWSZE,
-    # a nie tylko wtedy, gdy wyglada to na potrzebne. Gorna granica jak w E.164 -
-    # dluzszy ciag numerem juz nie jest.
+    # a nie tylko wtedy, gdy wyglada to na potrzebne. Gorna granica jak w E.164 - dluzszy
+    # ciag numerem juz nie jest.
     $Cyfry = Get-JezykCyfry $Cyfry
     if ($Cyfry.Length -lt 6 -or $Cyfry.Length -gt 15) { return $wynik }
 
     $adres = if ($Serwer) { $Serwer } else { $Script:Config.Domena }
-
     $rdzen = if ($Cyfry.Length -gt 9) { $Cyfry.Substring($Cyfry.Length - 9) } else { $Cyfry }
 
-    # Zapora druga, tuz przed sklejeniem filtra. Get-JezykCyfry juz to gwarantuje, ale
-    # filtr LDAP sklejamy TU Z TEKSTU, wiec sprawdzenie ma stac przy sklejeniu, a nie
-    # dwadziescia wierszy wyzej, gdzie latwo je przeoczyc przy nastepnej zmianie.
-    if ($Cyfry -notmatch '^[0-9]+$' -or $rdzen -notmatch '^[0-9]+$') { return $wynik }
+    # Zapora trzecia, tuz przed sklejeniem filtra. Get-JezykCyfry juz to gwarantuje, ale filtr
+    # LDAP sklejamy TU Z TEKSTU, wiec sprawdzenie ma stac przy sklejeniu, a nie dwadziescia
+    # wierszy wyzej, gdzie latwo je przeoczyc przy nastepnej zmianie.
+    if ($rdzen -notmatch '^[0-9]+$') { return $wynik }
 
-    # NAJKROTSZY BUDZET, PRZY KTORYM ETAP MA SENS. Ponizej sekundy zapytanie do katalogu
-    # jest skazane na porazke: ServerTimeLimit liczy sie w sekundach i zaokragla w dol do
-    # zera, a ClientTimeout rzedu kilkudziesieciu milisekund konczy sie, zanim kontroler
-    # zdazy odpowiedziec. Taka porazka wygladalaby jak awaria katalogu, a bylaby wylacznie
-    # skutkiem wyslania zapytania, na ktore i tak nie ma juz czasu.
-    $najkrotszyEtapMs = 1000
+    # PONIZEJ SEKUNDY ZAPYTANIE JEST SKAZANE NA PORAZKE: ServerTimeLimit liczy sie
+    # w sekundach i zaokragla w dol do zera, a ClientTimeout rzedu kilkudziesieciu
+    # milisekund konczy sie, zanim kontroler zdazy odpowiedziec. Taka porazka wygladalaby
+    # jak awaria katalogu, a bylaby wylacznie skutkiem wyslania zapytania bez szans.
+    if ($LimitMs -lt 1000) {
+        $wynik.Przerwane = $true
+        $wynik.Powod     = 'Na przeszukanie numerów zostało {0} ms - za mało, żeby zapytanie miało szansę się udać, więc nie zostało wysłane.' -f [math]::Max(0, $LimitMs)
+        return $wynik
+    }
 
-    # Sam warunek numeru; klase obiektu doklada Invoke-JezykSzukanieLdap.
-    $etapy = @(
-        # ETAP 1 - formy bez separatorow, dokladna i z przedrostkiem, dla calosci i rdzenia.
-        '(|(telephoneNumber={0})(mobile={0})(telephoneNumber=*{0})(mobile=*{0})(telephoneNumber={1})(mobile={1})(telephoneNumber=*{1})(mobile=*{1}))' -f $Cyfry, $rdzen
+    $wzorzec = '*' + (($rdzen.ToCharArray()) -join '*') + '*'
 
-        # ETAP 2 - gwiazdka miedzy kazda cyfra; separatory wpadaja w gwiazdki.
-        ('(|(telephoneNumber=*{0}*)(mobile=*{0}*))' -f (($rdzen.ToCharArray()) -join '*'))
-    )
+    # objectCategory=person razem z objectClass=user to standardowa para na konta: sama klasa
+    # user obejmuje takze konta komputerow.
+    $filtr = '(&(objectCategory=person)(objectClass=user)(|(telephoneNumber={0})(mobile={0})))' -f $wzorzec
 
     $zegar     = [System.Diagnostics.Stopwatch]::StartNew()
     $trafienia = @()
+    try {
+        $kontekst = Get-JezykKontekstNazewniczy -Serwer $adres
 
-    for ($etap = 0; $etap -lt $etapy.Count; $etap++) {
+        # O JEDEN WIERSZ WIECEJ, NIZ POKAZUJEMY - dzieki temu wiadomo, czy trafien bylo
+        # WIECEJ niz limit, zamiast po cichu uciac liste. Ta sama sztuczka co przy
+        # wyszukiwaniu po nazwie.
+        $trafienia = @(Invoke-JezykZapytanieLdap -Serwer $adres -Kontekst $kontekst -Filtr $filtr `
+                                                 -LimitWierszy ($Limit + 1) -LimitMs $LimitMs)
 
-        # Etap drugi rusza WYLACZNIE wtedy, gdy pierwszy nic nie znalazl - jest drozszy.
-        if ($etap -gt 0 -and $trafienia.Count -gt 0) { break }
+        # BRAK PLIKU JEST INFORMACJA. Po udanym przeszukaniu kasujemy stary log, zeby opis
+        # dawno naprawionej awarii nie wygladal jak opis biezacej.
+        [void](Write-JezykLogLdap -Skasuj)
+    }
+    catch {
+        # WYCZERPANY TERMIN TO NIE JEST JEDYNY POWOD, DLA KTOREGO TO MOZE PASC - a przez
+        # dlugi czas kazdy inny dostawal etykiete "katalog nie odpowiedzial w N ms". Bledna
+        # sciezka wyszukiwania konczyla sie NATYCHMIAST bledem operacji, a komunikat i tak
+        # mowil o czterech sekundach czekania: usterka udawala zupelnie inna usterke.
+        #
+        # Rozstrzyga ZMIERZONY CZAS, ktory i tak mamy pod reka. Termin wyczerpuje sie dopiero
+        # pod koniec budzetu; porazka po ulamku tego czasu terminem nie jest.
+        $uplynelo = $zegar.ElapsedMilliseconds
+        $wynik.Przerwane = $true
 
-        $pozostalo = $LimitMs - $zegar.ElapsedMilliseconds
-        if ($pozostalo -lt $najkrotszyEtapMs) {
-            # Numer etapu, a nie slowo "drugi": przy dolozeniu trzeciego komunikat ma dalej
-            # mowic prawde, bez czekania, az ktos zauwazy, ze przestal.
-            $wynik.Przerwane = $true
-            # NUMER ETAPU, A NIE JEGO OPIS. Dopoki prog dotyczyl wylacznie etapu drugiego,
-            # dalo sie go opisac slowami ("wzorzec z gwiazdkami") - teraz zaporze podlega
-            # takze pierwszy, wiec opis jednego z nich klamalby przy drugim.
-            $wynik.Powod     = 'Budżet {0} ms wyczerpał się przed etapem {1} z {2} - zostało {3} ms, za mało, żeby ten etap miał szansę się udać, więc nie został rozpoczęty.' -f
-                               $LimitMs, ($etap + 1), $etapy.Count, [math]::Max(0, $pozostalo)
-            break
+        # SUROWA TRESC WYJATKU NIE WYSTARCZA - "Wystapil blad operacji" nie mowi nic i kosztowalo
+        # to juz kilka tur szukania nie tam, gdzie trzeba. Przyczyne nazywa Get-JezykOpisBleduLdap:
+        # po kodzie bledu i po rozszerzonym komunikacie z kontrolera.
+        $opis = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $adres -Proba 'przeszukanie po numerze'
+
+        # PRZEKROCZONY LIMIT ROZMIARU TO NIE JEST AWARIA, TYLKO ODPOWIEDZ. O SizeLimit
+        # poprosilismy sami i dokladnie po to, zeby kontroler przerwal skan przy numerze
+        # infolinii. Czesc dostawcow oddaje wtedy wiersze po cichu, a czesc konczy zapytanie
+        # bledem LDAP_SIZELIMIT_EXCEEDED - w obu przypadkach znaczy to jedno i to samo:
+        # trafien bylo wiecej, niz chcielismy zobaczyc. Pokazany jako awaria straszylby
+        # operatora bledem katalogu przy sytuacji najzupelniej zwyczajnej.
+        #
+        # Rozpoznajemy PO KODZIE z Get-JezykOpisBleduLdap, nie po tresci opisu.
+        if ($opis.Kod -eq '0x80072023') {
+            $wynik.Przerwane = $false
+            $wynik.ZaDuzo    = $true
+            [void](Write-JezykLogLdap -Skasuj)
+            return $wynik
         }
 
-        try {
-            $trafienia = @(Invoke-JezykSzukanieLdap -Serwer $adres -Filtr $etapy[$etap] `
-                                                    -Limit $Limit -LimitMs ([int]$pozostalo))
+        # SLAD SKLADAMY PRZYPISANIEM DO TABLICY, NIGDY PRZEZ .Add(). W wywolaniu metody
+        # przecinki naleza do listy argumentow METODY, wiec '{0} {1}' -f $a, $b dostaje tam
+        # jeden argument na dwa pola i wywraca cala funkcje - a razem z nia ten wlasnie zapis,
+        # ktory mial awarie opisac. Zapore na te pomylke ma Weryfikacja/spojnosc.ps1.
+        #
+        # CYFRY ZAMASKOWANE - do logu idzie ksztalt zapytania, nie szukany numer.
+        $slad  = @()
+        $slad += 'Serwer   : {0}' -f $adres
+        $slad += 'Zakres   : Subtree, bez odsyłaczy, bez stronicowania'
+        $slad += 'Budżet   : {0} ms, padło po {1} ms' -f $LimitMs, $uplynelo
+        $slad += 'SizeLimit: {0} wierszy' -f ($Limit + 1)
+        $slad += 'Filtr    : {0}' -f ($filtr -replace '[0-9]', '#')
+        $slad += ''
+        $slad += $opis.Szczegoly
+
+        $zapisano = Write-JezykLogLdap -Wiersze $slad
+
+        $naglowek = if ($uplynelo -ge [int]($LimitMs * 0.9)) {
+            'Katalog nie odpowiedział w {0} ms na wyszukiwanie po numerze: {1}.' -f $LimitMs, $opis.Krotki
         }
-        catch {
-            # WYCZERPANY TERMIN TO NIE JEST JEDYNY POWOD, DLA KTOREGO TO MOZE PASC - i az do
-            # teraz kazdy inny dostawal etykiete "katalog nie odpowiedzial w N ms". Bledna
-            # sciezka wyszukiwania konczyla sie NATYCHMIAST bledem operacji, a komunikat
-            # i tak mowil o czterech sekundach czekania: usterka udawala zupelnie inna
-            # usterke i kosztowalo to trzy tury szukania nie tam, gdzie trzeba.
-            #
-            # Rozstrzyga ZMIERZONY CZAS, ktory i tak mamy pod reka. Termin wyczerpuje sie
-            # dopiero pod koniec budzetu; porazka po ulamku tego czasu terminem nie jest.
-            $uplynelo = $zegar.ElapsedMilliseconds
-            $wynik.Przerwane = $true
-
-            # SUROWA TRESC WYJATKU NIE WYSTARCZA - "Wystapil blad operacji" nie mowi nic
-            # i kosztowalo to juz trzy tury szukania nie tam, gdzie trzeba. Przyczyne nazywa
-            # Get-JezykOpisBleduLdap: po kodzie bledu i po rozszerzonym komunikacie
-            # z kontrolera, ktorego wczesniej nikt nie czytal.
-            $opis = Get-JezykOpisBleduLdap -Wyjatek $_ -Serwer $adres
-
-            if ($uplynelo -ge [int]($LimitMs * 0.9)) {
-                $naglowek = 'Katalog nie odpowiedział w {0} ms na wyszukiwanie po numerze (etap {1} z {2}): {3}.' -f
-                            $LimitMs, ($etap + 1), $etapy.Count, $opis.Krotki
-            }
-            else {
-                $naglowek = 'Wyszukiwanie po numerze nie powiodło się po {0} ms (etap {1} z {2}) - to NIE jest przekroczony termin, budżet wynosił {3} ms. Przyczyna: {4}.' -f
-                            $uplynelo, ($etap + 1), $etapy.Count, $LimitMs, $opis.Krotki
-            }
-
-            # SCIEZKA PLIKU IDZIE DO KOMUNIKATU, a nie tylko do logu. Slad, o ktorym nikt
-            # nie wie, jest tym samym co brak sladu.
-            $wynik.Powod = @($naglowek, '', $opis.Szczegoly, '',
-                             ('Pełny przebieg zapisano w pliku: {0}' -f (Get-JezykSciezkaLoguLdap))
-                            ) -join [Environment]::NewLine
-            break
+        else {
+            'Wyszukiwanie po numerze nie powiodło się po {0} ms - to NIE jest przekroczony termin, budżet wynosił {1} ms. Przyczyna: {2}.' -f $uplynelo, $LimitMs, $opis.Krotki
         }
+
+        # SCIEZKA PLIKU IDZIE DO KOMUNIKATU TYLKO WTEDY, GDY PLIK NAPRAWDE POWSTAL. Zdanie
+        # doklejane bezwarunkowo wysylalo operatora po slad, ktorego nie bylo - i to po nim
+        # poznalismy, ze ta sciezka nigdy nie doszla do zapisu.
+        $powod = @($naglowek, '', $opis.Szczegoly)
+        if ($zapisano) {
+            $powod += @('', ('Pełny przebieg zapisano w pliku: {0}' -f (Get-JezykSciezkaLoguLdap)))
+        }
+        $wynik.Powod = $powod -join [Environment]::NewLine
+
+        return $wynik
     }
 
-    # Etap trzeci: wzorzec z gwiazdkami wpuszcza trafienia przypadkowe, wiec kazdy numer
+    # KOMPLET WIERSZY ZNACZY "BYLO ICH WIECEJ", A NIE "BYLO DOKLADNIE TYLE". Kontroler dostal
+    # SizeLimit o jeden wiekszy niz limit i przerywa prace, gdy tylko go osiagnie. Decyzja
+    # zapada PRZED odsiewem po cyfrach: lista ucieta w kontrolerze jest niepelna niezaleznie
+    # od tego, ile pozycji przetrwa odsiew.
+    if ($trafienia.Count -gt $Limit) {
+        $wynik.ZaDuzo = $true
+        return $wynik
+    }
+
+    # Odsiew ostatni: wzorzec z gwiazdkami wpuszcza trafienia przypadkowe, wiec kazdy numer
     # porownujemy jeszcze raz po samych cyfrach.
     $wynik.Trafienia = @($trafienia | Where-Object {
         (Test-JezykNumerPasuje $Cyfry ([string]$_.OfficePhone)) -or
@@ -2337,13 +2192,14 @@ function Find-JezykUsers {
         #
         # Wlasny try, jak przy kontaktach: wyszukiwanie po numerze jest DODATKIEM. Odmowa
         # odczytu tych atrybutow nie moze przeslonic kont znalezionych po nazwie.
-        $poNumerze  = @()
-        $przerwane  = $false
+        $poNumerze   = @()
+        $przerwane   = $false
+        $zaDuzoNumer = $false
         $powodNumeru = ''
         if (Test-JezykWygladaNaTelefon $Fragment) {
             try {
                 $odpNumer    = Find-JezykUsersPoNumerze -Cyfry (Get-JezykCyfry $Fragment) `
-                                                        -Limit ($limit + 1) `
+                                                        -Limit ([int]$Script:Config.LimitNumeru) `
                                                         -Serwer $Script:Config.Domena `
                                                         -LimitMs ([int]$Script:Config.LimitCzasuNumeruMs)
                 $poNumerze   = @($odpNumer.Trafienia)
@@ -2352,12 +2208,36 @@ function Find-JezykUsers {
                 # a wyczerpany budzet znaczy "nie zdazylem sprawdzic", nie "nikogo nie ma" -
                 # i wolajacy musi umiec te dwie rzeczy rozroznic.
                 $przerwane   = [bool]$odpNumer.Przerwane
+                $zaDuzoNumer = [bool]$odpNumer.ZaDuzo
                 $powodNumeru = [string]$odpNumer.Powod
             }
             catch {
                 $poNumerze   = @()
                 $przerwane   = $true
                 $powodNumeru = 'Wyszukiwanie po numerze telefonu zawiodło: {0}' -f $_.Exception.Message
+            }
+
+            # ZBYT WIELU WLASCICIELI TEGO NUMERU KONCZY WYSZUKIWANIE OD RAZU, i to wlasnym
+            # komunikatem. Wspolne "Doprecyzuj wpisaną wartość" jest przy numerze rada pusta -
+            # numeru nie da sie doprecyzowac, mozna tylko poszukac czego innego, i to trzeba
+            # powiedziec wprost. Kontaktow juz nie pytamy: ich filtr idzie po nazwie, a numer
+            # w nazwe kontaktu nie trafi.
+            #
+            # To NIE JEST przerwanie: kontroler odpowiedzial i odpowiedz jest pelna w tym
+            # sensie, ze wiemy juz na pewno, iz trafien jest wiecej niz limit. Znacznika
+            # PrzerwanoNumer wiec nie zapalamy, a pod "!" nie ma czego pokazac - to zwykla
+            # odpowiedz, nie usterka.
+            if ($zaDuzoNumer) {
+                $zaWielu = 'Numeru "{0}" używa w domenie {1} więcej niż {2} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku, loginie albo adresie e-mail.' -f
+                           $Fragment, $Script:Config.Domena, [int]$Script:Config.LimitNumeru
+
+                return [pscustomobject]@{
+                    Status         = 'TooMany'
+                    Konta          = @()
+                    Message        = $zaWielu
+                    Szczegoly      = ''
+                    PrzerwanoNumer = $false
+                }
             }
 
             # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan,
@@ -2701,24 +2581,30 @@ function Get-JezykSciezkaLoguLdap {
 <#
 .SYNOPSIS
     Zapisuje przebieg nieudanego przeszukania katalogu do pliku w katalogu tymczasowym.
+    Oddaje $true, gdy plik NAPRAWDE powstal.
 
 .DESCRIPTION
-    POWSTALO PO TRZECH NIEUDANYCH PROBACH NAPRAWY wyszukiwania po numerze. Pole pod "!"
-    miesci nazwe przyczyny, ale nie caly przebieg: kontekst nazewniczy, ustawienia obu prob,
-    rozszerzony blad z kontrolera i wynik sondy kontrolnej. Jeden plik zamiast kolejnej
-    rundy zgadywania - dokladnie tak, jak rozwiazano to kiedys przy SCCM.
+    Pole pod "!" miesci nazwe przyczyny, ale nie caly przebieg: kontekst nazewniczy, ksztalt
+    filtra, budzet i rozszerzony blad z kontrolera. Jeden plik zamiast kolejnej rundy
+    zgadywania - dokladnie tak, jak rozwiazano to kiedys przy SCCM.
 
-    POWSTAJE WYLACZNIE PRZY NIEPOWODZENIU, a po udanym przeszukaniu jest KASOWANY. Brak
-    pliku jest wiec sam w sobie informacja. Bez kasowania opis dawno naprawionej awarii
-    wygladalby jak opis biezacej - to sie juz raz zdarzylo przy Jezyk-konsola.txt.
+    POWSTAJE WYLACZNIE PRZY NIEPOWODZENIU, a po udanym przeszukaniu jest KASOWANY. Brak pliku
+    jest wiec sam w sobie informacja. Bez kasowania opis dawno naprawionej awarii wygladalby
+    jak opis biezacej - to sie juz raz zdarzylo przy Jezyk-konsola.txt.
 
     DO PLIKU NIE TRAFIAJA WPISANE CYFRY NUMERU. Filtr zapisujemy z cyframi zamienionymi na
     krzyzyki: ksztalt zapytania mowi wszystko, co potrzebne do diagnozy, a plik w katalogu
     tymczasowym czyta kazdy, kto ma dostep do stacji.
 
-    CALOSC POD TRY: sciezka "wszystko inne zawiodlo" nie moze wybuchac sama z siebie.
-    Katalog tymczasowy bywa pelny albo tylko do odczytu, a wtedy brak logu jest mniejszym
-    klopotem niz wyjatek przykrywajacy prawdziwa usterke.
+    ODDAJE WARTOSC LOGICZNA, BO WOLAJACY OBIECUJE OPERATOROWI TEN PLIK. Dopoki zapis byl
+    niemy, komunikat wskazywal sciezke bezwarunkowo - i wskazal ja rowniez wtedy, gdy do
+    zapisu w ogole nie doszlo. Operator poszedl po slad, ktorego nie bylo. Teraz zdanie
+    o pliku dokleja sie tylko przy $true.
+
+    CALOSC POD TRY: sciezka "wszystko inne zawiodlo" nie moze wybuchac sama z siebie. Katalog
+    tymczasowy bywa pelny albo tylko do odczytu, a wtedy brak logu jest mniejszym klopotem niz
+    wyjatek przykrywajacy prawdziwa usterke. Ale MILCZEC O TYM juz nie wolno - stad -ErrorAction
+    Stop zamiast SilentlyContinue: nieudany zapis ma oddac $false, a nie udawac udany.
 #>
 function Write-JezykLogLdap {
     param([string[]]$Wiersze, [switch]$Skasuj)
@@ -2730,14 +2616,16 @@ function Write-JezykLogLdap {
             if (Test-Path -LiteralPath $plik) {
                 Remove-Item -LiteralPath $plik -Force -ErrorAction SilentlyContinue
             }
-            return
+            # Kasowanie niczego nie zapisuje, wiec obiecywac nie ma czego.
+            return $false
         }
 
         $naglowek = '=== {0:yyyy-MM-dd HH:mm:ss} - nieudane przeszukanie katalogu ===' -f (Get-Date)
         Set-Content -LiteralPath $plik -Value (@($naglowek) + @($Wiersze)) `
-                    -Encoding UTF8 -ErrorAction SilentlyContinue
+                    -Encoding UTF8 -ErrorAction Stop
+        return $true
     }
-    catch { }
+    catch { return $false }
 }
 
 <#
@@ -2838,7 +2726,7 @@ function Get-JezykOpisBleduLdap {
     }
     elseif ($kodHex -eq '0x8007202B') {
         $krotki  = 'katalog odesłał do innego serwera'
-        $naprawa = 'Przeszukanie poddrzewa spod "{0}" trafiło na odsyłacz (referral). Zdarza się przy pytaniu pod NAZWĄ DOMENY zamiast nazwy konkretnego kontrolera i przy lesie z wieloma domenami. Próba zapasowa wyłącza podążanie za odsyłaczami - jeżeli i ona padła, przyczyna leży gdzie indziej.' -f $Baza
+        $naprawa = 'Przeszukanie poddrzewa spod "{0}" trafiło na odsyłacz (referral). Zdarza się przy pytaniu pod NAZWĄ DOMENY zamiast nazwy konkretnego kontrolera i przy lesie z wieloma domenami. Jeżyk podążania za odsyłaczami nie włącza w ogóle (ReferralChasing = None), więc ten błąd znaczy, że odsyłacz zwrócił sam kontroler - przyczyna leży po stronie układu domeny.' -f $Baza
     }
     elseif ($kodHex -eq '0x80072024') {
         $krotki  = 'przekroczony limit administracyjny kontrolera'
@@ -2873,7 +2761,11 @@ function Get-JezykOpisBleduLdap {
     if ($trescRozszerzona) { $szczegoly += @('', 'Rozszerzony błąd z kontrolera:', $trescRozszerzona) }
     if ($techniczne.Count) { $szczegoly += @('', ($techniczne -join '; ')) }
 
-    [pscustomobject]@{ Krotki = $krotki; Szczegoly = ($szczegoly -join [Environment]::NewLine) }
+    # KOD IDZIE NA ZEWNATRZ, a nie tylko do tekstu. Wolajacy bywa, ze musi na konkretna
+    # przyczyne ZAREAGOWAC, a nie tylko ja pokazac - rozpoznawanie jej po tresci opisu
+    # rozjechaloby sie przy pierwszej poprawce jednego zdania.
+    [pscustomobject]@{ Krotki = $krotki; Kod = $kodHex
+                       Szczegoly = ($szczegoly -join [Environment]::NewLine) }
 }
 
 # Sprawdza komputer w AD po nazwie NetBIOS. Widok komputera jest celowo krotszy od widoku
