@@ -397,12 +397,6 @@ function Invoke-JezykSearch {
     $tryb = [string]$k.Tryb.SelectedItem
     $tekst = $k.PoleSzukaj.Text
 
-    $k.Przycisk.Enabled = $false
-    $okno.UseWaitCursor = $true
-    # Wymuszenie przerysowania - inaczej zmiana kursora pojawilaby sie dopiero po
-    # zakonczeniu zapytania, czyli gdy nie jest juz potrzebna.
-    $okno.Refresh()
-
     # ZATRZYMANIE POPRZEDNIEGO SZUKANIA PO NUMERZE IDZIE PIERWSZE i PRZED ROZGALEZIENIEM
     # NA TRYB. Bez tego trafienia z poprzedniego numeru dolaczylyby do listy zbudowanej
     # wlasnie teraz - a w trybie komputera doklejalyby sie do listy, ktorej nikt nie widzi,
@@ -411,7 +405,22 @@ function Invoke-JezykSearch {
     # Start-JezykZadanieNumeru robi to samo na wejsciu, ale odpala sie wylacznie wtedy, gdy
     # nowy wpis wyglada na numer - a porzucic poprzednie zadanie trzeba ZAWSZE.
     Stop-JezykZadanieNumeru
-    $k.PasekSzukania.Visible = $false
+
+    $k.Przycisk.Enabled = $false
+    $okno.UseWaitCursor = $true
+
+    # PASEK ZAPALA SIE PRZY KAZDYM SZUKANIU, nie tylko po numerze telefonu: operator ma
+    # widziec, ze okno pracuje, niezaleznie od tego, czego szuka. Gasnie w finally - chyba
+    # ze wlasnie ruszylo zadanie numeru i jest jeszcze na co czekac.
+    #
+    # Przy zapytaniu synchronicznym pasek jest widoczny, ale NIERUCHOMY: animacje rysuje
+    # watek interfejsu, a ten stoi wtedy w zapytaniu. Zapytania po nazwie ida po atrybutach
+    # indeksowanych i trwaja ulamek sekundy, wiec pasek mignie - i tyle ma zrobic.
+    $k.PasekSzukania.Visible = $true
+
+    # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie paska pojawilyby sie
+    # dopiero po zakonczeniu zapytania, czyli gdy nie sa juz potrzebne.
+    $okno.Refresh()
 
     try {
         if ($tryb -eq $Script:Config.TrybKomputer) {
@@ -436,17 +445,18 @@ function Invoke-JezykSearch {
                 Set-JezykInfo 'Status' ([string]$lista.Szczegoly)
             }
 
-            # NUMER TELEFONU RUSZA NA KONCU, JUZ PO ZAZNACZENIU PIERWSZEJ POZYCJI. Kolejnosc
-            # jest tu istotna z tego samego powodu, co kiedys przy notce o przerwanym
-            # wyszukiwaniu: zaznaczenie uruchamia Set-JezykResult, a ten nadpisuje pole
-            # Status opisem konta i gasi przycisk "!". Zdanie dopisane wczesniej zgineloby
-            # bez sladu - dokladnie tak, jak kiedys ginelo potwierdzenie odblokowania.
+            # NUMER TELEFONU RUSZA NA KONCU, JUZ PO ZAZNACZENIU PIERWSZEJ POZYCJI.
+            # Zaznaczenie uruchamia Set-JezykResult, a ten nadpisuje pole Status opisem
+            # konta - cokolwiek dopisanego wczesniej zgineloby bez sladu, dokladnie tak,
+            # jak kiedys ginelo potwierdzenie odblokowania.
+            #
+            # ZADNEJ NOTKI "szukam jeszcze po numerze" W POLU STATUS. Mowi to teraz pasek,
+            # i mowi przez caly czas pracy; notka doklejana do statusu wydluzala zdanie,
+            # w ktorym gubil sie potem wlasciwy komunikat z Update-JezykNumerWTle.
             #
             # Zadanie rusza takze wtedy, gdy po nazwie NIC nie znaleziono: to najczestszy
             # przypadek przy szukaniu po numerze i wtedy wlasnie jest najbardziej potrzebne.
             if (Test-JezykWygladaNaTelefon $tekst) {
-                $k.PasekSzukania.Visible = $true
-                $k.TxtStatus.Text = ('{0} Szukam jeszcze po numerze telefonu...' -f $k.TxtStatus.Text).Trim()
                 Start-JezykZadanieNumeru -Cyfry (Get-JezykCyfry $tekst)
             }
         }
@@ -454,6 +464,11 @@ function Invoke-JezykSearch {
     finally {
         $okno.UseWaitCursor = $false
         $k.Przycisk.Enabled = $true
+
+        # Pasek gasnie, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma sie
+        # krecic dalej, az wynik dojdzie. Nieudany start zostawia $Script:ZadanieNumeru
+        # pusty, wiec pasek gasnie takze wtedy.
+        if (-not $Script:ZadanieNumeru) { $k.PasekSzukania.Visible = $false }
     }
 }
 
@@ -861,8 +876,26 @@ function Update-JezykNumerWTle {
         # Bez cytowania wpisanej wartosci: od uruchomienia zadania minely sekundy i operator
         # mogl juz zaczac wpisywac co innego - pole tekstowe niesie wtedy inny numer niz ten,
         # ktorego dotyczy ta odpowiedz.
-        $k.TxtStatus.Text = ('{0} Tego numeru używa w domenie {1} więcej niż {2} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku, loginie albo adresie e-mail.' -f
-                             $k.TxtStatus.Text, $Script:Config.Domena, [int]$Script:Config.LimitNumeru).Trim()
+        #
+        # Jedno zdanie na oba przypadki: czyta sie i samodzielnie, i doklejone za innym.
+        $zaWielu = 'Numeru używa w domenie {0} więcej niż {1} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku albo loginie.' -f
+                   $Script:Config.Domena, [int]$Script:Config.LimitNumeru
+
+        if ($k.ListaKont.Items.Count -eq 0) {
+            # PUSTA LISTA ZNACZY, ZE OKNO MOWI TERAZ "Nie znaleziono konta ani kontaktu" -
+            # czyli NIEPRAWDE, i to dokladnie odwrotna do stanu faktycznego: kont z tym
+            # numerem nie brakuje, jest ich za wielu. Doklejone na koncu wyjasnienie ginelo
+            # poza widoczna czescia pola, wiec operator czytal tylko to pierwsze zdanie.
+            # Dlatego ZASTEPUJEMY, a nie doklejamy - razem z werdyktem.
+            $k.TxtStatus.Text     = $zaWielu
+            $k.Werdykt.Text       = 'Numer należy do wielu osób'
+            $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
+        }
+        else {
+            # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
+            # i ma zostac. Numer dopisuje sie za nim jako druga, osobna informacja.
+            $k.TxtStatus.Text = ('{0} {1}' -f $k.TxtStatus.Text, $zaWielu).Trim()
+        }
         return
     }
 

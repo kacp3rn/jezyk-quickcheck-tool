@@ -20,8 +20,14 @@ trap { Register-JezykBladCzesci $_; continue }
 # Wiersz z wyborem domeny stoi nad wszystkim, wiec reszta okna schodzi o jego wysokosc.
 $Script:PasekDomeny   = 34
 
-$Script:PanelBezListy = 46 + $Script:PasekDomeny
-$Script:PanelZListą   = 80 + $Script:PasekDomeny
+# PAS NA PASEK POSTEPU pod wierszem wyszukiwania - WLASNY, a nie wciskany w szpare miedzy
+# tym wierszem a lista wynikow. Szpara ma przy 100% DPI dziesiec pikseli, ale wiersz
+# wyszukiwania srodkuje sie wokol STALEJ wspolrzednej, a wysokosc kontrolek rosnie z DPI:
+# przy 125-150% wiersz rosnie w dol i szpara znika, a pasek nachodzilby na liste.
+$Script:PasekPostepu  = 10
+
+$Script:PanelBezListy = 46 + $Script:PasekDomeny + $Script:PasekPostepu
+$Script:PanelZListą   = 80 + $Script:PasekDomeny + $Script:PasekPostepu
 
 $Script:PierwszyWiersz     = 100   # y etykiety pierwszego wiersza wewnatrz panelu konta
 $Script:SkokWiersza        = 58    # odleglosc miedzy kolejnymi wierszami
@@ -1079,7 +1085,9 @@ function New-JezykForm {
     # DZIEWIEC WIERSZY (0-8). Osmy doszedl razem z polem "Adres IP" - pol polowkowych jest
     # jedenascie, czyli nieparzyscie, a trzy dolne potrzebuja calej szerokosci, wiec jedno
     # miejsce w siatce zostaje wolne i okno uroslo o jeden skok wiersza.
-    $wysokoscPanelu = (Get-JezykWierszPole 8) + 40    # ostatnie pole + jego wysokosc + margines
+    # Zapas obejmuje DWIE linijki ostatniego pola: "Status:" niesie najdluzsze teksty
+    # w calym oknie i jest jedynym polem dwulinijkowym - patrz sekcja wyrownania.
+    $wysokoscPanelu = (Get-JezykWierszPole 8) + 58    # ostatnie pole (2 linijki) + margines
     $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + 12 + $Script:PasekPodpisu
     $form.ClientSize      = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscOkna)
 
@@ -1170,37 +1178,45 @@ function New-JezykForm {
     $btnSzukaj.BackColor = $Script:Config.KolorKontrolki
     $btnSzukaj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
 
-    # PASEK "SZUKAM JESZCZE" - jedyny znak, ze cos trwa po oddaniu listy. Wyszukiwanie po
-    # numerze telefonu chodzi w tle i potrafi trwac sekundy; bez tego paska okno wyglada na
-    # gotowe, a operator nie wie, ze warto poczekac.
+    # PASEK POSTEPU - znak, ze okno pracuje. Zapala sie przy KAZDYM klinieciu "Szukaj"
+    # (patrz Invoke-JezykSearch), a gasnie, gdy nie ma juz na co czekac.
+    #
+    # STOI W SWOIM PASIE POD WIERSZEM WYSZUKIWANIA, na calej szerokosci zawartosci, i NIE
+    # zabiera miejsca polu wyszukiwania - tam stal wczesniej i zwezal jedyne pole w oknie,
+    # w ktore cokolwiek sie wpisuje, o osiemdziesiat kilka pikseli.
     #
     # Marquee, a nie obrazek: animacje rysuje system, wiec nie trzeba pliku z klatkami
     # (repozytorium nie ma zadnych zasobow binarnych) i chodzi poprawnie przy kazdym DPI.
-    # Rusza sie NAPRAWDE tylko dlatego, ze zapytanie zeszlo do przestrzeni w tle - przy
-    # dawnym zapytaniu na watku interfejsu ten sam pasek stalby zamrozony.
-    $szerokoscPaska = 80
-
+    # Predkosc ustawiona JAWNIE - wartosc domyslna zalezy od wersji systemu.
+    #
+    # Rusza sie naprawde tylko przy wyszukiwaniu po numerze telefonu, bo tylko ono zeszlo
+    # do przestrzeni w tle. Przy zapytaniu synchronicznym jest widoczny, ale nieruchomy:
+    # animacje rysuje watek interfejsu, a ten stoi wtedy w zapytaniu.
     $pasekSzukania           = New-Object System.Windows.Forms.ProgressBar
     $pasekSzukania.Style     = [System.Windows.Forms.ProgressBarStyle]::Marquee
-    $pasekSzukania.Width     = $szerokoscPaska
-    $pasekSzukania.Height    = 10
-    $pasekSzukania.Left      = $btnSzukaj.Left - $przerwa - $szerokoscPaska
+    $pasekSzukania.MarqueeAnimationSpeed = 30
+    $pasekSzukania.Left      = $Script:Margines
+    $pasekSzukania.Width     = $Script:SzerokoscPelna
+    $pasekSzukania.Height    = 6
+    # Wspolrzedna liczona z tych samych stalych, co reszta okna: pas zaczyna sie tam, gdzie
+    # konczy sie wiersz wyszukiwania, a konczy tuz nad lista wynikow.
+    $pasekSzukania.Top       = $Script:PanelBezListy - $Script:PasekPostepu + 2
     $pasekSzukania.Visible   = $false
 
-    # Pole wypelnia to, co zostalo miedzy lista trybu a paskiem, wiec prawa krawedz
-    # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej. Pasek jest UKRYTY przez
-    # wiekszosc czasu, ale miejsce zabiera zawsze - pole zwezajace sie przy starcie
-    # wyszukiwania przeskakiwaloby pod kursorem.
+    # Pole wypelnia to, co zostalo miedzy lista trybu a przyciskiem, wiec prawa krawedz
+    # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej.
     $txtSzukaj           = New-Object System.Windows.Forms.TextBox
     $txtSzukaj.Left      = $cmbTryb.Right + $przerwa
-    $txtSzukaj.Width     = $pasekSzukania.Left - $przerwa - $txtSzukaj.Left
+    $txtSzukaj.Width     = $btnSzukaj.Left - $przerwa - $txtSzukaj.Left
     # Zabezpieczenie przed wklejeniem calego akapitu tekstu.
     $txtSzukaj.MaxLength = 256
 
     # Lista wyboru kont - widoczna wylacznie przy wyszukiwaniu czesciowym. DisplayMember
     # sprawia, ze pokazuje pole Opis, a kod ma pod reka caly obiekt kandydata.
     $cmbWynik               = New-Object System.Windows.Forms.ComboBox
-    $cmbWynik.Location      = [System.Drawing.Point]::new($Script:Margines, 46 + $Script:PasekDomeny)
+    # Ta sama wspolrzedna, co gorna krawedz panelu bez listy - lista i panel zajmuja
+    # w tym miejscu to samo pietro okna, wiec licza sie z jednej stalej.
+    $cmbWynik.Location      = [System.Drawing.Point]::new($Script:Margines, $Script:PanelBezListy)
     $cmbWynik.Width         = $Script:SzerokoscPelna
     $cmbWynik.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $cmbWynik.DisplayMember = 'Opis'
@@ -1340,8 +1356,13 @@ function New-JezykForm {
     $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 7)
     $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 7) $C
 
+    # DWIE LINIJKI, NIE JEDNA. To pole niesie najdluzsze teksty w oknie - komunikat
+    # o numerze uzywanym przez wiele osob ma ponad sto trzydziesci znakow i w jednej
+    # linijce widac z niego pierwsza polowe zdania. Zawijanie wierszy jest przy Multiline
+    # domyslne; wysokosc liczy sie z czcionki, w sekcji wyrownania.
     $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 8)
     $txtStatus = New-JezykPole               $L (Get-JezykWierszPole 8) $C
+    $txtStatus.Multiline = $true
 
     $pnlKonto.Controls.AddRange(@(
         $chkWerdykt, $lblWerdykt, $btnOdblokuj, $grpFlagi,
@@ -1366,7 +1387,7 @@ function New-JezykForm {
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
-                                                     ($kompWiersz2 + $Script:OdstepPodEtykieta + 40))
+                                                     ($kompWiersz2 + $Script:OdstepPodEtykieta + 58))
     $pnlKomputer.Visible = $false
 
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
@@ -1379,8 +1400,12 @@ function New-JezykForm {
     $txtKompUzytkownik = New-JezykPole $Script:Margines ($kompWiersz1 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoUzytkownik = New-JezykPrzyciskInfo 'Uzytkownik'
 
+    # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
+    # zapytania do SCCM, rownie dlugie. Jedno pole dwulinijkowe, a drugie jednolinijkowe
+    # wygladaloby jak usterka.
     $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz2
     $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz2 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
+    $txtKompStatus.Multiline = $true
 
     $pnlKomputer.Controls.AddRange(@($lblKompKatalog, $txtKompKatalog,
                                      $lblKompUzytkownik, $txtKompUzytkownik, $btnInfoUzytkownik,
@@ -1402,7 +1427,9 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
     Set-JezykSrodekPionowy @($lblDomena, $cmbDomena) $srodekDomeny
-    Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $pasekSzukania, $btnSzukaj) $srodekPodaj
+    # Paska NIE MA na tej liscie: nie nalezy juz do wiersza wyszukiwania, tylko do wlasnego
+    # pasa pod nim, a jego wspolrzedna liczy sie ze stalych siatki.
+    Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
 
     # Zapas nad wysokoscia tekstu jest konieczny: kwadrat ma stale 13 px i w ciasnym
     # prostokacie nie miescil sie razem z napisem.
@@ -1436,6 +1463,15 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $chkWerdykt $wysokoscWerdyktu
 
     Set-JezykSrodekPionowy @($chkWerdykt, $lblWerdykt, $btnOdblokuj) $Script:SrodekWerdyktu
+
+    # OBA POLA "Status:" DOSTAJA DRUGA LINIJKE. Wysokosc liczona z czcionki, a nie wpisana:
+    # PreferredHeight to wysokosc JEDNEJ linii razem z ramka, wiec dokladamy do niej
+    # wysokosc kolejnej. Liczba wpisana na sztywno zgadzalaby sie wylacznie przy 100% DPI -
+    # ta sama zasada, co przy $wysokoscZnacznika i Set-JezykSrodekPionowy.
+    $drugaLinia = [int][math]::Ceiling($form.Font.GetHeight())
+    foreach ($pole in @($txtStatus, $txtKompStatus)) {
+        $pole.Height = $pole.PreferredHeight + $drugaLinia
+    }
 
     # --- PRZYCISKI "!" ---------------------------------------------------------------
     # Stawiane NA SAMYM KONCU wyrownania, bo licza sie z rzeczywistej szerokosci etykiet,
