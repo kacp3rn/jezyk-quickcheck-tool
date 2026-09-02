@@ -207,6 +207,25 @@ $Script:Ustawienia = @{
     # samo AD. Kazda nazwa musi nalezec do jednej z domen wyzej.
     Kontrolery = @()
 
+    # PODDRZEWO, OD KTOREGO ZACZYNA SIE PRZESZUKANIE PO NUMERZE TELEFONU (-SearchBase).
+    # PUSTE = od korzenia domeny, czyli tak, jak dziala Jezyk bez tego ustawienia.
+    #
+    # Po co: telephoneNumber i mobile NIE SA w AD indeksowane, a filtr numeru ma gwiazdke
+    # na poczatku wartosci, wiec kontroler przeglada konto po koncie. Wskazanie poddrzewa
+    # skraca to przegladanie proporcjonalnie do tego, ile obiektow z niego wypada - i jest
+    # JEDYNYM sposobem na skrocenie samego zapytania. (Drugi srodek, czyli przeniesienie go
+    # w tlo, zapytania nie skraca - sprawia tylko, ze okno na nie nie czeka.)
+    #
+    # CENA: konto SPOZA tego poddrzewa przestaje byc znajdowane po numerze i NIKT SIE O TYM
+    # NIE DOWIE - ani operator, ani Jezyk. Wpisuj tu wylacznie kontener obejmujacy WSZYSTKIE
+    # konta ludzi; przy kontach rozsianych po wielu galeziach zostaw pusto.
+    #
+    # KLUCZ TO DOMENA, bo nazwa wyrozniajaca konczy sie skladnikami DC tej jednej domeny -
+    # jedna wartosc dla wszystkich trzech domen bylaby poprawna najwyzej dla jednej,
+    # a w pozostalych wywracalaby wyszukiwanie. Domena bez wpisu = przeszukanie od korzenia.
+    # Przyklad: @{ 'jezyk.pl' = 'OU=Ludzie,DC=jezyk,DC=pl' }
+    SzukajOd = @{}
+
     # SccmSerwer to SERWER LOKACJI (rola SMS Provider), nie punkt zarzadzania: przestrzen
     # root\sms\site_XXX mieszka wylacznie na nim. Puste = pole "Ostatnio uzywany komputer"
     # mowi o braku konfiguracji i z niczym sie nie laczy.
@@ -236,6 +255,19 @@ $Script:DomenyZOdblokowaniem = @($Script:Ustawienia.DomenyZOdblokowaniem |
 
 # Zadnej wartosci zapasowej: brak listy jest brakiem listy i konczy sie komunikatem.
 $Script:DomenaAD = if ($Script:Domeny.Count) { $Script:Domeny[0] } else { '' }
+
+# Klucze na male litery i bez spacji, tak samo jak obie listy domen wyzej - bez tego wpis
+# "JEZYK.PL" nie zgadzalby sie z domena wybrana w oknie i poddrzewo po cichu przestaloby
+# obowiazywac. Cicha utrata poddrzewa jest lagodniejsza niz cicha jego zamiana, ale nadal
+# znaczylaby, ze ustawienie robi co innego, niz mowi.
+$Script:SzukajOd = @{}
+if ($Script:Ustawienia.SzukajOd -is [hashtable]) {
+    foreach ($klucz in $Script:Ustawienia.SzukajOd.Keys) {
+        $domena = ([string]$klucz).Trim().ToLower()
+        $baza   = ([string]$Script:Ustawienia.SzukajOd[$klucz]).Trim()
+        if ($domena -and $baza) { $Script:SzukajOd[$domena] = $baza }
+    }
+}
 
 # Ustawienia wygladu i stale programu. Etykiety trybow sluza jednoczesnie za pozycje listy
 # rozwijanej i za identyfikatory trybu w kodzie - jedno miejsce, zeby nazwy sie nie rozjechaly.
@@ -333,6 +365,13 @@ function Get-JezykOpisKonfiguracji {
         'Kontrolery z konfiguracji: {0}' -f (@($Script:Ustawienia.Kontrolery) -join ', ')
     } else {
         'Kontrolery: rozpoznawane z Active Directory'
+    }
+
+    $wiersze += if ($Script:SzukajOd.Count) {
+        'Przeszukanie po numerze ograniczone do: {0}' -f
+            ((@($Script:SzukajOd.Keys | Sort-Object | ForEach-Object { '{0} -> {1}' -f $_, $Script:SzukajOd[$_] })) -join '; ')
+    } else {
+        'Przeszukanie po numerze: od korzenia domeny'
     }
 
     $wiersze += if ($Script:Ustawienia.SccmSerwer -and $Script:Ustawienia.SccmKodLokacji) {

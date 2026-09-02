@@ -61,6 +61,27 @@ function Get-JezykTekstLogowania {
 # Czysci widok konta do stanu "nic nie wiadomo". Wolane na poczatku kazdego renderowania
 # i przy zmianie trybu: pol jest kilkanascie i latwo przeoczyc, ze ktores nie zostalo
 # nadpisane, a zielony napis po nieudanym zapytaniu bylby najgorszym z nieporozumien.
+<#
+.SYNOPSIS
+    Sklada oba numery telefonu w jeden napis do pola "Telefon:".
+
+.DESCRIPTION
+    KOLEJNOSC JEST STALA: glowny (LDAP telephoneNumber), potem komorkowy (mobile) - taka
+    sama, w jakiej stoja w oknie AD. Stala, bo pole ich NIE PODPISUJE: przy dwoch numerach
+    operator poznaje je po miejscu, a miejsce zmienne nie znaczyloby nic.
+
+    PUSTY NUMER JEST POMIJANY, a nie zastepowany myslnikiem ani pustym miejscem po
+    przecinku: jeden numer ma wygladac jak jeden numer, a nie jak polowa pary.
+
+    Podpisy ("Glowny: ...") swiadomie odpadly - pole ma szerokosc polowy kolumny, a dwa
+    numery z prefiksem +48 i podpisami sie w niej nie miesza i zostalyby uciete.
+#>
+function Get-JezykTelefony {
+    param([string]$Glowny, [string]$Komorkowy)
+
+    return ((@($Glowny, $Komorkowy) | Where-Object { $_ }) -join ', ')
+}
+
 function Clear-JezykKonto {
     $k = $Script:Kontrolki
 
@@ -170,14 +191,15 @@ function Set-JezykResult {
             $k.TxtEmail.Text = [string]$Result.Email
 
             # NUMER MOWI O SWOIM BRAKU WPROST, tak samo jak przelozony nizej. Pustka nigdy
-            # nie znaczy tu porazki odczytu: wybor numeru (stacjonarny czy komorka) zapada
-            # w logice, ktora pyta katalog, wiec puste pole ma dokladnie jedno znaczenie -
-            # w AD nie ma zadnego numeru. Skoro znaczenie jest jedno i pewne, ma byc
-            # NAPISANE, a nie zgadywane z pustki.
+            # nie znaczy tu porazki odczytu: oba numery przychodza z tego samego zapytania,
+            # co reszta konta, wiec puste pole ma dokladnie jedno znaczenie - w AD nie ma
+            # zadnego numeru. Skoro znaczenie jest jedno i pewne, ma byc NAPISANE, a nie
+            # zgadywane z pustki.
             #
             # E-mail zostaje przy pustce swiadomie: konto bez skrzynki to stan normalny
             # i czesty, a napis przy kazdym takim koncie bylby samym halasem.
-            $k.TxtTelefon.Text  = if ($Result.Telefon) { [string]$Result.Telefon } else { 'nie wpisano w AD' }
+            $telefony = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
+            $k.TxtTelefon.Text  = if ($telefony) { $telefony } else { 'nie wpisano w AD' }
 
             # PRZELOZONY MOWI O SWOIM BRAKU WPROST. Pusty napis czytalo sie jak nieudany
             # odczyt, a tutaj pustka NIGDY nie znaczy porazki: nieudane rozwiazanie nazwy
@@ -237,7 +259,8 @@ function Set-JezykResult {
             $k.TxtEmail.Text          = [string]$Result.Email
             # Kontakt to wpis ksiazki adresowej, wiec numer jest tu najbardziej na miejscu -
             # i tym bardziej jego brak zasluguje na slowo zamiast pustki.
-            $k.TxtTelefon.Text        = if ($Result.Telefon) { [string]$Result.Telefon } else { 'nie wpisano w AD' }
+            $telefonyKontaktu = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
+            $k.TxtTelefon.Text        = if ($telefonyKontaktu) { $telefonyKontaktu } else { 'nie wpisano w AD' }
             $k.TxtKontoUtworzono.Text = Format-JezykData $Result.KontoUtworzono
             $k.TxtKatalog.Text        = [string]$Result.Lokalizacja
             $k.TxtStatus.Text         = [string]$Result.Message
@@ -359,10 +382,14 @@ function Invoke-JezykWyborKonta {
     Obsluga "Szukaj" - jedyne miejsce, w ktorym tryb przeklada sie na funkcje logiki.
 
 .DESCRIPTION
-    Zapytanie jest synchroniczne, wiec okno na moment przestaje reagowac; bez wylaczenia
-    przycisku niecierpliwe podwojne klikniecie ustawialoby w kolejce drugie zapytanie.
-    Blok finally jest niezbedny - gdyby renderowanie przerwalo sie w polowie, przycisk
-    zostalby wylaczony na stale.
+    Zapytanie po NAZWIE jest synchroniczne, wiec okno na moment przestaje reagowac; bez
+    wylaczenia przycisku niecierpliwe podwojne klikniecie ustawialoby w kolejce drugie
+    zapytanie. Blok finally jest niezbedny - gdyby renderowanie przerwalo sie w polowie,
+    przycisk zostalby wylaczony na stale.
+
+    "Na moment" jest tu doslowne: filtr po nazwie idzie po atrybutach indeksowanych,
+    z gwiazdka na koncu wartosci, wiec wraca od razu. Wyszukiwanie po NUMERZE takie nie
+    jest i wlasnie dlatego rusza osobno, w tle - patrz Start-JezykZadanieNumeru.
 #>
 function Invoke-JezykSearch {
     $k    = $Script:Kontrolki
@@ -376,6 +403,16 @@ function Invoke-JezykSearch {
     # zakonczeniu zapytania, czyli gdy nie jest juz potrzebna.
     $okno.Refresh()
 
+    # ZATRZYMANIE POPRZEDNIEGO SZUKANIA PO NUMERZE IDZIE PIERWSZE i PRZED ROZGALEZIENIEM
+    # NA TRYB. Bez tego trafienia z poprzedniego numeru dolaczylyby do listy zbudowanej
+    # wlasnie teraz - a w trybie komputera doklejalyby sie do listy, ktorej nikt nie widzi,
+    # i dopisywaly notke do panelu konta stojacego wtedy poza ekranem.
+    #
+    # Start-JezykZadanieNumeru robi to samo na wejsciu, ale odpala sie wylacznie wtedy, gdy
+    # nowy wpis wyglada na numer - a porzucic poprzednie zadanie trzeba ZAWSZE.
+    Stop-JezykZadanieNumeru
+    $k.PasekSzukania.Visible = $false
+
     try {
         if ($tryb -eq $Script:Config.TrybKomputer) {
             Set-JezykComputerResult -Result (Get-JezykComputerStatus -Netbios $tekst)
@@ -388,20 +425,6 @@ function Invoke-JezykSearch {
                 # Przypisanie zaznaczenia odpala Invoke-JezykWyborKonta, ktore wykona pelny
                 # odczyt - dzieki temu pierwsza pozycja pokazuje sie bez dodatkowego klikniecia.
                 $Script:Kontrolki.ListaKont.SelectedIndex = 0
-
-                # NOTKA O PRZERWANYM WYSZUKIWANIU PO NUMERZE IDZIE PO ZAZNACZENIU, nie przed.
-                # Zaznaczenie uruchamia Set-JezykResult, a ten nadpisuje pole Status opisem
-                # konta i gasi przycisk "!" - wpisana wczesniej notka ginelaby bez sladu,
-                # dokladnie tak jak kiedys ginelo potwierdzenie odblokowania.
-                #
-                # Lista jest tu NIEPELNA i operator musi o tym wiedziec: ktos, kogo szukal,
-                # mogl nie zdazyc sie na niej znalezc. Ta sama technika, co przy zanizonej
-                # dacie logowania - doklejamy zdanie do pola Status, a powod pod "!".
-                if ($lista.PrzerwanoNumer) {
-                    $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
-                                         $k.TxtStatus.Text).Trim()
-                    Set-JezykInfo 'Status' ([string]$lista.Szczegoly)
-                }
             }
             else {
                 # Brak trafien, zbyt wiele trafien albo blad. Status 'Ok' nigdy tu nie trafi.
@@ -411,6 +434,20 @@ function Invoke-JezykSearch {
                                     else { 'Błąd sprawdzenia' }
                 $k.TxtStatus.Text = [string]$lista.Message
                 Set-JezykInfo 'Status' ([string]$lista.Szczegoly)
+            }
+
+            # NUMER TELEFONU RUSZA NA KONCU, JUZ PO ZAZNACZENIU PIERWSZEJ POZYCJI. Kolejnosc
+            # jest tu istotna z tego samego powodu, co kiedys przy notce o przerwanym
+            # wyszukiwaniu: zaznaczenie uruchamia Set-JezykResult, a ten nadpisuje pole
+            # Status opisem konta i gasi przycisk "!". Zdanie dopisane wczesniej zgineloby
+            # bez sladu - dokladnie tak, jak kiedys ginelo potwierdzenie odblokowania.
+            #
+            # Zadanie rusza takze wtedy, gdy po nazwie NIC nie znaleziono: to najczestszy
+            # przypadek przy szukaniu po numerze i wtedy wlasnie jest najbardziej potrzebne.
+            if (Test-JezykWygladaNaTelefon $tekst) {
+                $k.PasekSzukania.Visible = $true
+                $k.TxtStatus.Text = ('{0} Szukam jeszcze po numerze telefonu...' -f $k.TxtStatus.Text).Trim()
+                Start-JezykZadanieNumeru -Cyfry (Get-JezykCyfry $tekst)
             }
         }
     }
@@ -784,6 +821,84 @@ function Update-JezykUzytkownikaWTle {
     }
 
     Set-JezykInfo 'Uzytkownik' $(if ($Uzytkownik.Blad) { [string]$Uzytkownik.Szczegoly } else { '' })
+}
+
+<#
+.SYNOPSIS
+    Doklada do listy wyboru konta znalezione po NUMERZE TELEFONU - juz po tym, jak okno
+    pokazalo wynik wyszukiwania po nazwie.
+
+.DESCRIPTION
+    CZTERY ROZNE ODPOWIEDZI, NIE DWIE. Trafienia, "jest ich za wielu", "nie udalo sie
+    sprawdzic" i "nikogo nie ma" prowadza do zupelnie innych zdan w oknie, a pusta lista
+    umie powiedziec tylko to ostatnie.
+
+    DOKLEJAMY NA KONIEC, BEZ SORTOWANIA I BEZ RUSZANIA ZAZNACZENIA. Zapytanie trwa sekundy,
+    wiec operator zdazyl juz kogos wybrac i ma przed soba jego dane - przestawienie listy
+    albo zaznaczenia zabraloby mu to sprzed oczu w losowym momencie. Wyjatkiem jest lista
+    PUSTA: tam nie ma czego zabierac, a bez zaznaczenia trafienie nie pokazaloby sie samo.
+
+    ZBYT WIELU WLASCICIELI TO NIE USTERKA. Kontroler odpowiedzial i odpowiedz jest pelna -
+    wiemy na pewno, ze trafien jest wiecej niz limit. Przycisku "!" wiec nie zapalamy,
+    bo nie ma czego pod nim pokazac.
+#>
+function Update-JezykNumerWTle {
+    param($Wynik)
+
+    $k = $Script:Kontrolki
+    $k.PasekSzukania.Visible = $false
+
+    if ($Wynik.Przerwane) {
+        # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
+        # musi o tym wiedziec: ktos, kogo szukal, mogl sie na niej nie znalezc.
+        $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
+                             $k.TxtStatus.Text).Trim()
+        Set-JezykInfo 'Status' ([string]$Wynik.Powod)
+        return
+    }
+
+    if ($Wynik.ZaDuzo) {
+        # Bez cytowania wpisanej wartosci: od uruchomienia zadania minely sekundy i operator
+        # mogl juz zaczac wpisywac co innego - pole tekstowe niesie wtedy inny numer niz ten,
+        # ktorego dotyczy ta odpowiedz.
+        $k.TxtStatus.Text = ('{0} Tego numeru używa w domenie {1} więcej niż {2} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku, loginie albo adresie e-mail.' -f
+                             $k.TxtStatus.Text, $Script:Config.Domena, [int]$Script:Config.LimitNumeru).Trim()
+        return
+    }
+
+    $trafienia = @($Wynik.Trafienia)
+    if ($trafienia.Count -eq 0) { return }
+
+    $lista = $k.ListaKont
+
+    # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan, a dwa razy
+    # ta sama osoba na liscie wyglada jak usterka.
+    $juzSa = @{}
+    foreach ($pozycja in $lista.Items) { $juzSa[[string]$pozycja.Dn] = $true }
+
+    $nowe = @($trafienia | Where-Object { -not $juzSa.ContainsKey([string]$_.Dn) })
+    if ($nowe.Count -eq 0) { return }
+
+    $bylaPusta = ($lista.Items.Count -eq 0)
+
+    # Blokada zdarzen jak w Set-JezykListaKont: kazde dodanie pozycji wywoluje
+    # SelectedIndexChanged, wiec bez niej jedno doklejenie odpalaloby kilka pelnych
+    # zapytan do AD.
+    $Script:BlokadaZdarzen = $true
+    try { foreach ($pozycja in $nowe) { [void]$lista.Items.Add($pozycja) } }
+    finally { $Script:BlokadaZdarzen = $false }
+
+    if ($bylaPusta) {
+        # Okno mowi w tej chwili "Nie znaleziono konta" - a wlasnie znalezlismy. Zaznaczenie
+        # odpala Invoke-JezykWyborKonta, ktore wykona pelny odczyt i nadpisze caly widok
+        # kontem, wiec werdykt i status poprawiaja sie same.
+        $lista.SelectedIndex = 0
+    }
+    else {
+        $k.TxtStatus.Text = ('{0} Po numerze telefonu dołączono {1} {2} - sprawdź listę wyboru.' -f
+                             $k.TxtStatus.Text, $nowe.Count,
+                             (Get-JezykOdmiana $nowe.Count 'konto' 'konta' 'kont')).Trim()
+    }
 }
 
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka

@@ -55,6 +55,29 @@ function Test-JezykDn {
 
 <#
 .SYNOPSIS
+    Poddrzewo przeszukania po numerze dla WYBRANEJ domeny - puste, gdy jej nie wymieniono.
+
+.DESCRIPTION
+    Osobna funkcja, a nie wartosc policzona raz przy starcie: domena zmienia sie w trakcie
+    pracy okna, a nazwa wyrozniajaca konczy sie skladnikami DC tej jednej domeny. Wartosc
+    zapamietana przy starcie obowiazywalaby po przelaczeniu domeny nadal - i wskazywalaby
+    poddrzewo, ktorego w nowej domenie nie ma.
+
+    Normalizacja kluczy siedzi w Jezyk-1-Srodowisko.ps1, przy $Script:SzukajOd - tak samo
+    jak przy obu listach domen, ktorych uzywa Test-JezykWolnoOdblokowac.
+#>
+function Get-JezykSzukajOd {
+    param([string]$Domena)
+
+    $klucz = ([string]$Domena).Trim().ToLower()
+    if (-not $klucz) { return '' }
+    if ($Script:SzukajOd -isnot [hashtable]) { return '' }
+    if ($Script:SzukajOd.ContainsKey($klucz)) { return [string]$Script:SzukajOd[$klucz] }
+    return ''
+}
+
+<#
+.SYNOPSIS
     Czy nazwa hosta nalezy do ktorejs ze wskazanych domen?
 
 .DESCRIPTION
@@ -200,6 +223,27 @@ function Confirm-JezykUstawienia {
         }
     }
 
+    # Poddrzewo jest opcjonalne: brak wpisu to poprawny stan "szukaj od korzenia domeny".
+    # Wpis BLEDNY juz nie: -SearchBase z niepoprawna nazwa wyrozniajaca wywraca zapytanie,
+    # a jedynym objawem bylaby notka "przeszukanie numerow sie nie powiodlo" przy KAZDYM
+    # numerze - czyli usterka wygladajaca na awarie sieci.
+    if ($Script:Ustawienia.SzukajOd -isnot [hashtable]) {
+        $bledy += 'SzukajOd: ma być tablicą skrótów (@{}), a nie listą ani napisem.'
+    }
+    else {
+        foreach ($klucz in $Script:Ustawienia.SzukajOd.Keys) {
+            $domena = ([string]$klucz).Trim().ToLower()
+            $baza   = ([string]$Script:Ustawienia.SzukajOd[$klucz]).Trim()
+
+            if ($domeny -notcontains $domena) {
+                $bledy += 'SzukajOd: "{0}" nie ma na liście Domeny - to poddrzewo nigdy nie zostanie użyte.' -f $klucz
+            }
+            if ($baza -and -not (Test-JezykDn $baza)) {
+                $bledy += 'SzukajOd["{0}"]: "{1}" nie jest poprawną nazwą wyróżniającą (DN).' -f $klucz, $baza
+            }
+        }
+    }
+
     # SCCM jest opcjonalny: pusty serwer to poprawny stan "pole zostaje puste".
     $serwerSccm = [string]$Script:Ustawienia.SccmSerwer
     if ($serwerSccm) {
@@ -304,7 +348,8 @@ function New-JezykResult {
         [string]$Imie = '',
         [string]$Nazwisko = '',
         [string]$Email = '',
-        [string]$Telefon = '',
+        [string]$TelefonGlowny = '',
+        [string]$TelefonKomorkowy = '',
         [string]$Menedzer = '',
 
         [string]$Lokalizacja = '',
@@ -338,10 +383,13 @@ function New-JezykResult {
         Nazwisko = $Nazwisko
         Email    = $Email
 
-        # Numer JUZ WYBRANY (stacjonarny albo komorka) i przelozony JUZ ROZWIAZANY z nazwy
-        # wyrozniajacej na czytelny podpis - warstwa renderujaca dostaje gotowy tekst,
-        # bo wybor i rozwiazanie wymagaja pytania do katalogu, a tam ich robic nie wolno.
-        Telefon  = $Telefon
+        # OBA NUMERY OSOBNO, SUROWO. Sklejenie ich w jeden napis nalezy do widoku - to
+        # czysta decyzja o wygladzie i nie wymaga pytania do katalogu. Przelozony jest tu
+        # inaczej: przychodzi jako nazwa wyrozniajaca, a jej rozwiazanie na czytelny podpis
+        # to OSOBNE zapytanie do AD, wiec musi zapasc tutaj i schodzi nizej juz gotowe.
+        TelefonGlowny    = $TelefonGlowny
+        TelefonKomorkowy = $TelefonKomorkowy
+
         Menedzer = $Menedzer
 
         Lokalizacja = $Lokalizacja
@@ -1681,12 +1729,13 @@ function Get-JezykUserStatus {
 
         $lokalizacja = Get-JezykKatalogZeSciezki $user.CanonicalName
 
-        # Numer stacjonarny (LDAP: telephoneNumber), a gdy go nie ma - komorka (LDAP: mobile).
-        # W tej kolejnosci, bo pod numerem stacjonarnym odbierze takze zmiennik, a to wlasnie
-        # jest potrzebne osobie, ktora probuje sie z kims skontaktowac. Brak obu zostawia
-        # pole PUSTE - konto bez numeru to nie usterka, ta sama zasada co przy e-mailu.
-        $telefon = ([string]$user.OfficePhone).Trim()
-        if (-not $telefon) { $telefon = ([string]$user.MobilePhone).Trim() }
+        # OBA NUMERY, KAZDY OSOBNO (LDAP: telephoneNumber i mobile - w oknie AD "Glowny"
+        # i "Komorkowy"). Wczesniej komorka pokazywala sie WYLACZNIE wtedy, gdy nie bylo
+        # stacjonarnego, wiec przy koncie z dwoma numerami operator nie widzial tego, pod
+        # ktorym najlatwiej sie dodzwonic. Brak obu zostawia pola PUSTE - konto bez numeru
+        # to nie usterka, ta sama zasada co przy e-mailu.
+        $telefonGlowny    = ([string]$user.OfficePhone).Trim()
+        $telefonKomorkowy = ([string]$user.MobilePhone).Trim()
 
         # Rozwiazanie przelozonego ma WLASNY try wewnatrz - patrz Get-JezykPodpisMenedzera.
         # Serwer przekazujemy ten sam, z ktorego czytalismy konto: przelozony lezy zwykle
@@ -1728,7 +1777,8 @@ function Get-JezykUserStatus {
                                -Imie ([string]$user.GivenName) `
                                -Nazwisko ([string]$user.Surname) `
                                -Email ([string]$user.EmailAddress) `
-                               -Telefon $telefon `
+                               -TelefonGlowny $telefonGlowny `
+                               -TelefonKomorkowy $telefonKomorkowy `
                                -Menedzer $menedzer `
                                -LockoutTime $czasBlokady `
                                -Lokalizacja $lokalizacja `
@@ -1757,6 +1807,35 @@ function Get-JezykUserStatus {
         $opis = Get-JezykOpisBledu $_ 'Odczyt konta'
         return New-JezykResult -Login $Login -Status 'Error' `
                                -Message $opis.Krotki -Szczegoly $opis.Szczegoly
+    }
+}
+
+<#
+.SYNOPSIS
+    Sklada JEDNA pozycje listy wyboru z konta zwroconego przez AD.
+
+.DESCRIPTION
+    Wydzielone, bo pozycje powstaja w DWOCH miejscach: przy wyszukiwaniu po nazwie
+    (Find-JezykUsers) i w przestrzeni tla, ktora szuka po numerze. Tamta musi oddac oknu
+    pozycje GOTOWE, a nie surowe obiekty ADUser - inaczej skladanie opisu wedrowaloby do
+    widoku, ktoremu nie wolno pytac katalogu o nic.
+
+    Dwie kopie tego samego skladania rozjechalyby sie przy pierwszej zmianie opisu i lista
+    pokazywalaby konta znalezione po nazwie inaczej niz te same konta znalezione po numerze.
+#>
+function New-JezykPozycjaKonta {
+    param($Konto)
+
+    $nazwa = Get-JezykOsoba ([string]$Konto.DisplayName) ([string]$Konto.GivenName) ([string]$Konto.Surname)
+    # Bez nazwy wyswietlanej pokazujemy sam login, zamiast loginu z pustymi nawiasami.
+    $opis = if ($nazwa) { '{0} - {1}' -f $Konto.SamAccountName, $nazwa } else { [string]$Konto.SamAccountName }
+
+    [pscustomobject]@{
+        Typ         = 'Konto'
+        Login       = [string]$Konto.SamAccountName
+        Dn          = [string]$Konto.DistinguishedName
+        DisplayName = $nazwa
+        Opis        = $opis
     }
 }
 
@@ -1795,9 +1874,18 @@ function Get-JezykUserStatus {
     powiedziec tylko to pierwsze - i przy dwoch pozostalych po prostu klamie.
 #>
 function Find-JezykUsersPoNumerze {
-    param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '')
+    param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '', [string]$SzukajOd = '')
 
     $wynik = [pscustomobject]@{ Trafienia = @(); ZaDuzo = $false; Przerwane = $false; Powod = '' }
+
+    # BRAK SERWERA TO PRZERWANIE, A NIE PUSTA LISTA. Ta funkcja wykonuje sie w OSOBNEJ
+    # przestrzeni uruchomieniowej, gdzie $Script:Config nie istnieje - dawna wartosc
+    # zapasowa "$Script:Config.Domena" dalaby tam po cichu pusty adres i zapytanie o nikogo.
+    if (-not $Serwer) {
+        $wynik.Przerwane = $true
+        $wynik.Powod     = 'Nie przeszukano numerów telefonu: nie podano domeny do zapytania.'
+        return $wynik
+    }
 
     # Druga zapora mimo sprawdzenia u wolajacego: do wzorca maja trafic same cyfry ZAWSZE,
     # a nie tylko wtedy, gdy wyglada to na potrzebne. Gorna granica jak w E.164 - dluzszy
@@ -1811,7 +1899,6 @@ function Find-JezykUsersPoNumerze {
     # ostroznosc na zapas: log ze zgloszenia pokazal limit 1 przy skonfigurowanych dziesieciu.
     if ($Limit -lt 1) { $Limit = 10 }
 
-    $adres = if ($Serwer) { $Serwer } else { $Script:Config.Domena }
     $rdzen = if ($Cyfry.Length -gt 9) { $Cyfry.Substring($Cyfry.Length - 9) } else { $Cyfry }
 
     # APOSTROFY W FILTRZE SA CELOWE i nie wolno ich zamieniac na cudzyslowy: $nr ma dojsc do
@@ -1824,14 +1911,24 @@ function Find-JezykUsersPoNumerze {
     $pola  = 'DisplayName', 'GivenName', 'Surname', 'OfficePhone', 'MobilePhone'
     $filtr = 'OfficePhone -like $nr -or MobilePhone -like $nr'
 
+    # PODDRZEWO DOKLADAMY TYLKO WTEDY, GDY JE PODANO. -SearchBase z pusta wartoscia nie
+    # znaczy "od korzenia" - modul AD odrzuca ja bledem, wiec pusty klucz w ustawieniach
+    # wywrocilby wyszukiwanie zamiast zostawic je bez zmian.
+    $dodatkowe = @{}
+    if ($SzukajOd) { $dodatkowe['SearchBase'] = $SzukajOd }
+
     try {
         # OBIE WARTOSCI, NIE JEDNA. -ResultSetSize konczy CZYTANIE odpowiedzi, a
         # -ResultPageSize konczy SZUKANIE: kontroler oddaje strone, gdy tylko ja zapelni,
         # wiec przy stronie rownej limitowi przestaje przegladac domene po jedenastym
         # trafieniu, zamiast szukac dalej do konca.
-        $trafienia = @(Get-ADUser -Filter $filtr -Server $adres -Properties $pola `
+        #
+        # To ratuje WYLACZNIE numer infolinii. Numer nalezacy do jednej osoby nie zapelni
+        # strony NIGDY, wiec kontroler i tak przeglada wszystkie konta - stad to zapytanie
+        # chodzi w tle, a nie w watku okna.
+        $trafienia = @(Get-ADUser -Filter $filtr -Server $Serwer -Properties $pola `
                                   -ResultPageSize ($Limit + 1) -ResultSetSize ($Limit + 1) `
-                                  -ErrorAction Stop)
+                                  @dodatkowe -ErrorAction Stop)
     }
     catch {
         # "NIE UDALO SIE SPRAWDZIC" TO NIE TO SAMO, CO "NIKOGO NIE MA". Pusta lista zwrocona
@@ -1839,7 +1936,7 @@ function Find-JezykUsersPoNumerze {
         # czego nie wiemy. Przyczyna idzie w calosci pod przycisk "!".
         $wynik.Przerwane = $true
         $wynik.Powod     = 'Nie udało się przeszukać numerów telefonu w domenie "{0}": {1}' -f
-                           $adres, $_.Exception.Message
+                           $Serwer, $_.Exception.Message
         return $wynik
     }
 
@@ -1859,6 +1956,32 @@ function Find-JezykUsersPoNumerze {
     })
 
     return $wynik
+}
+
+<#
+.SYNOPSIS
+    Wejscie zadania w tle: szuka po numerze i oddaje GOTOWE pozycje listy wyboru.
+
+.DESCRIPTION
+    Cala zawartosc tej funkcji dalaby sie wpisac wprost w tekst skladany przez
+    New-JezykSkryptTla - i wlasnie dlatego jej tam nie ma. Kod zyjacy w napisie nie
+    wykonuje sie w zestawie weryfikacyjnym ani razu, a tutaj wykonuje sie w calosci.
+
+    Przeliczenie surowych obiektow ADUser na pozycje listy MUSI zapasc po tej stronie,
+    czyli jeszcze w przestrzeni tla: widok dostaje wtedy to samo, co przy wyszukiwaniu po
+    nazwie, i nie musi wiedziec, skad pozycja przyszla.
+#>
+function Find-JezykPozycjePoNumerze {
+    param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '', [string]$SzukajOd = '')
+
+    $odp = Find-JezykUsersPoNumerze -Cyfry $Cyfry -Limit $Limit -Serwer $Serwer -SzukajOd $SzukajOd
+
+    [pscustomobject]@{
+        Trafienia = @($odp.Trafienia | ForEach-Object { New-JezykPozycjaKonta $_ })
+        ZaDuzo    = [bool]$odp.ZaDuzo
+        Przerwane = [bool]$odp.Przerwane
+        Powod     = [string]$odp.Powod
+    }
 }
 
 <#
@@ -1888,7 +2011,7 @@ function Find-JezykUsers {
 
     # Ksztalt wyniku jest JEDEN dla wszystkich pieciu stanow - wolajacy nie moze musiec
     # sprawdzac, czy dane pole w ogole istnieje.
-    $pusty = [pscustomobject]@{ Status = 'Empty'; Konta = @(); Szczegoly = ''; PrzerwanoNumer = $false
+    $pusty = [pscustomobject]@{ Status = 'Empty'; Konta = @(); Szczegoly = ''
                                 Message = 'Wpisz login, imię i nazwisko, e-mail, numer telefonu albo login@domena i kliknij "Szukaj".' }
     if ([string]::IsNullOrWhiteSpace($Fragment)) { return $pusty }
 
@@ -1931,69 +2054,15 @@ function Find-JezykUsers {
                                    -ResultSetSize ($limit + 1) `
                                    -ErrorAction Stop)
 
-        # NUMER TELEFONU. Osobne zapytanie, bo numer nie zaczyna sie od wpisanego tekstu -
-        # zwykly filtr "od poczatku wartosci" nie ma szans trafic w "+48 123 456 789",
-        # gdy wpisano "123456789". Odpala sie WYLACZNIE wtedy, gdy wpis wyglada na numer:
-        # inaczej kazde wyszukanie po nazwisku ciagneloby za soba drugie, kosztowne
-        # przeszukanie katalogu.
+        # NUMERU TELEFONU TA FUNKCJA JUZ NIE SZUKA - robi to zadanie w tle
+        # (Start-JezykZadanieNumeru), a wynik dokleja do listy Update-JezykNumerWTle.
+        # Powod: telephoneNumber i mobile NIE SA w AD indeksowane, a filtr ma gwiazdke na
+        # poczatku wartosci, wiec numer nalezacy do JEDNEJ osoby zmusza kontroler do
+        # przejrzenia wszystkich kont. Trzymane tutaj, kazalo oknu czekac na to przegladanie
+        # takze wtedy, gdy konta po nazwie byly gotowe po dwoch dziesiatych sekundy.
         #
-        # Wlasny try, jak przy kontaktach: wyszukiwanie po numerze jest DODATKIEM. Odmowa
-        # odczytu tych atrybutow nie moze przeslonic kont znalezionych po nazwie.
-        $poNumerze   = @()
-        $przerwane   = $false
-        $zaDuzoNumer = $false
-        $powodNumeru = ''
-        if (Test-JezykWygladaNaTelefon $Fragment) {
-            try {
-                $odpNumer    = Find-JezykUsersPoNumerze -Cyfry (Get-JezykCyfry $Fragment) `
-                                                        -Limit ([int]$Script:Config.LimitNumeru) `
-                                                        -Serwer $Script:Config.Domena
-                $poNumerze   = @($odpNumer.Trafienia)
-
-                # PRZERWANIE PODROZUJE DALEJ. Nieudane zapytanie o numery znaczy
-                # "nie zdazylem sprawdzic", a nie "nikogo nie ma" -
-                # i wolajacy musi umiec te dwie rzeczy rozroznic.
-                $przerwane   = [bool]$odpNumer.Przerwane
-                $zaDuzoNumer = [bool]$odpNumer.ZaDuzo
-                $powodNumeru = [string]$odpNumer.Powod
-            }
-            catch {
-                $poNumerze   = @()
-                $przerwane   = $true
-                $powodNumeru = 'Wyszukiwanie po numerze telefonu zawiodło: {0}' -f $_.Exception.Message
-            }
-
-            # ZBYT WIELU WLASCICIELI TEGO NUMERU KONCZY WYSZUKIWANIE OD RAZU, i to wlasnym
-            # komunikatem. Wspolne "Doprecyzuj wpisaną wartość" jest przy numerze rada pusta -
-            # numeru nie da sie doprecyzowac, mozna tylko poszukac czego innego, i to trzeba
-            # powiedziec wprost. Kontaktow juz nie pytamy: ich filtr idzie po nazwie, a numer
-            # w nazwe kontaktu nie trafi.
-            #
-            # To NIE JEST przerwanie: kontroler odpowiedzial i odpowiedz jest pelna w tym
-            # sensie, ze wiemy juz na pewno, iz trafien jest wiecej niz limit. Znacznika
-            # PrzerwanoNumer wiec nie zapalamy, a pod "!" nie ma czego pokazac - to zwykla
-            # odpowiedz, nie usterka.
-            if ($zaDuzoNumer) {
-                $zaWielu = 'Numeru "{0}" używa w domenie {1} więcej niż {2} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku, loginie albo adresie e-mail.' -f
-                           $Fragment, $Script:Config.Domena, [int]$Script:Config.LimitNumeru
-
-                return [pscustomobject]@{
-                    Status         = 'TooMany'
-                    Konta          = @()
-                    Message        = $zaWielu
-                    Szczegoly      = ''
-                    PrzerwanoNumer = $false
-                }
-            }
-
-            # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan,
-            # a dwa razy ta sama osoba na liscie wyglada jak usterka.
-            $juzSa = @{}
-            foreach ($u in $znalezione) { $juzSa[[string]$u.DistinguishedName] = $true }
-
-            $znalezione = @($znalezione) +
-                          @($poNumerze | Where-Object { -not $juzSa.ContainsKey([string]$_.DistinguishedName) })
-        }
+        # Zapytanie po nazwie zostaje synchroniczne: idzie po atrybutach indeksowanych,
+        # z gwiazdka na KONCU wartosci, wiec wraca od razu i nie ma czego przenosic w tlo.
 
         # KONTAKTY. Nazwy atrybutow SUROWE, jak w LDAP (name, displayName, givenName, sn,
         # mail): Get-ADObject nie ma mapy przyjaznych nazw, ktora jest w Get-ADUser, wiec
@@ -2027,46 +2096,28 @@ function Find-JezykUsers {
         $lacznie = $znalezione.Count + $kontakty.Count
 
         if ($lacznie -eq 0) {
-            # NIEUDANE WYSZUKIWANIE NIE MOZE WYJSC JAKO "NIE MA TAKIEJ OSOBY". Zero trafien
-            # po bledzie zapytania nie jest odpowiedzia katalogu, tylko brakiem odpowiedzi -
-            # a te dwie rzeczy prowadza do zupelnie innych krokow.
-            $komunikat = if ($przerwane) {
-                'Nie dokończono wyszukiwania po numerze w domenie {0}: po nazwie nic nie znaleziono, a przeszukanie numerów się nie powiodło - przyczyna pod przyciskiem "!". Poszukaj po nazwisku, loginie albo adresie e-mail.' -f $Script:Config.Domena
-            } else {
-                'Nie znaleziono konta ani kontaktu pasującego do "{0}" w domenie {1}.' -f $Fragment, $Script:Config.Domena
-            }
-
+            # O NUMERZE NIE MA TU JUZ MOWY. Wyszukiwanie po numerze chodzi osobno i w tej
+            # chwili moze jeszcze trwac, wiec ta odpowiedz mowi wylacznie o tym, co
+            # sprawdzono: o nazwie. Spoznione trafienie po numerze potrafi ten stan cofnac -
+            # patrz Update-JezykNumerWTle w Jezyk-3-Widok.ps1.
             return [pscustomobject]@{
-                Status         = 'NotFound'
-                Konta          = @()
-                Message        = $komunikat
-                Szczegoly      = $powodNumeru
-                PrzerwanoNumer = $przerwane
+                Status    = 'NotFound'
+                Konta     = @()
+                Message   = ('Nie znaleziono konta ani kontaktu pasującego do "{0}" w domenie {1}.' -f $Fragment, $Script:Config.Domena)
+                Szczegoly = ''
             }
         }
 
         if ($lacznie -gt $limit) {
             return [pscustomobject]@{
-                Status         = 'TooMany'
-                Konta          = @()
-                Message        = ('Zbyt wiele trafień (ponad {0}). Doprecyzuj wpisaną wartość.' -f $limit)
-                Szczegoly      = $powodNumeru
-                PrzerwanoNumer = $przerwane
+                Status    = 'TooMany'
+                Konta     = @()
+                Message   = ('Zbyt wiele trafień (ponad {0}). Doprecyzuj wpisaną wartość.' -f $limit)
+                Szczegoly = ''
             }
         }
 
-        $konta = @(foreach ($u in ($znalezione | Sort-Object SamAccountName)) {
-            $nazwa = Get-JezykOsoba ([string]$u.DisplayName) ([string]$u.GivenName) ([string]$u.Surname)
-            # Bez nazwy wyswietlanej pokazujemy sam login, zamiast loginu z pustymi nawiasami.
-            $opis = if ($nazwa) { '{0} - {1}' -f $u.SamAccountName, $nazwa } else { [string]$u.SamAccountName }
-            [pscustomobject]@{
-                Typ         = 'Konto'
-                Login       = [string]$u.SamAccountName
-                Dn          = [string]$u.DistinguishedName
-                DisplayName = $nazwa
-                Opis        = $opis
-            }
-        })
+        $konta = @($znalezione | Sort-Object SamAccountName | ForEach-Object { New-JezykPozycjaKonta $_ })
 
         # Kontakt niesie DN zamiast loginu - nie ma sAMAccountName, wiec to jedyna
         # tozsamosc, po ktorej da sie go pozniej odczytac.
@@ -2109,17 +2160,16 @@ function Find-JezykUsers {
         if ($wpisy.Count) { $czesci += '{0} {1}' -f $wpisy.Count, (Get-JezykOdmiana $wpisy.Count 'kontakt' 'kontakty' 'kontaktów') }
 
         [pscustomobject]@{
-            Status         = 'Ok'
-            Konta          = @($pozycje)
-            Message        = ('Znaleziono {0}.' -f ($czesci -join ' i '))
-            Szczegoly      = $powodNumeru
-            PrzerwanoNumer = $przerwane
+            Status    = 'Ok'
+            Konta     = @($pozycje)
+            Message   = ('Znaleziono {0}.' -f ($czesci -join ' i '))
+            Szczegoly = ''
         }
     }
     catch {
         $opis = Get-JezykOpisBledu $_ 'Wyszukiwanie'
         [pscustomobject]@{ Status = 'Error'; Konta = @(); Message = $opis.Krotki
-                           Szczegoly = $opis.Szczegoly; PrzerwanoNumer = $false }
+                           Szczegoly = $opis.Szczegoly }
     }
 }
 
@@ -2171,11 +2221,11 @@ function Get-JezykKontaktStatus {
         $nazwa = Get-JezykOsoba ([string]$kontakt.displayName) ([string]$kontakt.givenName) ([string]$kontakt.sn)
         if (-not $nazwa) { $nazwa = [string]$kontakt.Name }
 
-        # Ta sama kolejnosc co przy koncie: stacjonarny przed komorka. Nazwy atrybutow
-        # SUROWE, bo Get-ADObject nie ma mapy przyjaznych nazw, ktora jest w Get-ADUser -
+        # Oba numery osobno, tak samo jak przy koncie. Nazwy atrybutow SUROWE, bo
+        # Get-ADObject nie ma mapy przyjaznych nazw, ktora jest w Get-ADUser -
         # "OfficePhone" bylby dla niego nieznanym atrybutem.
-        $telefon = ([string]$kontakt.telephoneNumber).Trim()
-        if (-not $telefon) { $telefon = ([string]$kontakt.mobile).Trim() }
+        $telefonGlowny    = ([string]$kontakt.telephoneNumber).Trim()
+        $telefonKomorkowy = ([string]$kontakt.mobile).Trim()
 
         # BEZ Szczegolow: udany odczyt kontaktu to sukces, a Szczegoly zapalaja przy polu
         # Status przycisk "!", ktory ma znaczyc wylacznie "cos nie dziala".
@@ -2185,7 +2235,8 @@ function Get-JezykKontaktStatus {
                                -Imie ([string]$kontakt.givenName) `
                                -Nazwisko ([string]$kontakt.sn) `
                                -Email ([string]$kontakt.mail) `
-                               -Telefon $telefon `
+                               -TelefonGlowny $telefonGlowny `
+                               -TelefonKomorkowy $telefonKomorkowy `
                                -Lokalizacja $lokalizacja `
                                -KontoUtworzono $utworzono `
                                -Dn ([string]$kontakt.DistinguishedName) `

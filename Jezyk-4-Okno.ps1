@@ -303,22 +303,30 @@ function Set-JezykWidok {
 # czy skonczyla. Zegar, a nie BeginInvoke na kontrolce: zdarzenie zegara wykonuje sie NA
 # WATKU INTERFEJSU, wiec znika cala klasa bledow z dostepem z obcego watku.
 #
-# TRZY ZADANIA, NIE JEDNO, i kazde z wlasnym LICZNIKIEM POKOLEN. Liczone razem oddawaly wynik
+# PIEC ZADAN, NIE JEDNO, i kazde z wlasnym LICZNIKIEM POKOLEN. Liczone razem oddawaly wynik
 # dopiero wtedy, gdy skonczyly wszystkie - data czekalaby na SCCM. Pokolenia odrzucaja wynik
 # starego zadania, ktory dotarl po przelaczeniu na inne konto: inaczej dane jednego
 # uzytkownika wpisalyby sie do okna opisujacego juz kogos innego.
 #
-# Trzecie zadanie (uzytkownik maszyny) nalezy do WIDOKU KOMPUTERA, a dwa pierwsze do widoku
+# Zadanie uzytkownika maszyny nalezy do WIDOKU KOMPUTERA, a logowanie i komputer do widoku
 # konta - naraz pracuje wiec najwyzej jedna strona okna. Wlasny licznik i tak jest konieczny:
 # widoki przelaczaja sie w trakcie trwania zapytania.
+#
+# PIATE ZADANIE - NUMER TELEFONU - stoi obok pozostalych, bo nalezy do WYSZUKIWANIA, a nie
+# do wyswietlonego konta. Wlasny licznik pokolen jest tu szczegolnie potrzebny: operator
+# klika "Szukaj" dwa razy pod rzad, a to zapytanie trwa najdluzej ze wszystkich, wiec
+# odpowiedz na PIERWSZY numer potrafi dojsc juz po wpisaniu drugiego i dokleilaby do listy
+# kogos, kogo nikt nie szukal.
 $Script:PokolenieLogowania  = 0
 $Script:PokolenieKomputera  = 0
 $Script:PokolenieUzytkownika = 0
 $Script:PokoleniePingu      = 0
+$Script:PokolenieNumeru     = 0
 $Script:ZadanieLogowania    = $null
 $Script:ZadanieKomputera    = $null
 $Script:ZadanieUzytkownika  = $null
 $Script:ZadaniePingu        = $null
+$Script:ZadanieNumeru       = $null
 $Script:ZegarTla            = $null
 
 # Nazwa maszyny z ostatniej odpowiedzi SCCM - jedyne zrodlo prawdy dla przycisku "Pinguj".
@@ -412,7 +420,7 @@ $Script:LogowaniePrzyblizone = $null
     musi byc PIERWSZA instrukcja skryptu.
 #>
 function New-JezykSkryptTla {
-    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping')][string]$Zadanie)
+    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer')][string]$Zadanie)
 
     if ($Script:SkryptyTla.ContainsKey($Zadanie)) { return $Script:SkryptyTla[$Zadanie] }
 
@@ -426,7 +434,31 @@ function New-JezykSkryptTla {
               'Invoke-JezykZapytanieWmi', 'Invoke-JezykZapytanieWmiStare',
               'Invoke-JezykZapytanieSccm', 'ConvertTo-JezykCzasLokalny')
 
-    if ($Zadanie -eq 'Ping') {
+    if ($Zadanie -eq 'Numer') {
+        # WYSZUKIWANIE PO NUMERZE TELEFONU. Najwolniejsze z pieciu zadan i jedyne, ktorego
+        # czasu nie da sie skrocic: telephoneNumber i mobile NIE SA w AD indeksowane, wiec
+        # kontroler przeglada konto po koncie. -ResultPageSize przerywa to przegladanie
+        # tylko przy numerze nalezacym do wielu osob; numer jednej osoby zmusza kontroler
+        # do przejscia calej domeny i tego nie obejdzie zaden filtr.
+        #
+        # DOMKNIECIE PRZECHODNIE, nie pierwszy poziom: Find-JezykPozycjePoNumerze wola
+        # Find-JezykUsersPoNumerze i New-JezykPozycjaKonta, ta pierwsza wola Get-JezykCyfry
+        # i Test-JezykNumerPasuje, a druga Get-JezykOsoba. Pominiecie ktorejkolwiek konczy
+        # sie wyjatkiem WEWNATRZ przestrzeni, ktorego okno nie zobaczy - zobaczy tylko brak
+        # wyniku.
+        $funkcje = 'Get-JezykCyfry', 'Test-JezykNumerPasuje', 'Get-JezykOsoba',
+                   'New-JezykPozycjaKonta', 'Find-JezykUsersPoNumerze',
+                   'Find-JezykPozycjePoNumerze'
+
+        # IMPORT BEZWARUNKOWY, inaczej niz przy dacie logowania. Tam modul AD bywa
+        # niepotrzebny i dlatego import jest pod warunkiem; tutaj Get-ADUser jest JEDYNA
+        # droga, wiec warunek tylko odsuwalby ten sam koszt o jedna linijke.
+        $naglowek  = 'param($Cyfry, $Limit, $Serwer, $SzukajOd)'
+        $naglowek += "`r`n" + 'Import-Module ActiveDirectory -ErrorAction SilentlyContinue'
+        $wywolanie = 'Find-JezykPozycjePoNumerze -Cyfry $Cyfry -Limit $Limit' +
+                     ' -Serwer $Serwer -SzukajOd $SzukajOd'
+    }
+    elseif ($Zadanie -eq 'Ping') {
         # NAJLZEJSZE Z CZTERECH ZADAN: sama sonda ICMP na znanej juz nazwie maszyny.
         # Osobne, bo przycisk "Pinguj" ma sprawdzic dostepnosc PONOWNIE, nie powtarzac
         # calego zapytania do SCCM - tamto trwa sekundy i pytaloby o to samo, co juz wiadomo.
@@ -688,6 +720,59 @@ function Start-JezykZadaniePingu {
     }
 }
 
+<#
+.SYNOPSIS
+    Uruchamia w tle wyszukiwanie kont po NUMERZE TELEFONU.
+
+.DESCRIPTION
+    Piate zadanie i jedyne, ktore nalezy do WYSZUKIWANIA, a nie do konta juz pokazanego
+    w oknie. Wczesniej to zapytanie szlo wprost z Find-JezykUsers, czyli na watku
+    interfejsu, i okno stalo przez cale przegladanie katalogu - takze wtedy, gdy konta po
+    nazwie byly gotowe od razu.
+
+    ZADNEGO ODCZYTU ZE $Script:Config PO STRONIE PRZESTRZENI: adres domeny, limit
+    i poddrzewo ida jako ARGUMENTY. Przestrzen startuje pusta i o konfiguracji nie wie nic.
+#>
+function Start-JezykZadanieNumeru {
+    param([string]$Cyfry)
+
+    Stop-JezykZadanieNumeru
+    if (-not $Cyfry) { return }
+
+    $Script:PokolenieNumeru++
+    $mojePokolenie = $Script:PokolenieNumeru
+
+    try {
+        $zegar = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $zadanie = New-JezykPrzestrzenTla (New-JezykSkryptTla 'Numer')
+        [void]$zadanie.Ps.AddArgument($Cyfry).
+                          AddArgument([int]$Script:Config.LimitNumeru).
+                          AddArgument([string]$Script:Config.Domena).
+                          AddArgument([string](Get-JezykSzukajOd $Script:Config.Domena))
+
+        $Script:ZadanieNumeru = [pscustomobject]@{
+            Ps          = $zadanie.Ps
+            Przestrzen  = $zadanie.Przestrzen
+            Uchwyt      = $zadanie.Ps.BeginInvoke()
+            Pokolenie   = $mojePokolenie
+            Przerwane   = $false
+            PorzuconeO  = $null
+        }
+
+        Add-JezykDiagnostyke 'uruchomienie zadania wyszukiwania po numerze' $zegar.ElapsedMilliseconds
+
+        if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
+    }
+    catch {
+        # Nieudane uruchomienie to PRZERWANIE, a nie pusty wynik: nie sprawdzilismy niczego,
+        # wiec okno nie moze powiedziec, ze nikogo nie ma.
+        Update-JezykNumerWTle -Wynik ([pscustomobject]@{
+            Trafienia = @(); ZaDuzo = $false; Przerwane = $true
+            Powod     = 'Nie udało się uruchomić wyszukiwania po numerze telefonu: {0}' -f $_.Exception.Message })
+    }
+}
+
 # Odbiera wynik zadania daty logowania, jesli juz jest gotowy. Wynik z niezgodnego pokolenia
 # jest odrzucany - dotyczylby konta, ktorego nie ma juz na ekranie.
 function Receive-JezykZadanieLogowania {
@@ -762,6 +847,28 @@ function Receive-JezykZadaniePingu {
         }
     }
     finally { Stop-JezykZadaniePingu }
+}
+
+# Odbiera trafienia po numerze telefonu. Wynik z niezgodnego pokolenia jest odrzucany -
+# dotyczylby numeru, ktorego operator juz nie szuka.
+function Receive-JezykZadanieNumeru {
+    $zadanie = $Script:ZadanieNumeru
+    if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
+
+    try {
+        $dane = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))
+        if ($zadanie.Pokolenie -eq $Script:PokolenieNumeru -and $dane.Count -gt 0) {
+            Update-JezykNumerWTle -Wynik $dane[0]
+        }
+    }
+    catch {
+        if ($zadanie.Pokolenie -eq $Script:PokolenieNumeru) {
+            Update-JezykNumerWTle -Wynik ([pscustomobject]@{
+                Trafienia = @(); ZaDuzo = $false; Przerwane = $true
+                Powod     = 'Wyszukiwanie po numerze telefonu zawiodło: {0}' -f $_.Exception.Message })
+        }
+    }
+    finally { Stop-JezykZadanieNumeru }
 }
 
 <#
@@ -931,6 +1038,13 @@ function Stop-JezykZadaniePingu {
     Stop-JezykZadanieTla $zadanie
 }
 
+function Stop-JezykZadanieNumeru {
+    if (-not $Script:ZadanieNumeru) { return }
+    $zadanie = $Script:ZadanieNumeru
+    $Script:ZadanieNumeru = $null
+    Stop-JezykZadanieTla $zadanie
+}
+
 # Sprzatanie przy zamykaniu okna. Zatrzymanie zegara musi byc OSTATNIE: porzucenie
 # trwajacego zadania dopisuje je do listy i samo URUCHAMIA zegar, wiec zatrzymany najpierw
 # wstawalby z powrotem - w trakcie zamykania okna, gdy kontrolki sa juz zwalniane.
@@ -939,6 +1053,7 @@ function Stop-JezykZadaniaTla {
     Stop-JezykZadanieKomputera
     Stop-JezykZadanieUzytkownika
     Stop-JezykZadaniePingu
+    Stop-JezykZadanieNumeru
 
     # Ostatnie podejscie do porzuconych; reszta odchodzi razem z procesem.
     Clear-JezykZadaniaPorzucone
@@ -1055,11 +1170,30 @@ function New-JezykForm {
     $btnSzukaj.BackColor = $Script:Config.KolorKontrolki
     $btnSzukaj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
 
-    # Pole wypelnia to, co zostalo miedzy lista trybu a przyciskiem, wiec prawa krawedz
-    # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej.
+    # PASEK "SZUKAM JESZCZE" - jedyny znak, ze cos trwa po oddaniu listy. Wyszukiwanie po
+    # numerze telefonu chodzi w tle i potrafi trwac sekundy; bez tego paska okno wyglada na
+    # gotowe, a operator nie wie, ze warto poczekac.
+    #
+    # Marquee, a nie obrazek: animacje rysuje system, wiec nie trzeba pliku z klatkami
+    # (repozytorium nie ma zadnych zasobow binarnych) i chodzi poprawnie przy kazdym DPI.
+    # Rusza sie NAPRAWDE tylko dlatego, ze zapytanie zeszlo do przestrzeni w tle - przy
+    # dawnym zapytaniu na watku interfejsu ten sam pasek stalby zamrozony.
+    $szerokoscPaska = 80
+
+    $pasekSzukania           = New-Object System.Windows.Forms.ProgressBar
+    $pasekSzukania.Style     = [System.Windows.Forms.ProgressBarStyle]::Marquee
+    $pasekSzukania.Width     = $szerokoscPaska
+    $pasekSzukania.Height    = 10
+    $pasekSzukania.Left      = $btnSzukaj.Left - $przerwa - $szerokoscPaska
+    $pasekSzukania.Visible   = $false
+
+    # Pole wypelnia to, co zostalo miedzy lista trybu a paskiem, wiec prawa krawedz
+    # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej. Pasek jest UKRYTY przez
+    # wiekszosc czasu, ale miejsce zabiera zawsze - pole zwezajace sie przy starcie
+    # wyszukiwania przeskakiwaloby pod kursorem.
     $txtSzukaj           = New-Object System.Windows.Forms.TextBox
     $txtSzukaj.Left      = $cmbTryb.Right + $przerwa
-    $txtSzukaj.Width     = $btnSzukaj.Left - $przerwa - $txtSzukaj.Left
+    $txtSzukaj.Width     = $pasekSzukania.Left - $przerwa - $txtSzukaj.Left
     # Zabezpieczenie przed wklejeniem calego akapitu tekstu.
     $txtSzukaj.MaxLength = 256
 
@@ -1258,7 +1392,7 @@ function New-JezykForm {
     $lblAutor.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
 
     $form.Controls.AddRange(@($lblDomena, $cmbDomena, $lblPodaj, $cmbTryb,
-                              $txtSzukaj, $btnSzukaj, $cmbWynik,
+                              $txtSzukaj, $pasekSzukania, $btnSzukaj, $cmbWynik,
                               $pnlKonto, $pnlKomputer, $lblAutor))
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
@@ -1268,7 +1402,7 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
     Set-JezykSrodekPionowy @($lblDomena, $cmbDomena) $srodekDomeny
-    Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
+    Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $pasekSzukania, $btnSzukaj) $srodekPodaj
 
     # Zapas nad wysokoscia tekstu jest konieczny: kwadrat ma stale 13 px i w ciasnym
     # prostokacie nie miescil sie razem z napisem.
@@ -1333,6 +1467,7 @@ function New-JezykForm {
         Tryb          = $cmbTryb
         PoleSzukaj    = $txtSzukaj
         Przycisk      = $btnSzukaj
+        PasekSzukania = $pasekSzukania
         ListaKont     = $cmbWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
@@ -1389,6 +1524,7 @@ function New-JezykForm {
         Receive-JezykZadanieKomputera
         Receive-JezykZadanieUzytkownika
         Receive-JezykZadaniePingu
+        Receive-JezykZadanieNumeru
 
         Clear-JezykZadaniaPorzucone
 
@@ -1401,6 +1537,7 @@ function New-JezykForm {
         # uruchamia zadanie w tle, zegar rusza i przy pierwszym takcie je zwalnia.
         if (-not $Script:ZadanieLogowania -and -not $Script:ZadanieKomputera -and
             -not $Script:ZadanieUzytkownika -and -not $Script:ZadaniePingu -and
+            -not $Script:ZadanieNumeru -and
             @($Script:ZadaniaPorzucone).Count -eq 0) {
             $Script:ZegarTla.Stop()
         }
