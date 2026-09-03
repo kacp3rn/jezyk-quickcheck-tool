@@ -116,18 +116,21 @@ $Script:MapaJeza = @(
 #
 # MIERZ JE W PIKSELACH EKRANU, A NIE W KRATKACH MAPY. Komorka sprite'u ma przy 100% DPI
 # dokladnie JEDEN piksel (pas jest wysoki na tyle, co lista domen), wiec caly jez zajmuje
-# 21 na 18 pikseli - a pierwsze jablko, 6 na 7 kratek, bylo w oknie prawie niewidoczne.
-# Osiem na dziewiec kratek to niemal dwa razy tyle czerwieni i dopiero tyle widac.
+# 21 na 18 pikseli. Pierwsze jablko (6 na 7 kratek) bylo w oknie prawie niewidoczne, a nawet
+# po powiekszeniu do 8 na 9 wciaz bylo za male. DZIESIEC NA DZIESIEC TO GRANICA, NIE
+# PRZYPADEK: kolumny 1-10 (z 21) i wiersze 0-9 (z 18) siedza CALE przed kolumna 11, w ktorej
+# zaczyna sie pysk - jablko szersze albo wyzsze zaczeloby zjadac oko i policzek jeza.
 $Script:MapaJablka = @(
-    '...#....'
-    '.zzz#...'
-    '.ccwwcc.'
-    'ccccc**c'
-    'cccccc*c'
-    'cccccccc'
-    'cccccccc'
-    '.cccccc.'
-    '..cccc..'
+    '....#.....'
+    '..zzz#....'
+    '.cccwwccc.'
+    'ccccccc**c'
+    'cccccccc*c'
+    'cccccccccc'
+    'cccccccccc'
+    'cccccccccc'
+    '.cccccccc.'
+    '..cccccc..'
 )
 
 # Gdzie jablko siada na jezu - na zadzie, miedzy kolcami.
