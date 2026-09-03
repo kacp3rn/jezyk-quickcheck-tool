@@ -416,7 +416,11 @@ function Invoke-JezykSearch {
     # Przy zapytaniu synchronicznym jez jest widoczny, ale NIERUCHOMY: klatki odmierza zegar
     # na watku interfejsu, a ten stoi wtedy w zapytaniu. Zapytania po nazwie ida po atrybutach
     # indeksowanych i trwaja ulamek sekundy, wiec jez mignie - i tyle ma zrobic.
-    Set-JezykPostepSzukania $true
+    Set-JezykStanJeza 'Szuka'
+
+    # Domyslnie "nie znaleziono": finally biegnie takze po wyjatku, a wyjatek na pewno nie
+    # jest udanym wyszukaniem.
+    $znaleziono = $false
 
     # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie jeza pojawilyby sie
     # dopiero po zakonczeniu zapytania, czyli gdy nie sa juz potrzebne.
@@ -424,11 +428,15 @@ function Invoke-JezykSearch {
 
     try {
         if ($tryb -eq $Script:Config.TrybKomputer) {
-            Set-JezykComputerResult -Result (Get-JezykComputerStatus -Netbios $tekst)
+            # Wynik do zmiennej, a nie wprost w argument: jego status decyduje o pozie jeza.
+            $wynik = Get-JezykComputerStatus -Netbios $tekst
+            Set-JezykComputerResult -Result $wynik
+            $znaleziono = ($wynik.Status -eq 'Ok')
         }
         else {
             $lista = Find-JezykUsers -Fragment $tekst
             Set-JezykListaKont -Konta $lista.Konta
+            $znaleziono = ($lista.Status -eq 'Ok')
 
             if ($lista.Status -eq 'Ok') {
                 # Przypisanie zaznaczenia odpala Invoke-JezykWyborKonta, ktore wykona pelny
@@ -465,10 +473,17 @@ function Invoke-JezykSearch {
         $okno.UseWaitCursor = $false
         $k.Przycisk.Enabled = $true
 
-        # Jez gasnie, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma biec
-        # dalej, az wynik dojdzie. Nieudany start zostawia $Script:ZadanieNumeru pusty,
-        # wiec jez gasnie takze wtedy.
-        if (-not $Script:ZadanieNumeru) { Set-JezykPostepSzukania $false }
+        # Jez STAJE Z WYNIKIEM, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma
+        # biec dalej, bo werdykt jeszcze nie jest znany. Nieudany start zostawia
+        # $Script:ZadanieNumeru pusty, wiec jez staje takze wtedy.
+        #
+        # Poza zostaje na ekranie az do nastepnego klikniecia "Szukaj".
+        if (-not $Script:ZadanieNumeru) {
+            # Wynik przez ZMIENNA, a nie wprost w argumencie: "Polecenie (if ...)" nie jest
+            # poprawne w Windows PowerShell 5.1.
+            $stan = if ($znaleziono) { 'Jablko' } else { 'NaPlecach' }
+            Set-JezykStanJeza $stan
+        }
     }
 }
 
@@ -861,106 +876,125 @@ function Update-JezykNumerWTle {
     param($Wynik)
 
     $k = $Script:Kontrolki
-    Set-JezykPostepSzukania $false
 
-    if ($Wynik.Przerwane) {
-        # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
-        # musi o tym wiedziec: ktos, kogo szukal, mogl sie na niej nie znalezc.
-        $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
-                             $k.TxtStatus.Text).Trim()
-        Set-JezykInfo 'Status' ([string]$Wynik.Powod)
-        return
-    }
+    try {
+        if ($Wynik.Przerwane) {
+            # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
+            # musi o tym wiedziec: ktos, kogo szukal, mogl sie na niej nie znalezc.
+            $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
+                                 $k.TxtStatus.Text).Trim()
+            Set-JezykInfo 'Status' ([string]$Wynik.Powod)
+            return
+        }
 
-    if ($Wynik.ZaDuzo) {
-        # Bez cytowania wpisanej wartosci: od uruchomienia zadania minely sekundy i operator
-        # mogl juz zaczac wpisywac co innego - pole tekstowe niesie wtedy inny numer niz ten,
-        # ktorego dotyczy ta odpowiedz.
-        #
-        # Jedno zdanie na oba przypadki: czyta sie i samodzielnie, i doklejone za innym.
-        $zaWielu = 'Numeru używa w domenie {0} więcej niż {1} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku albo loginie.' -f
-                   $Script:Config.Domena, [int]$Script:Config.LimitNumeru
+        if ($Wynik.ZaDuzo) {
+            # Bez cytowania wpisanej wartosci: od uruchomienia zadania minely sekundy i operator
+            # mogl juz zaczac wpisywac co innego - pole tekstowe niesie wtedy inny numer niz ten,
+            # ktorego dotyczy ta odpowiedz.
+            #
+            # Jedno zdanie na oba przypadki: czyta sie i samodzielnie, i doklejone za innym.
+            $zaWielu = 'Numeru używa w domenie {0} więcej niż {1} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku albo loginie.' -f
+                       $Script:Config.Domena, [int]$Script:Config.LimitNumeru
 
-        if ($k.ListaKont.Items.Count -eq 0) {
-            # PUSTA LISTA ZNACZY, ZE OKNO MOWI TERAZ "Nie znaleziono konta ani kontaktu" -
-            # czyli NIEPRAWDE, i to dokladnie odwrotna do stanu faktycznego: kont z tym
-            # numerem nie brakuje, jest ich za wielu. Doklejone na koncu wyjasnienie ginelo
-            # poza widoczna czescia pola, wiec operator czytal tylko to pierwsze zdanie.
-            # Dlatego ZASTEPUJEMY, a nie doklejamy - razem z werdyktem.
-            $k.TxtStatus.Text     = $zaWielu
-            $k.Werdykt.Text       = 'Numer należy do wielu osób'
-            $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
+            if ($k.ListaKont.Items.Count -eq 0) {
+                # PUSTA LISTA ZNACZY, ZE OKNO MOWI TERAZ "Nie znaleziono konta ani kontaktu" -
+                # czyli NIEPRAWDE, i to dokladnie odwrotna do stanu faktycznego: kont z tym
+                # numerem nie brakuje, jest ich za wielu. Doklejone na koncu wyjasnienie ginelo
+                # poza widoczna czescia pola, wiec operator czytal tylko to pierwsze zdanie.
+                # Dlatego ZASTEPUJEMY, a nie doklejamy - razem z werdyktem.
+                $k.TxtStatus.Text     = $zaWielu
+                $k.Werdykt.Text       = 'Numer należy do wielu osób'
+                $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
+            }
+            else {
+                # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
+                # i ma zostac. Numer dopisuje sie za nim jako druga, osobna informacja.
+                $k.TxtStatus.Text = ('{0} {1}' -f $k.TxtStatus.Text, $zaWielu).Trim()
+            }
+            return
+        }
+
+        $trafienia = @($Wynik.Trafienia)
+        if ($trafienia.Count -eq 0) { return }
+
+        $lista = $k.ListaKont
+
+        # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan, a dwa razy
+        # ta sama osoba na liscie wyglada jak usterka.
+        $juzSa = @{}
+        foreach ($pozycja in $lista.Items) { $juzSa[[string]$pozycja.Dn] = $true }
+
+        $nowe = @($trafienia | Where-Object { -not $juzSa.ContainsKey([string]$_.Dn) })
+        if ($nowe.Count -eq 0) { return }
+
+        $bylaPusta = ($lista.Items.Count -eq 0)
+
+        # Blokada zdarzen jak w Set-JezykListaKont: kazde dodanie pozycji wywoluje
+        # SelectedIndexChanged, wiec bez niej jedno doklejenie odpalaloby kilka pelnych
+        # zapytan do AD.
+        $Script:BlokadaZdarzen = $true
+        try { foreach ($pozycja in $nowe) { [void]$lista.Items.Add($pozycja) } }
+        finally { $Script:BlokadaZdarzen = $false }
+
+        if ($bylaPusta) {
+            # Okno mowi w tej chwili "Nie znaleziono konta" - a wlasnie znalezlismy. Zaznaczenie
+            # odpala Invoke-JezykWyborKonta, ktore wykona pelny odczyt i nadpisze caly widok
+            # kontem, wiec werdykt i status poprawiaja sie same.
+            $lista.SelectedIndex = 0
         }
         else {
-            # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
-            # i ma zostac. Numer dopisuje sie za nim jako druga, osobna informacja.
-            $k.TxtStatus.Text = ('{0} {1}' -f $k.TxtStatus.Text, $zaWielu).Trim()
+            $k.TxtStatus.Text = ('{0} Po numerze telefonu dołączono {1} {2} - sprawdź listę wyboru.' -f
+                                 $k.TxtStatus.Text, $nowe.Count,
+                                 (Get-JezykOdmiana $nowe.Count 'konto' 'konta' 'kont')).Trim()
         }
-        return
     }
-
-    $trafienia = @($Wynik.Trafienia)
-    if ($trafienia.Count -eq 0) { return }
-
-    $lista = $k.ListaKont
-
-    # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan, a dwa razy
-    # ta sama osoba na liscie wyglada jak usterka.
-    $juzSa = @{}
-    foreach ($pozycja in $lista.Items) { $juzSa[[string]$pozycja.Dn] = $true }
-
-    $nowe = @($trafienia | Where-Object { -not $juzSa.ContainsKey([string]$_.Dn) })
-    if ($nowe.Count -eq 0) { return }
-
-    $bylaPusta = ($lista.Items.Count -eq 0)
-
-    # Blokada zdarzen jak w Set-JezykListaKont: kazde dodanie pozycji wywoluje
-    # SelectedIndexChanged, wiec bez niej jedno doklejenie odpalaloby kilka pelnych
-    # zapytan do AD.
-    $Script:BlokadaZdarzen = $true
-    try { foreach ($pozycja in $nowe) { [void]$lista.Items.Add($pozycja) } }
-    finally { $Script:BlokadaZdarzen = $false }
-
-    if ($bylaPusta) {
-        # Okno mowi w tej chwili "Nie znaleziono konta" - a wlasnie znalezlismy. Zaznaczenie
-        # odpala Invoke-JezykWyborKonta, ktore wykona pelny odczyt i nadpisze caly widok
-        # kontem, wiec werdykt i status poprawiaja sie same.
-        $lista.SelectedIndex = 0
-    }
-    else {
-        $k.TxtStatus.Text = ('{0} Po numerze telefonu dołączono {1} {2} - sprawdź listę wyboru.' -f
-                             $k.TxtStatus.Text, $nowe.Count,
-                             (Get-JezykOdmiana $nowe.Count 'konto' 'konta' 'kont')).Trim()
+    finally {
+        # POZA Z KONCOWEGO STANU LISTY, a nie z tego, co oddalo samo zadanie. Po nazwie mogl
+        # sie ktos znalezc, choc numer nie dal nic - i odwrotnie: przy liscie pustej to
+        # wlasnie numer jest jedynym trafieniem, jakie w ogole padlo.
+        #
+        # finally, a nie koniec funkcji: cztery odpowiedzi wychodza stad przez return,
+        # wiec poza postawiona na koncu nie doczekalaby sie zadnej z nich.
+        $stan = if ($k.ListaKont.Items.Count -gt 0) { 'Jablko' } else { 'NaPlecach' }
+        Set-JezykStanJeza $stan
     }
 }
 
 <#
 .SYNOPSIS
-    Zapala i gasi jeza - jedyny wskaznik pracy okna.
+    Ustawia stan jeza - jedyny wskaznik pracy i wyniku wyszukiwania.
 
 .DESCRIPTION
-    JEDNO MIEJSCE NA DWIE CZYNNOSCI. Wskaznik to kontrolka ORAZ zegar animacji; rozpisane
-    po trzech miejscach wywolania rozjechalyby sie przy pierwszej zmianie i zostawilyby
-    zegar chodzacy nad niewidocznym jezem.
+    CZTERY STANY: Ukryty (nic sie nie dzieje), Szuka (biegnie), Jablko (znaleziono),
+    NaPlecach (nie znaleziono). Poza z wynikiem zostaje na ekranie az do nastepnego
+    wyszukiwania - to ona, a nie zniknieciecie wskaznika, jest odpowiedzia dla operatora.
+
+    JEDNO MIEJSCE NA WSZYSTKIE CZYNNOSCI. Wskaznik to kontrolka, licznik klatek ORAZ zegar
+    animacji; rozpisane po miejscach wywolania rozjechalyby sie przy pierwszej zmianie
+    i zostawilyby zegar chodzacy nad nieruchomym obrazkiem.
+
+    LICZNIK KLATEK ZERUJEMY WYLACZNIE PRZY 'Szuka'. Poza ma zostac tam, gdzie jez skonczyl
+    biec, wiec wyzerowanie go przy stawianiu pozy odrzucaloby jeza z powrotem na start.
+
+    INVALIDATE JEST TU KONIECZNE. Przejscie 'Szuka' -> 'Jablko' nie zmienia Visible, wiec
+    bez niego kontrolka nie przerysowalaby sie wcale i operator ogladalby biegnacego jeza
+    zamrozonego w ostatniej klatce.
 
     ZEGARA MOZE NIE BYC. Zestaw weryfikacyjny nie buduje okna, wiec $Script:ZegarJeza jest
     tam pusty - straz jest ta sama, co przy $Script:ZegarTla w Jezyk-4-Okno.ps1.
-
-    Rysowania tu nie ma i byc nie moze: atrapa kontrolki w zestawie zna Visible, ale nie zna
-    Invalidate. Przerysowanie zamawia wylacznie takt zegara.
 #>
-function Set-JezykPostepSzukania {
-    param([bool]$Pracuje)
+function Set-JezykStanJeza {
+    param([ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan)
 
-    $Script:Kontrolki.JezSzukania.Visible = $Pracuje
+    $Script:StanJeza = $Stan
+    $Script:Kontrolki.JezSzukania.Visible = ($Stan -ne 'Ukryty')
 
-    # Zerowanie licznika klatek: po ponownym klinieciu "Szukaj" jez ma ruszyc od lewej
-    # krawedzi, a nie pojawic sie w polowie pasa w miejscu, w ktorym zastalo go poprzednie
-    # wyszukiwanie.
-    if ($Pracuje) { $Script:KlatkaJeza = 0 }
+    if ($Stan -eq 'Szuka') { $Script:KlatkaJeza = 0 }
+
+    $Script:Kontrolki.JezSzukania.Invalidate()
 
     if ($Script:ZegarJeza) {
-        if ($Pracuje) { $Script:ZegarJeza.Start() } else { $Script:ZegarJeza.Stop() }
+        if ($Stan -eq 'Szuka') { $Script:ZegarJeza.Start() } else { $Script:ZegarJeza.Stop() }
     }
 }
 

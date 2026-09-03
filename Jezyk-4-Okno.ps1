@@ -109,19 +109,95 @@ $Script:MapaJeza = @(
 # sprawdzenie. Color::FromArgb jest czysta struktura i dziala wszedzie, wiec paleta
 # moze tu stac. Pedzle powstaja leniwie w Set-JezykRysunekJeza, ktore wola wylacznie
 # procedura Paint - a tej zestaw nie wykonuje nigdy.
+# JABLKO, ktore jez dostaje po udanym wyszukaniu. Nakladka na sylwetke, a NIE osobna
+# mapa osiemnastowierszowa: druga kopia jeza rozjechalaby sie z pierwsza przy pierwszej
+# zmianie rysunku. Ogonek bierze '#', a polysk '*' - oba kolory juz sa, wiec paleta rosnie
+# tylko o czerwien, jej cien i listek.
+$Script:MapaJablka = @(
+    '...#..'
+    '..zz#.'
+    '.cc*c.'
+    'cccc*c'
+    'ccwccc'
+    'ccwccc'
+    '.cccc.'
+)
+
+# Gdzie jablko siada na jezu - na zadzie, miedzy kolcami.
+$Script:JablkoWiersz  = 0
+$Script:JablkoKolumna = 1
+
 $Script:PaletaJeza = @{
-    '#' = [System.Drawing.Color]::FromArgb(60, 25, 4)      # kolce, oko, lapy
+    '#' = [System.Drawing.Color]::FromArgb(60, 25, 4)      # kolce, oko, lapy, ogonek jablka
     '+' = [System.Drawing.Color]::FromArgb(147, 93, 37)    # cien na pysku
     'o' = [System.Drawing.Color]::FromArgb(215, 141, 62)   # pysk
-    '*' = [System.Drawing.Color]::FromArgb(237, 176, 101)  # rozjasnienia
+    '*' = [System.Drawing.Color]::FromArgb(237, 176, 101)  # rozjasnienia, polysk jablka
+    'c' = [System.Drawing.Color]::FromArgb(198, 48, 42)    # czerwien jablka
+    'w' = [System.Drawing.Color]::FromArgb(146, 26, 26)    # cien jablka
+    'z' = [System.Drawing.Color]::FromArgb(94, 148, 58)    # listek
 }
 
 $Script:PedzleJeza = $null   # bufor pedzli, zakladany przy pierwszym rysowaniu
 $Script:ZegarJeza  = $null   # zegar animacji - OSOBNY od $Script:ZegarTla
-$Script:KlatkaJeza = 0       # licznik klatek, zerowany przy kazdym zapaleniu
+$Script:KlatkaJeza = 0       # licznik klatek, zerowany przy KAZDYM ZAPALENIU, ale nie przy pozie
+$Script:StanJeza   = 'Ukryty'   # Ukryty | Szuka | Jablko | NaPlecach
 
 $Script:TaktJeza = 60        # ms miedzy klatkami, czyli okolo 16 klatek na sekunde
 $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
+
+<#
+.SYNOPSIS
+    Rysunek jeza dla zadanego stanu - gotowa mapa znakow, bez GDI.
+
+.DESCRIPTION
+    NA PLECACH TO ODBICIE W PIONIE, A NIE OBROT O 180 STOPNI. Jez ma zostac zwrocony w te
+    sama strone, co przy biegu - kolce maja lezec na ziemi, a lapy sterczec do gory.
+    Obrot odwrocilby go takze w poziomie i wygladalby jak inne zwierze.
+
+    SAMO ODBICIE NIE WYSTARCZA. Lapy zostawaly w tym samym ciemnym odcieniu, co grzbiet,
+    i przy osiemnastu pikselach wysokosci zlewaly sie z sylwetka - poza czytala sie jak
+    "jez z odchylona glowa", a nie jak "jez na plecach". Rysujemy je wiec na dwa piksele
+    i w jasnym odcieniu brzucha, zeby odcialy sie od kolcow.
+
+    JABLKO NAKLADAMY NA KOPIE, I TO NIE JEST OSTROZNOSC NA WYROST. Napisy w PowerShellu sa
+    niezmienne, ale TABLICA juz nie: podmiana wiersza w $Script:MapaJeza zatrulaby biegnacego
+    jeza na cala reszte sesji, a zobaczylby to dopiero ktos przy DRUGIM wyszukiwaniu. Rzutowanie
+    na [string[]] alokuje nowa tablice - @() wokol istniejacej tablicy tego NIE gwarantuje.
+
+    Wszystkie pozy maja te same wymiary, co $Script:MapaJeza. Na tym stoi cala arytmetyka
+    klatki, ktora szerokosc jeza liczy raz. Pilnuje tego Weryfikacja/testy-uklad.ps1.
+#>
+function Get-JezykSpriteJeza {
+    param([ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan)
+
+    if ($Stan -eq 'NaPlecach') {
+        $ostatni    = @($Script:MapaJeza).Count - 1
+        $odwrocona  = [string[]]($Script:MapaJeza[$ostatni..0])
+
+        # Lapy to slad ostatniego wiersza sylwetki, czyli wlasnie te, po ktorych jez chodzil.
+        $lapy = $odwrocona[0] -replace '[^.]', 'o'
+        $odwrocona[0] = $lapy
+        $odwrocona[1] = $lapy
+        return @($odwrocona)
+    }
+
+    if ($Stan -ne 'Jablko') { return @($Script:MapaJeza) }
+
+    $sprite = [string[]]@($Script:MapaJeza)
+    for ($w = 0; $w -lt @($Script:MapaJablka).Count; $w++) {
+        $wiersz   = $Script:JablkoWiersz + $w
+        $linia    = $sprite[$wiersz]
+        $nakladka = $Script:MapaJablka[$w]
+        for ($k = 0; $k -lt $nakladka.Length; $k++) {
+            # '.' w nakladce znaczy "tu jablka nie ma" - kolce maja zostac widoczne.
+            if ($nakladka[$k] -eq '.') { continue }
+            $kolumna = $Script:JablkoKolumna + $k
+            $linia = $linia.Substring(0, $kolumna) + $nakladka[$k] + $linia.Substring($kolumna + 1)
+        }
+        $sprite[$wiersz] = $linia
+    }
+    @($sprite)
+}
 
 <#
 .SYNOPSIS
@@ -142,9 +218,18 @@ $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 
     PODSKOK NIE MOZE PRZEKROCZYC ZAPASU nad jezem. Przy pasie akurat tak wysokim, jak mapa,
     kolysanie wypchneloby go poza gorna krawedz i obcieloby mu kolce.
+
+    POZA Z WYNIKIEM ZOSTAJE TAM, GDZIE JEZ SKONCZYL BIEC - ale PRZYCIETA do pasa, i bez tego
+    przyciecia byloby jej nie widac wcale. Klatka zerowa stoi CALA za lewa krawedzia (jez ma
+    z niej dopiero wbiec), a wyszukanie po nazwisku trwa ulamek sekundy i zegar animacji nie
+    tyka ani razu - wiec kazda poza po zapytaniu synchronicznym siedzialaby poza pasem.
+
+    PRZYCINAMY OD GORY, POTEM OD DOLU. Odwrotna kolejnosc daje liczbe UJEMNA, gdy pas jest
+    wezszy od jeza: gorna granica jest wtedy sama w sobie ujemna.
 #>
 function Get-JezykKlatkaJeza {
-    param([int]$Numer, [int]$Szerokosc, [int]$Wysokosc)
+    param([int]$Numer, [int]$Szerokosc, [int]$Wysokosc,
+          [ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan = 'Szuka')
 
     $wierszy = @($Script:MapaJeza).Count
     if ($wierszy -eq 0 -or $Szerokosc -le 0 -or $Wysokosc -le 0) { return $null }
@@ -162,10 +247,20 @@ function Get-JezykKlatkaJeza {
     $podskok = if (($Numer % 4) -lt 2) { 0 } else { 1 }
     if ($podskok -gt $zapas) { $podskok = $zapas }
 
+    # Start caly za lewa krawedzia: jez ma WBIEC w pas, a nie mrugnac w jego srodku.
+    $x = (($Numer * $krok) % $droga) - $szerokoscJeza
+
+    if ($Stan -ne 'Szuka') {
+        # Jez stoi z wynikiem: nie kolysze sie i nie wychodzi poza pas.
+        $podskok = 0
+        $prawa = $Szerokosc - $szerokoscJeza
+        if ($x -gt $prawa) { $x = $prawa }
+        if ($x -lt 0)      { $x = 0 }
+    }
+
     [pscustomobject]@{
         Komorka = $komorka
-        # Start caly za lewa krawedzia: jez ma WBIEC w pas, a nie mrugnac w jego srodku.
-        X       = (($Numer * $krok) % $droga) - $szerokoscJeza
+        X       = $x
         # Jez stoi na dnie pasa, a podskok unosi go o jedna komorke.
         Y       = $zapas - $podskok
     }
@@ -186,8 +281,11 @@ function Get-JezykKlatkaJeza {
 function Set-JezykRysunekJeza {
     param($Grafika, [int]$Szerokosc, [int]$Wysokosc)
 
-    $klatka = Get-JezykKlatkaJeza -Numer $Script:KlatkaJeza -Szerokosc $Szerokosc -Wysokosc $Wysokosc
+    $klatka = Get-JezykKlatkaJeza -Numer $Script:KlatkaJeza -Szerokosc $Szerokosc `
+                                  -Wysokosc $Wysokosc -Stan $Script:StanJeza
     if (-not $klatka) { return }
+
+    $sprite = @(Get-JezykSpriteJeza -Stan $Script:StanJeza)
 
     if (-not $Script:PedzleJeza) {
         $Script:PedzleJeza = @{}
@@ -199,8 +297,8 @@ function Set-JezykRysunekJeza {
     # Piksel-art ma byc ostry - wygladzanie rozmyloby krawedzie komorek.
     $Grafika.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
 
-    for ($w = 0; $w -lt @($Script:MapaJeza).Count; $w++) {
-        $linia = $Script:MapaJeza[$w]
+    for ($w = 0; $w -lt $sprite.Count; $w++) {
+        $linia = $sprite[$w]
         for ($k = 0; $k -lt $linia.Length; $k++) {
             $pedzel = $Script:PedzleJeza[[string]$linia[$k]]
             if (-not $pedzel) { continue }   # '.' - w tym miejscu ma byc widac tlo okna
@@ -438,6 +536,10 @@ function Set-JezykWidok {
 
     Clear-JezykKonto
     Clear-JezykKomputer
+
+    # Widok i lista wlasnie zniknely, wiec jez z jablkiem opowiadalby o wyniku, ktorego
+    # nikt juz nie widzi. Wolane takze przy starcie okna - stad stan poczatkowy.
+    Set-JezykStanJeza 'Ukryty'
 
     $gora = if ($zListą) { $Script:PanelZListą } else { $Script:PanelBezListy }
 
@@ -1331,8 +1433,10 @@ function New-JezykForm {
     $btnSzukaj.BackColor = $Script:Config.KolorKontrolki
     $btnSzukaj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
 
-    # JEZ - znak, ze okno pracuje. Zapala sie przy KAZDYM klinieciu "Szukaj" (patrz
-    # Set-JezykPostepSzukania w Jezyk-3-Widok.ps1), a gasnie, gdy nie ma juz na co czekac.
+    # JEZ - znak, ze okno pracuje, i odpowiedz, gdy skonczy. Zaczyna biec przy KAZDYM
+    # klinieciu "Szukaj", a gdy nie ma juz na co czekac, staje: z jablkiem, jesli cos sie
+    # znalazlo, albo na plecach, jesli nie. Poza zostaje az do nastepnego wyszukiwania.
+    # Wszystkie cztery stany ustawia Set-JezykStanJeza w Jezyk-3-Widok.ps1.
     #
     # STOI W WOLNEJ, PRAWEJ CZESCI WIERSZA DOMENY - nad polem wyszukiwania i przyciskiem
     # "Szukaj". To miejsce BYLO JUZ PUSTE, wiec jez nie zabral szerokosci zadnej kontrolce
@@ -1743,7 +1847,9 @@ function New-JezykForm {
     # kilkunastu klatek na sekunde. Zlaczone w jeden albo zamulilyby jeden koniec, albo
     # drugi budzilyby bez potrzeby.
     #
-    # Chodzi WYLACZNIE wtedy, gdy jez jest widoczny - zapala go i gasi Set-JezykPostepSzukania.
+    # Chodzi WYLACZNIE w stanie 'Szuka' - zapala go i zatrzymuje Set-JezykStanJeza. Poza
+    # z wynikiem jest NIERUCHOMA, wiec zegar ma przy niej stac: zegar chodzacy nad statycznym
+    # obrazkiem budzilby watek interfejsu kilkanascie razy na sekunde do konca dnia.
     $zegarJeza          = New-Object System.Windows.Forms.Timer
     $zegarJeza.Interval = $Script:TaktJeza
     $zegarJeza.Add_Tick({
