@@ -1111,6 +1111,45 @@ function ConvertTo-JezykCzasLokalny {
 
 <#
 .SYNOPSIS
+    Odrebne konta widoczne na maszynie wg CurrentLogonUser/LastLogonUser/PrimaryUser.
+
+.DESCRIPTION
+    Trzy pola bywaja zapisane raz jako "konto", raz jako "DOMENA\konto", a PrimaryUser
+    dodatkowo bywa LISTA kont oddzielonych przecinkami - porownanie idzie wiec po nazwie
+    konta bez przedrostka domeny i bez wzgledu na wielkosc liter. Wiecej niz jedno odrebne
+    konto znaczy, ze maszyna jest wspoldzielona: pokazana data aktywnosci moze wtedy
+    dotyczyc zupelnie innej osoby niz ta, ktorej szukamy.
+
+    Czysta funkcja bez zaleznosci od SCCM/CIM - latwa do przetestowania bez atrapowania
+    calej sesji.
+#>
+function Get-JezykKontaMaszyny {
+    param($Wiersz)
+
+    $konta    = New-Object System.Collections.Generic.List[string]
+    $widziane = @{}
+    $surowe   = @([string]$Wiersz.CurrentLogonUser, [string]$Wiersz.LastLogonUser) +
+                @(([string]$Wiersz.PrimaryUser) -split ',')
+
+    foreach ($wpis in $surowe) {
+        $czysty = $wpis.Trim()
+        if (-not $czysty) { continue }
+
+        $bezDomeny = ($czysty -split '\\')[-1]
+        $klucz     = $bezDomeny.ToLowerInvariant()
+        if ($widziane.ContainsKey($klucz)) { continue }
+
+        $widziane[$klucz] = $true
+        $konta.Add($bezDomeny)
+    }
+
+    # Przecinek wymuszony: bez niego PowerShell rozpakowuje tablice 0/1-elementowa przy
+    # zwrocie z funkcji, a wolajacy dostaje $null albo goly string zamiast tablicy.
+    return ,$konta.ToArray()
+}
+
+<#
+.SYNOPSIS
     Ostatnio uzywany komputer - z inwentaryzacji SCCM, bo AD tego nie przechowuje.
 
 .DESCRIPTION
@@ -1121,6 +1160,10 @@ function ConvertTo-JezykCzasLokalny {
     Data pochodzi z LastActiveTime w SMS_CombinedDeviceResources, a NIE z
     SMS_R_System.LastLogonTimestamp - tamto pole to moment uwierzytelnienia konta
     komputera w domenie i pod nazwa komputera wygladaloby jak data pracy uzytkownika.
+
+    Wspoldzielony/SzczegolyWspoldzielenia dziala wylacznie, gdy trafilo pierwsze zrodlo
+    (SMS_CombinedDeviceResources) - tylko ono niesie CurrentLogonUser/LastLogonUser/
+    PrimaryUser w wierszu wyniku, patrz Get-JezykKontaMaszyny.
 #>
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
@@ -1130,7 +1173,8 @@ function Get-JezykOstatnioUzywanyKomputer {
     # $null w Odpowiada znaczy "nie sprawdzono albo nie wiadomo" i tak ma zostac na kazdej
     # sciezce bledu - patrz Get-JezykPingKomputera.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
-                                Blad = ''; Szczegoly = '' }
+                                Blad = ''; Szczegoly = ''
+                                Wspoldzielony = $false; SzczegolyWspoldzielenia = '' }
 
     # Login pochodzi z AD, wiec jest bezpieczny - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1184,7 +1228,8 @@ function Get-JezykOstatnioUzywanyKomputer {
         # przecinkami - tam dopasowanie musi byc fragmentem.
         $zrodla = @(
             @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
-               Wql   = "SELECT ResourceID, Name, LastActiveTime FROM SMS_CombinedDeviceResources " +
+               Wql   = "SELECT ResourceID, Name, LastActiveTime, CurrentLogonUser, LastLogonUser, PrimaryUser " +
+                       "FROM SMS_CombinedDeviceResources " +
                        "WHERE CurrentLogonUser = '$bezpieczny' OR CurrentLogonUser LIKE '%\\$doWzorca' " +
                        "OR LastLogonUser = '$bezpieczny' OR LastLogonUser LIKE '%\\$doWzorca' " +
                        "OR PrimaryUser LIKE '%$doWzorca%'" }
@@ -1302,6 +1347,19 @@ function Get-JezykOstatnioUzywanyKomputer {
         if (-not $nazwa) { $nazwa = $najlepsza.Name }
         $wynik.Nazwa = [string]$nazwa
         $wynik.Data  = $najData
+
+        # Wieloosobowosc sprawdzamy WYLACZNIE, gdy trafilo pierwsze zrodlo - tylko ono
+        # niesie CurrentLogonUser/LastLogonUser/PrimaryUser w wierszu (zrodla 2 i 3 tych
+        # pol w ogole nie znaja, wiec dla nich nie ma jak tego rozstrzygnac).
+        if ($zrodlo -eq $zrodla[0].Nazwa) {
+            $konta = Get-JezykKontaMaszyny -Wiersz $najlepsza
+            if ($konta.Count -gt 1) {
+                $wynik.Wspoldzielony = $true
+                $wynik.SzczegolyWspoldzielenia =
+                    'SCCM zna na tej maszynie więcej niż jedno konto ({0}) - pokazana data i nazwa mogą dotyczyć innej osoby niż {1}.' -f
+                        ($konta -join ', '), $Login
+            }
+        }
 
         # SONDA ICMP TUTAJ, A NIE W OKNIE. Zapytanie idzie juz w przestrzeni uruchomieniowej
         # w tle, wiec ping nie kosztuje watku interfejsu ani jednej milisekundy - a policzony

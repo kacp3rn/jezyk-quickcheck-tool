@@ -767,7 +767,9 @@ function New-JezykSkryptTla {
         # Wejsciem jest droga OD LOGINU DO MASZYNY. Get-JezykPingKomputera dochodzi TYLKO
         # tutaj, a nie do wspolnej listy $sccm: droga odwrotna (uzytkownik maszyny) nie
         # pinguje niczego, a funkcja wstrzyknieta bez potrzeby to martwy kod w przestrzeni.
-        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykOstatnioUzywanyKomputer')
+        # Get-JezykKontaMaszyny dochodzi tu z tego samego powodu, co Get-JezykPingKomputera -
+        # wola ja Get-JezykOstatnioUzywanyKomputer, wiec bez niej zadanie konczy sie cisza.
+        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykKontaMaszyny', 'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
         $naglowek  = 'param($Login, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
@@ -1558,7 +1560,8 @@ function New-JezykForm {
     # niewidoczne; pokazuje je Set-JezykInfo wylacznie wtedy, gdy dana funkcja faktycznie
     # nie dziala. Wspolrzedne dostaja na koncu tej funkcji, razem z calym wyrownaniem.
     #
-    # ZOSTALY DWA, przy jedynych polach, ktore potrafia zglosic realna usterke. Odpadly:
+    # ZOSTALY DWA CZERWONE, przy jedynych polach, ktore potrafia zglosic realna usterke.
+    # Odpadly:
     #   Domena, Ostatnie logowanie - stale wyjasnienia bez zwiazku z awaria,
     #   Odblokuj konto - powody wylaczenia przycisku ("najpierw znajdz konto", "konto nie
     #     jest zablokowane") to normalne stany, a nie bledy; wykrzyknik zapalal sie tam
@@ -1567,6 +1570,14 @@ function New-JezykForm {
     # Jezyk-1-Srodowisko.ps1 w Kod-Jezyk.ps1 - traci tylko podpiecie pod GUI.
     $btnInfoStatus   = New-JezykPrzyciskInfo 'Status'
     $btnInfoKomputer = New-JezykPrzyciskInfo 'Komputer'
+
+    # Trzeci, NIEBIESKI: nie usterka, tylko realna niejednoznacznosc - maszyna, ktora wg
+    # SCCM ma wiecej niz jedno konto. Wlasny kolor nadpisany PO utworzeniu, zeby nie ruszac
+    # sygnatury New-JezykPrzyciskInfo uzywanej przez pozostale, czerwone przyciski.
+    $btnInfoKomputerWspoldzielony = New-JezykPrzyciskInfo 'KomputerWspoldzielony'
+    $btnInfoKomputerWspoldzielony.BackColor = $Script:Config.KolorInfoTlo
+    $btnInfoKomputerWspoldzielony.ForeColor = $Script:Config.KolorInfo
+    $btnInfoKomputerWspoldzielony.FlatAppearance.BorderColor = $Script:Config.KolorInfo
 
     # Komputer stoi przy e-mailu, a nie przy dacie logowania: data pokazuje DWIE wartosci
     # naraz i nie miesci sie w kolumnie, a adres e-mail nigdy nie potrzebowal calej szerokosci.
@@ -1652,7 +1663,8 @@ function New-JezykForm {
         $lblOstatniaZmiana, $txtOstatniaZmiana, $lblKontoUtworzono, $txtKontoUtworzono,
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
         $lblOstatnieLogowanie, $txtOstatnieLogowanie,
-        $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer, $btnPinguj,
+        $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
+        $btnInfoKomputerWspoldzielony, $btnPinguj,
         $lblKomputerIp, $txtKomputerIp,
         $lblKatalog, $txtKatalog, $lblStatus, $txtStatus, $btnInfoStatus))
 
@@ -1759,7 +1771,7 @@ function New-JezykForm {
     # Stawiane NA SAMYM KONCU wyrownania, bo licza sie z rzeczywistej szerokosci etykiet,
     # a te znaja swoja szerokosc dopiero po odziedziczeniu czcionki okna - i po tym, jak
     # wyrownanie wyzej poprzestawialo im wspolrzedne pionowe.
-    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik)) {
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik, $btnInfoKomputerWspoldzielony)) {
         # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
         # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
@@ -1773,6 +1785,11 @@ function New-JezykForm {
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer   $lblKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
+
+    # Drugi przycisk stoi TUZ ZA pierwszym, nie za etykieta - Top dziedziczy z niego (obaj
+    # centruja sie wzgledem tej samej etykiety), Left dosuwa sie o wlasna szerokosc + odstep.
+    $btnInfoKomputerWspoldzielony.Top  = $btnInfoKomputer.Top
+    $btnInfoKomputerWspoldzielony.Left = $btnInfoKomputer.Left + $btnInfoKomputer.Width + 4
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
@@ -1824,9 +1841,10 @@ function New-JezykForm {
 
         # Przyciski "!". Klucze celowo nazwane "Info" + klucz z Set-JezykInfo - ta funkcja
         # skleja nazwe sama, wiec dolozenie kolejnego pola nie wymaga jej edycji.
-        InfoStatus     = $btnInfoStatus
-        InfoKomputer   = $btnInfoKomputer
-        InfoUzytkownik = $btnInfoUzytkownik
+        InfoStatus                = $btnInfoStatus
+        InfoKomputer              = $btnInfoKomputer
+        InfoUzytkownik            = $btnInfoUzytkownik
+        InfoKomputerWspoldzielony = $btnInfoKomputerWspoldzielony
     }
 
     # --- ZDARZENIA -------------------------------------------------------------------
@@ -1890,7 +1908,7 @@ function New-JezykForm {
     # Jedna procedura dla WSZYSTKICH przyciskow "!". Klucz pola przychodzi z Tag klikanego
     # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
     # kontrolka, ktora zdarzenie zglosila.
-    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik)) {
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik, $btnInfoKomputerWspoldzielony)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 

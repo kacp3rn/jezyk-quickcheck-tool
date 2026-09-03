@@ -309,6 +309,13 @@ $Script:Config = @{
     # wiec ma sygnalizowac problem tak samo stanowczo jak KolorProblem na werdykcie.
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(255, 232, 232)
 
+    # Drugi, NIEBIESKI wariant przycisku "!" - nie usterka, tylko realna niejednoznacznosc
+    # danych (komputer wspoldzielony przez kilku uzytkownikow). Czerwony i zielony sa juz
+    # zajete w tym samym wierszu (blad/ok przy dostepnosci maszyny), wiec kolejny stan
+    # dostaje wlasny, dotad nieuzywany odcien.
+    KolorInfo     = [System.Drawing.Color]::FromArgb(0, 90, 200)
+    KolorInfoTlo  = [System.Drawing.Color]::FromArgb(224, 236, 255)
+
     Autor         = 'XYZ'
 }
 
@@ -325,13 +332,19 @@ $Script:Kontrolki = @{}
 $Script:Informacje = @{}
 
 # Tytuly okien informacyjnych. Jedno miejsce, zeby przycisk i okno mowily o tym samym polu.
-# Zostaly WYLACZNIE pola, przy ktorych "!" moze oznaczac realna usterke. Odpadly kolejno:
-# Domena i Ostatnie logowanie (stale wyjasnienia bez zwiazku z awaria) oraz Odblokuj
-# (powody wylaczenia przycisku sa normalnymi stanami, nie bledami).
+# Kazdy klucz tutaj pokazuje sie WYLACZNIE warunkowo - nigdy jako stale, zawsze widoczne
+# wyjasnienie. Odpadly kolejno: Domena i Ostatnie logowanie (stale wyjasnienia bez zwiazku
+# z awaria) oraz Odblokuj (powody wylaczenia przycisku sa normalnymi stanami, nie bledami).
+# Wiekszosc kluczy oznacza realna usterke (czerwony przycisk) - KomputerWspoldzielony jest
+# drugi, niebieski rodzaj: nie usterka, tylko realna niejednoznacznosc konkretnego wyniku
+# (komputer, z ktorego korzysta wiecej niz jedna osoba wedlug SCCM). Warunkowosc jest tu
+# tym, co odroznia go od trzech usunietych - pokazuje sie tylko wtedy, gdy dane wyszukanie
+# to faktycznie wykryje, a nie zawsze.
 $Script:TytulyInformacji = @{
-    Status     = 'Status'
-    Komputer   = 'Ostatnio używany komputer'
-    Uzytkownik = 'Ostatnio zalogowany użytkownik'
+    Status                = 'Status'
+    Komputer              = 'Ostatnio używany komputer'
+    Uzytkownik            = 'Ostatnio zalogowany użytkownik'
+    KomputerWspoldzielony = 'Komputer współdzielony'
 }
 
 <#

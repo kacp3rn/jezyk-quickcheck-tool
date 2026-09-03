@@ -116,8 +116,9 @@ function Clear-JezykKonto {
     $Script:OstatniKomputer = ''
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = $false }
 
-    Set-JezykInfo 'Komputer' ''
-    Set-JezykInfo 'Status'   ''
+    Set-JezykInfo 'Komputer'              ''
+    Set-JezykInfo 'KomputerWspoldzielony' ''
+    Set-JezykInfo 'Status'                ''
 
     # ZADANIA W TLE GASNA RAZEM Z WIDOKIEM. Bez tego zadanie z poprzedniego wyszukania
     # bieglo dalej po wejsciu na sciezke "nie znaleziono", "zbyt wiele trafien" i "blad"
@@ -230,7 +231,8 @@ function Set-JezykResult {
             $k.TxtOstatnieLogowanie.Text   = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone -Trwa
             $k.TxtKomputerUzytkownika.Text = 'sprawdzanie...'
             if ($k.TxtKomputerIp) { $k.TxtKomputerIp.Text = 'sprawdzanie...' }
-            Set-JezykInfo 'Komputer' ''
+            Set-JezykInfo 'Komputer'              ''
+            Set-JezykInfo 'KomputerWspoldzielony' ''
             Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
             Start-JezykZadanieKomputera -Login ([string]$Result.Login)
 
@@ -663,7 +665,8 @@ function Set-JezykPoleKomputeraBezTla {
     if (-not $k.TxtKomputerUzytkownika) { return }
     $k.TxtKomputerUzytkownika.Text = 'nie sprawdzono'
     Set-JezykDostepnoscKomputera -Odpowiada $null -Adres ''
-    Set-JezykInfo 'Komputer' $Blad
+    Set-JezykInfo 'Komputer'              $Blad
+    Set-JezykInfo 'KomputerWspoldzielony' ''
 }
 
 <#
@@ -1089,6 +1092,10 @@ function Update-JezykKomputerWTle {
     Set-JezykDostepnoscKomputera -Odpowiada $Komputer.Odpowiada -Adres ([string]$Komputer.Adres)
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })
+
+    # Niebieski "!" - nie usterka, wiec klucz jest niezalezny od Blad powyzej. Gaszony na
+    # kazdej innej sciezce, inaczej zostalby stan po POPRZEDNIM, wspoldzielonym komputerze.
+    Set-JezykInfo 'KomputerWspoldzielony' $(if ($Komputer.Wspoldzielony) { [string]$Komputer.SzczegolyWspoldzielenia } else { '' })
 }
 
 #endregion
