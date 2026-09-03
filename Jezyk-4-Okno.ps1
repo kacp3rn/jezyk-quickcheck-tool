@@ -113,14 +113,21 @@ $Script:MapaJeza = @(
 # mapa osiemnastowierszowa: druga kopia jeza rozjechalaby sie z pierwsza przy pierwszej
 # zmianie rysunku. Ogonek bierze '#', a polysk '*' - oba kolory juz sa, wiec paleta rosnie
 # tylko o czerwien, jej cien i listek.
+#
+# MIERZ JE W PIKSELACH EKRANU, A NIE W KRATKACH MAPY. Komorka sprite'u ma przy 100% DPI
+# dokladnie JEDEN piksel (pas jest wysoki na tyle, co lista domen), wiec caly jez zajmuje
+# 21 na 18 pikseli - a pierwsze jablko, 6 na 7 kratek, bylo w oknie prawie niewidoczne.
+# Osiem na dziewiec kratek to niemal dwa razy tyle czerwieni i dopiero tyle widac.
 $Script:MapaJablka = @(
-    '...#..'
-    '..zz#.'
-    '.cc*c.'
-    'cccc*c'
-    'ccwccc'
-    'ccwccc'
-    '.cccc.'
+    '...#....'
+    '.zzz#...'
+    '.ccwwcc.'
+    'ccccc**c'
+    'cccccc*c'
+    'cccccccc'
+    'cccccccc'
+    '.cccccc.'
+    '..cccc..'
 )
 
 # Gdzie jablko siada na jezu - na zadzie, miedzy kolcami.
@@ -589,6 +596,16 @@ $Script:ZadanieUzytkownika  = $null
 $Script:ZadaniePingu        = $null
 $Script:ZadanieNumeru       = $null
 $Script:ZegarTla            = $null
+
+# Czy pole "Status:" niesie w tej chwili NOTKE O TRWAJACYM szukaniu po numerze, a nie
+# odpowiedz. Po samej pustej liscie tego nie poznasz: pusta jest takze przy bledzie odczytu
+# i przy "zbyt wielu trafieniach", a tamte dwa zdania sa PRAWDZIWE i wazne - zakrycie ich
+# odpowiedzia o numerze skasowaloby jedyna wiadomosc o awarii.
+#
+# Zerowany na poczatku KAZDEGO wyszukiwania, nie po odebraniu wyniku: zapalony i zapomniany
+# z poprzedniego pozwolilby spoznionej odpowiedzi o numerze nadpisac opis konta, ktore
+# tym razem znalazlo sie juz po nazwie.
+$Script:StatusCzekaNaNumer  = $false
 
 # Nazwa maszyny z ostatniej odpowiedzi SCCM - jedyne zrodlo prawdy dla przycisku "Pinguj".
 # Pole tekstowe niesie ja razem z data, wiec nie nadaje sie do przeniesienia stanu.

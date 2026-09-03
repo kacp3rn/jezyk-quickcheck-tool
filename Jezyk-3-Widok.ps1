@@ -422,6 +422,9 @@ function Invoke-JezykSearch {
     # jest udanym wyszukaniem.
     $znaleziono = $false
 
+    # Pole Status niesie na razie odpowiedz, a nie notke o trwajacym szukaniu - patrz nizej.
+    $Script:StatusCzekaNaNumer = $false
+
     # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie jeza pojawilyby sie
     # dopiero po zakonczeniu zapytania, czyli gdy nie sa juz potrzebne.
     $okno.Refresh()
@@ -458,14 +461,31 @@ function Invoke-JezykSearch {
             # konta - cokolwiek dopisanego wczesniej zgineloby bez sladu, dokladnie tak,
             # jak kiedys ginelo potwierdzenie odblokowania.
             #
-            # ZADNEJ NOTKI "szukam jeszcze po numerze" W POLU STATUS. Mowi to teraz pasek,
-            # i mowi przez caly czas pracy; notka doklejana do statusu wydluzala zdanie,
-            # w ktorym gubil sie potem wlasciwy komunikat z Update-JezykNumerWTle.
-            #
             # Zadanie rusza takze wtedy, gdy po nazwie NIC nie znaleziono: to najczestszy
             # przypadek przy szukaniu po numerze i wtedy wlasnie jest najbardziej potrzebne.
             if (Test-JezykWygladaNaTelefon $tekst) {
                 Start-JezykZadanieNumeru -Cyfry (Get-JezykCyfry $tekst)
+
+                # NOTKA ZASTEPUJE ZDANIE, KTORE WLASNIE PRZESTALO BYC PRAWDA. Po pustym
+                # wyniku po nazwie okno mowilo "Nie znaleziono konta ani kontaktu pasujacego
+                # do ..." - brzmialo to jak werdykt i bylo nim przez kilkanascie sekund,
+                # podczas gdy szukanie po numerze, czyli to, po ktore operator tu przyszedl,
+                # dopiero sie zaczynalo. Kto nie wiedzial, ze cos jeszcze trwa, zamykal okno
+                # przed odpowiedzia.
+                #
+                # WYLACZNIE PRZY 'NotFound'. Przy bledzie odczytu i przy "zbyt wielu
+                # trafieniach" pole niesie zdanie prawdziwe i wazne - notka zakrylaby jedyna
+                # wiadomosc o awarii.
+                #
+                # I wylacznie, gdy zadanie NAPRAWDE ruszylo: nieudane uruchomienie zostawia
+                # $Script:ZadanieNumeru pustym, a wtedy nie ma juz na co czekac i "trwa"
+                # bylo by klamstwem od pierwszej chwili.
+                if ($Script:ZadanieNumeru -and $lista.Status -eq 'NotFound') {
+                    $k.Werdykt.Text   = 'Trwa szukanie po numerze'
+                    $k.TxtStatus.Text = 'Po nazwie nic nie znaleziono. Trwa jeszcze szukanie po numerze telefonu w domenie {0} - to potrwa dłużej, poczekaj na wynik.' -f
+                                        $Script:Config.Domena
+                    $Script:StatusCzekaNaNumer = $true
+                }
             }
         }
     }
@@ -871,18 +891,36 @@ function Update-JezykUzytkownikaWTle {
     ZBYT WIELU WLASCICIELI TO NIE USTERKA. Kontroler odpowiedzial i odpowiedz jest pelna -
     wiemy na pewno, ze trafien jest wiecej niz limit. Przycisku "!" wiec nie zapalamy,
     bo nie ma czego pod nim pokazac.
+
+    NOTKE "TRWA SZUKANIE" ZASTEPUJEMY, A NIE DOKLEJAMY ZA NIA. Invoke-JezykSearch stawia ja
+    w polu Status na czas pracy zadania i od chwili, w ktorej ta funkcja ruszyla, jest ona
+    nieprawdziwa - szukanie wlasnie sie skonczylo. Doklejenie zostawiloby "trwa" na ekranie
+    do konca dnia. Ktore zdanie tam stoi, mowi $Script:StatusCzekaNaNumer, bo po samej
+    pustej liscie tego nie poznasz.
 #>
 function Update-JezykNumerWTle {
     param($Wynik)
 
     $k = $Script:Kontrolki
 
+    # Czytamy RAZ, na wejsciu: galezie nizej same zmieniaja pole Status, wiec pytanie
+    # zadane pozniej dotyczyloby juz zdania, ktore ta funkcja dopiero co tam wpisala.
+    $notka = $Script:StatusCzekaNaNumer
+
     try {
         if ($Wynik.Przerwane) {
             # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
             # musi o tym wiedziec: ktos, kogo szukal, mogl sie na niej nie znalezc.
-            $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
-                                 $k.TxtStatus.Text).Trim()
+            if ($notka) {
+                # Pole mowilo "trwa" i nie ma za czym doklejac - a samo "nie powiodlo sie"
+                # zostawiloby operatora bez odpowiedzi na pytanie, ktore zadal.
+                $k.Werdykt.Text   = 'Nie udało się sprawdzić numeru'
+                $k.TxtStatus.Text = 'Po nazwie nic nie znaleziono, a przeszukanie numerów telefonu się nie powiodło - nie wiadomo, czy ten numer do kogoś należy.'
+            }
+            else {
+                $k.TxtStatus.Text = ('{0} UWAGA: przeszukanie numerów telefonu się nie powiodło - lista może być niepełna.' -f
+                                     $k.TxtStatus.Text).Trim()
+            }
             Set-JezykInfo 'Status' ([string]$Wynik.Powod)
             return
         }
@@ -897,11 +935,13 @@ function Update-JezykNumerWTle {
                        $Script:Config.Domena, [int]$Script:Config.LimitNumeru
 
             if ($k.ListaKont.Items.Count -eq 0) {
-                # PUSTA LISTA ZNACZY, ZE OKNO MOWI TERAZ "Nie znaleziono konta ani kontaktu" -
-                # czyli NIEPRAWDE, i to dokladnie odwrotna do stanu faktycznego: kont z tym
-                # numerem nie brakuje, jest ich za wielu. Doklejone na koncu wyjasnienie ginelo
-                # poza widoczna czescia pola, wiec operator czytal tylko to pierwsze zdanie.
-                # Dlatego ZASTEPUJEMY, a nie doklejamy - razem z werdyktem.
+                # PRZY PUSTEJ LISCIE POLE NIE NIESIE NIC, ZA CZYM WARTO DOKLEJAC: albo notke
+                # "trwa szukanie", ktora wlasnie przestala byc prawda, albo - zanim ja tu
+                # postawiono - "Nie znaleziono konta ani kontaktu", czyli zdanie DOKLADNIE
+                # odwrotne do stanu faktycznego: kont z tym numerem nie brakuje, jest ich za
+                # wielu. Doklejone na koncu wyjasnienie ginelo poza widoczna czescia pola,
+                # wiec operator czytal tylko to pierwsze zdanie. Dlatego ZASTEPUJEMY, a nie
+                # doklejamy - razem z werdyktem.
                 $k.TxtStatus.Text     = $zaWielu
                 $k.Werdykt.Text       = 'Numer należy do wielu osób'
                 $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
@@ -915,7 +955,20 @@ function Update-JezykNumerWTle {
         }
 
         $trafienia = @($Wynik.Trafienia)
-        if ($trafienia.Count -eq 0) { return }
+        if ($trafienia.Count -eq 0) {
+            if ($notka) {
+                # Szukanie skonczylo sie i nikogo nie ma. Bez tego zdanie "trwa jeszcze
+                # szukanie" zostawaloby na ekranie do nastepnego klikniecia "Szukaj" -
+                # klamiac tak samo jak to, ktore mialo zastapic.
+                #
+                # Bez cytowania wpisanej wartosci, z tego samego powodu, co przy "za wielu":
+                # od uruchomienia zadania minely sekundy i w polu moze juz stac co innego.
+                $k.Werdykt.Text   = 'Nie znaleziono konta'
+                $k.TxtStatus.Text = 'Nie znaleziono nikogo w domenie {0} - ani po nazwie, ani po numerze telefonu.' -f
+                                    $Script:Config.Domena
+            }
+            return
+        }
 
         $lista = $k.ListaKont
 
@@ -924,6 +977,8 @@ function Update-JezykNumerWTle {
         $juzSa = @{}
         foreach ($pozycja in $lista.Items) { $juzSa[[string]$pozycja.Dn] = $true }
 
+        # Notka tu nie dotrwa i nie trzeba jej sprzatac: stawiana jest wylacznie przy PUSTEJ
+        # liscie, a z pustej listy $juzSa wychodzi pusty i zadne trafienie nie odpada.
         $nowe = @($trafienia | Where-Object { -not $juzSa.ContainsKey([string]$_.Dn) })
         if ($nowe.Count -eq 0) { return }
 
@@ -949,6 +1004,9 @@ function Update-JezykNumerWTle {
         }
     }
     finally {
+        # Odpowiedz jest, wiec notki juz nie ma - zapali sie dopiero przy nastepnym szukaniu.
+        $Script:StatusCzekaNaNumer = $false
+
         # POZA Z KONCOWEGO STANU LISTY, a nie z tego, co oddalo samo zadanie. Po nazwie mogl
         # sie ktos znalezc, choc numer nie dal nic - i odwrotnie: przy liscie pustej to
         # wlasnie numer jest jedynym trafieniem, jakie w ogole padlo.
