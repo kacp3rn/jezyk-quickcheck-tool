@@ -409,16 +409,16 @@ function Invoke-JezykSearch {
     $k.Przycisk.Enabled = $false
     $okno.UseWaitCursor = $true
 
-    # PASEK ZAPALA SIE PRZY KAZDYM SZUKANIU, nie tylko po numerze telefonu: operator ma
+    # JEZ ZAPALA SIE PRZY KAZDYM SZUKANIU, nie tylko po numerze telefonu: operator ma
     # widziec, ze okno pracuje, niezaleznie od tego, czego szuka. Gasnie w finally - chyba
     # ze wlasnie ruszylo zadanie numeru i jest jeszcze na co czekac.
     #
-    # Przy zapytaniu synchronicznym pasek jest widoczny, ale NIERUCHOMY: animacje rysuje
-    # watek interfejsu, a ten stoi wtedy w zapytaniu. Zapytania po nazwie ida po atrybutach
-    # indeksowanych i trwaja ulamek sekundy, wiec pasek mignie - i tyle ma zrobic.
-    $k.PasekSzukania.Visible = $true
+    # Przy zapytaniu synchronicznym jez jest widoczny, ale NIERUCHOMY: klatki odmierza zegar
+    # na watku interfejsu, a ten stoi wtedy w zapytaniu. Zapytania po nazwie ida po atrybutach
+    # indeksowanych i trwaja ulamek sekundy, wiec jez mignie - i tyle ma zrobic.
+    Set-JezykPostepSzukania $true
 
-    # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie paska pojawilyby sie
+    # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie jeza pojawilyby sie
     # dopiero po zakonczeniu zapytania, czyli gdy nie sa juz potrzebne.
     $okno.Refresh()
 
@@ -465,10 +465,10 @@ function Invoke-JezykSearch {
         $okno.UseWaitCursor = $false
         $k.Przycisk.Enabled = $true
 
-        # Pasek gasnie, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma sie
-        # krecic dalej, az wynik dojdzie. Nieudany start zostawia $Script:ZadanieNumeru
-        # pusty, wiec pasek gasnie takze wtedy.
-        if (-not $Script:ZadanieNumeru) { $k.PasekSzukania.Visible = $false }
+        # Jez gasnie, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma biec
+        # dalej, az wynik dojdzie. Nieudany start zostawia $Script:ZadanieNumeru pusty,
+        # wiec jez gasnie takze wtedy.
+        if (-not $Script:ZadanieNumeru) { Set-JezykPostepSzukania $false }
     }
 }
 
@@ -861,7 +861,7 @@ function Update-JezykNumerWTle {
     param($Wynik)
 
     $k = $Script:Kontrolki
-    $k.PasekSzukania.Visible = $false
+    Set-JezykPostepSzukania $false
 
     if ($Wynik.Przerwane) {
         # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
@@ -931,6 +931,36 @@ function Update-JezykNumerWTle {
         $k.TxtStatus.Text = ('{0} Po numerze telefonu dołączono {1} {2} - sprawdź listę wyboru.' -f
                              $k.TxtStatus.Text, $nowe.Count,
                              (Get-JezykOdmiana $nowe.Count 'konto' 'konta' 'kont')).Trim()
+    }
+}
+
+<#
+.SYNOPSIS
+    Zapala i gasi jeza - jedyny wskaznik pracy okna.
+
+.DESCRIPTION
+    JEDNO MIEJSCE NA DWIE CZYNNOSCI. Wskaznik to kontrolka ORAZ zegar animacji; rozpisane
+    po trzech miejscach wywolania rozjechalyby sie przy pierwszej zmianie i zostawilyby
+    zegar chodzacy nad niewidocznym jezem.
+
+    ZEGARA MOZE NIE BYC. Zestaw weryfikacyjny nie buduje okna, wiec $Script:ZegarJeza jest
+    tam pusty - straz jest ta sama, co przy $Script:ZegarTla w Jezyk-4-Okno.ps1.
+
+    Rysowania tu nie ma i byc nie moze: atrapa kontrolki w zestawie zna Visible, ale nie zna
+    Invalidate. Przerysowanie zamawia wylacznie takt zegara.
+#>
+function Set-JezykPostepSzukania {
+    param([bool]$Pracuje)
+
+    $Script:Kontrolki.JezSzukania.Visible = $Pracuje
+
+    # Zerowanie licznika klatek: po ponownym klinieciu "Szukaj" jez ma ruszyc od lewej
+    # krawedzi, a nie pojawic sie w polowie pasa w miejscu, w ktorym zastalo go poprzednie
+    # wyszukiwanie.
+    if ($Pracuje) { $Script:KlatkaJeza = 0 }
+
+    if ($Script:ZegarJeza) {
+        if ($Pracuje) { $Script:ZegarJeza.Start() } else { $Script:ZegarJeza.Stop() }
     }
 }
 

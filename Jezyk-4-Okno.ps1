@@ -20,14 +20,12 @@ trap { Register-JezykBladCzesci $_; continue }
 # Wiersz z wyborem domeny stoi nad wszystkim, wiec reszta okna schodzi o jego wysokosc.
 $Script:PasekDomeny   = 34
 
-# PAS NA PASEK POSTEPU pod wierszem wyszukiwania - WLASNY, a nie wciskany w szpare miedzy
-# tym wierszem a lista wynikow. Szpara ma przy 100% DPI dziesiec pikseli, ale wiersz
-# wyszukiwania srodkuje sie wokol STALEJ wspolrzednej, a wysokosc kontrolek rosnie z DPI:
-# przy 125-150% wiersz rosnie w dol i szpara znika, a pasek nachodzilby na liste.
-$Script:PasekPostepu  = 10
-
-$Script:PanelBezListy = 46 + $Script:PasekDomeny + $Script:PasekPostepu
-$Script:PanelZListą   = 80 + $Script:PasekDomeny + $Script:PasekPostepu
+# ZADNEGO WLASNEGO PASA NA WSKAZNIK PRACY. Pasek postepu mial tu kiedys swoje dziesiec
+# pikseli pod wierszem wyszukiwania; zastapil go jez, ktory stoi w miejscu JUZ PUSTYM -
+# w prawej, niezajetej czesci wiersza domeny (patrz sekcja JEZ nizej). Dlatego panele
+# wracaja do wspolrzednych sprzed paska i okno jest o te dziesiec pikseli nizsze.
+$Script:PanelBezListy = 46 + $Script:PasekDomeny
+$Script:PanelZListą   = 80 + $Script:PasekDomeny
 
 $Script:PierwszyWiersz     = 100   # y etykiety pierwszego wiersza wewnatrz panelu konta
 $Script:SkokWiersza        = 58    # odleglosc miedzy kolejnymi wierszami
@@ -58,6 +56,161 @@ $Script:SzerokoscPelna = $Script:SzerokoscOkna - 2 * $Script:Margines
 # bo to wlasnie roznica szerokosci kolumn rzuca sie w oczy.
 $Script:SzerokoscKolumny = [int](($Script:SzerokoscPelna - $Script:PrzerwaKolumn) / 2)
 $Script:DrugaKolumna     = $Script:Margines + $Script:SzerokoscKolumny + $Script:PrzerwaKolumn
+
+# --- JEZ, KTORY MOWI, ZE OKNO PRACUJE ------------------------------------------------
+# Wskaznik pracy okna. Stal tu kiedys pasek Marquee we wlasnym pasie pod wierszem
+# wyszukiwania; jez zajmuje miejsce, ktore BYLO JUZ PUSTE - prawa, niezajeta czesc
+# wiersza domeny, dokladnie nad polem wyszukiwania i przyciskiem "Szukaj". Dlatego
+# nie kosztowal ani jednej wspolrzednej i nie zabral miejsca zadnemu sasiadowi.
+#
+# RUSZA SIE NAPRAWDE TYLKO PRZY WYSZUKIWANIU PO NUMERZE TELEFONU. Klatki odmierza zegar
+# na watku interfejsu, a przy zapytaniu synchronicznym ten watek stoi w zapytaniu - jez
+# jest wtedy widoczny, ale NIERUCHOMY, dokladnie jak wczesniej pasek. Numer telefonu
+# jest jedynym zapytaniem, ktore zeszlo do przestrzeni w tle. Nie obiecuj animacji tam,
+# gdzie jej nie bedzie.
+
+# Sprite wyprowadzony z Ikona-Jezyk.ico (wariant 24x24) RAZ, przy pisaniu kodu: odsianie
+# granatowego tla i zielonego glifu terminala, zalanie przezroczystosci od krawedzi (zeby
+# oko nie wypadlo jako dziura), przyciecie do ramki i cztery odcienie po jasnosci.
+#
+# PROGRAM NIGDY NIE CZYTA .ico NA POTRZEBY ANIMACJI - mapa siedzi tutaj, wiec brak pliku
+# ikony nadal niczego nie psuje, tak samo jak przed ta zmiana.
+#
+# Jez patrzy w prawo, wiec biegnie w prawo i nie trzeba go odbijac. Znak '.' znaczy
+# "nie rysuj nic" - tlo okna ma w tym miejscu przeswitywac.
+#
+# NAJJASNIEJSZY ODCIEN TO '*', A NIE 'O'. Klucze hashtable w PowerShellu NIE ROZROZNIAJA
+# WIELKOSCI LITER, wiec 'o' i 'O' to ten sam klucz i paleta nie dala sie w ogole wczytac
+# ("Duplicate keys"). Zapora: Weryfikacja/testy-uklad.ps1.
+$Script:MapaJeza = @(
+    '.........#.##........'
+    '......########.......'
+    '....############.....'
+    '..###############....'
+    '..################...'
+    '.#################...'
+    '.#################...'
+    '###########++#+o+#...'
+    '###########+#oo**o#..'
+    '############o*o+o*#..'
+    '###########+o*o#+*o#.'
+    '###########oooo#+*o##'
+    '###########+ooo*ooo#.'
+    '##########+ooooo+###.'
+    '.########++oo++##....'
+    '..#########+o+##.....'
+    '..#####+####++###....'
+    '.......###..###.#....'
+)
+
+# KOLORY TU, PEDZLE NIE - i to nie jest kosmetyka. System.Drawing.SolidBrush RZUCA
+# WYJATKIEM pod pwsh na macOS, a zestaw weryfikacyjny dolacza ten plik kropka: pedzel
+# zalozony na poziomie skryptu wywrocilby CALY zestaw, zanim ruszyloby pierwsze
+# sprawdzenie. Color::FromArgb jest czysta struktura i dziala wszedzie, wiec paleta
+# moze tu stac. Pedzle powstaja leniwie w Set-JezykRysunekJeza, ktore wola wylacznie
+# procedura Paint - a tej zestaw nie wykonuje nigdy.
+$Script:PaletaJeza = @{
+    '#' = [System.Drawing.Color]::FromArgb(60, 25, 4)      # kolce, oko, lapy
+    '+' = [System.Drawing.Color]::FromArgb(147, 93, 37)    # cien na pysku
+    'o' = [System.Drawing.Color]::FromArgb(215, 141, 62)   # pysk
+    '*' = [System.Drawing.Color]::FromArgb(237, 176, 101)  # rozjasnienia
+}
+
+$Script:PedzleJeza = $null   # bufor pedzli, zakladany przy pierwszym rysowaniu
+$Script:ZegarJeza  = $null   # zegar animacji - OSOBNY od $Script:ZegarTla
+$Script:KlatkaJeza = 0       # licznik klatek, zerowany przy kazdym zapaleniu
+
+$Script:TaktJeza = 60        # ms miedzy klatkami, czyli okolo 16 klatek na sekunde
+$Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
+
+<#
+.SYNOPSIS
+    Gdzie i jak duzy stoi jez w zadanej klatce - czysta arytmetyka, bez GDI.
+
+.DESCRIPTION
+    CALA ARYTMETYKA JEST TUTAJ, A NIE W RYSOWANIU, I TO NIE JEST PORZADKOWANIE. Graphics
+    i SolidBrush nie istnieja pod pwsh na macOS, wiec funkcji rysujacej zestaw weryfikacyjny
+    nie wykona nigdy - liczba schowana w jej wnetrzu nie bylaby sprawdzona ani razu.
+    Rysowanie dostaje gotowe wspolrzedne i samo niczego nie liczy.
+
+    ROZMIAR KOMORKI PRZEZ [Math]::Floor, A NIE [int]. [int] w PowerShellu ZAOKRAGLA
+    (bankiersko), wiec przy pasie 30 px i osiemnastu wierszach mapy dalby 2 zamiast 1
+    i jez wystawalby poza pas gora i dolem.
+
+    DROGA OBEJMUJE SZEROKOSC JEZA, zeby wybiegl CALY za prawa krawedz, zanim wroci
+    z lewej. Bez tego znikalby w polowie kroku, uciety krawedzia pasa.
+
+    PODSKOK NIE MOZE PRZEKROCZYC ZAPASU nad jezem. Przy pasie akurat tak wysokim, jak mapa,
+    kolysanie wypchneloby go poza gorna krawedz i obcieloby mu kolce.
+#>
+function Get-JezykKlatkaJeza {
+    param([int]$Numer, [int]$Szerokosc, [int]$Wysokosc)
+
+    $wierszy = @($Script:MapaJeza).Count
+    if ($wierszy -eq 0 -or $Szerokosc -le 0 -or $Wysokosc -le 0) { return $null }
+
+    $komorka = [int][Math]::Floor($Wysokosc / $wierszy)
+    if ($komorka -lt 1) { $komorka = 1 }
+
+    $szerokoscJeza = $Script:MapaJeza[0].Length * $komorka
+    $krok  = $Script:KrokJeza * $komorka
+    $droga = $Szerokosc + $szerokoscJeza
+
+    # Kolysanie o jedna komorke co dwie klatki - tyle wystarczy, zeby czytalo sie jako
+    # bieg, a nie jako przesuwany obrazek.
+    $zapas   = $Wysokosc - $wierszy * $komorka
+    $podskok = if (($Numer % 4) -lt 2) { 0 } else { 1 }
+    if ($podskok -gt $zapas) { $podskok = $zapas }
+
+    [pscustomobject]@{
+        Komorka = $komorka
+        # Start caly za lewa krawedzia: jez ma WBIEC w pas, a nie mrugnac w jego srodku.
+        X       = (($Numer * $krok) % $droga) - $szerokoscJeza
+        # Jez stoi na dnie pasa, a podskok unosi go o jedna komorke.
+        Y       = $zapas - $podskok
+    }
+}
+
+<#
+.SYNOPSIS
+    Rysuje jeza na podanej powierzchni - jedyne miejsce w programie, ktore siega po GDI.
+
+.DESCRIPTION
+    NIC TU NIE LICZYMY - wspolrzedne przychodza gotowe z Get-JezykKlatkaJeza. Ta funkcja
+    nie wykona sie w zestawie weryfikacyjnym ani razu, wiec kazda liczba schowana w jej
+    wnetrzu bylaby liczba niesprawdzona.
+
+    Pedzle zakladamy leniwie i trzymamy w $Script:PedzleJeza: przy szesnastu klatkach na
+    sekunde nie ma po co powolywac ich od nowa, a zyja i tak tyle, co okno.
+#>
+function Set-JezykRysunekJeza {
+    param($Grafika, [int]$Szerokosc, [int]$Wysokosc)
+
+    $klatka = Get-JezykKlatkaJeza -Numer $Script:KlatkaJeza -Szerokosc $Szerokosc -Wysokosc $Wysokosc
+    if (-not $klatka) { return }
+
+    if (-not $Script:PedzleJeza) {
+        $Script:PedzleJeza = @{}
+        foreach ($znak in $Script:PaletaJeza.Keys) {
+            $Script:PedzleJeza[$znak] = [System.Drawing.SolidBrush]::new($Script:PaletaJeza[$znak])
+        }
+    }
+
+    # Piksel-art ma byc ostry - wygladzanie rozmyloby krawedzie komorek.
+    $Grafika.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+
+    for ($w = 0; $w -lt @($Script:MapaJeza).Count; $w++) {
+        $linia = $Script:MapaJeza[$w]
+        for ($k = 0; $k -lt $linia.Length; $k++) {
+            $pedzel = $Script:PedzleJeza[[string]$linia[$k]]
+            if (-not $pedzel) { continue }   # '.' - w tym miejscu ma byc widac tlo okna
+            $Grafika.FillRectangle($pedzel,
+                                   $klatka.X + $k * $klatka.Komorka,
+                                   $klatka.Y + $w * $klatka.Komorka,
+                                   $klatka.Komorka, $klatka.Komorka)
+        }
+    }
+}
 
 # y ETYKIETY wiersza o podanym numerze (liczonym od zera).
 function Get-JezykWiersz { param([int]$Numer) $Script:PierwszyWiersz + $Script:SkokWiersza * $Numer }
@@ -1178,30 +1331,33 @@ function New-JezykForm {
     $btnSzukaj.BackColor = $Script:Config.KolorKontrolki
     $btnSzukaj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
 
-    # PASEK POSTEPU - znak, ze okno pracuje. Zapala sie przy KAZDYM klinieciu "Szukaj"
-    # (patrz Invoke-JezykSearch), a gasnie, gdy nie ma juz na co czekac.
+    # JEZ - znak, ze okno pracuje. Zapala sie przy KAZDYM klinieciu "Szukaj" (patrz
+    # Set-JezykPostepSzukania w Jezyk-3-Widok.ps1), a gasnie, gdy nie ma juz na co czekac.
     #
-    # STOI W SWOIM PASIE POD WIERSZEM WYSZUKIWANIA, na calej szerokosci zawartosci, i NIE
-    # zabiera miejsca polu wyszukiwania - tam stal wczesniej i zwezal jedyne pole w oknie,
-    # w ktore cokolwiek sie wpisuje, o osiemdziesiat kilka pikseli.
+    # STOI W WOLNEJ, PRAWEJ CZESCI WIERSZA DOMENY - nad polem wyszukiwania i przyciskiem
+    # "Szukaj". To miejsce BYLO JUZ PUSTE, wiec jez nie zabral szerokosci zadnej kontrolce
+    # ani nie przesunal zadnego wiersza. Poprzednik, pasek Marquee, mial na to wlasny pas
+    # pod wierszem wyszukiwania i kosztowal dziesiec pikseli wysokosci calego okna.
     #
-    # Marquee, a nie obrazek: animacje rysuje system, wiec nie trzeba pliku z klatkami
-    # (repozytorium nie ma zadnych zasobow binarnych) i chodzi poprawnie przy kazdym DPI.
-    # Predkosc ustawiona JAWNIE - wartosc domyslna zalezy od wersji systemu.
+    # PictureBox, a nie Panel: ma podwojne buforowanie z fabryki, wiec animacja nie mruga.
+    # Tla NIE ustawiamy - kontrolka dziedziczy je po oknie i jez wyglada jak wpisany w nie.
     #
     # Rusza sie naprawde tylko przy wyszukiwaniu po numerze telefonu, bo tylko ono zeszlo
     # do przestrzeni w tle. Przy zapytaniu synchronicznym jest widoczny, ale nieruchomy:
-    # animacje rysuje watek interfejsu, a ten stoi wtedy w zapytaniu.
-    $pasekSzukania           = New-Object System.Windows.Forms.ProgressBar
-    $pasekSzukania.Style     = [System.Windows.Forms.ProgressBarStyle]::Marquee
-    $pasekSzukania.MarqueeAnimationSpeed = 30
-    $pasekSzukania.Left      = $Script:Margines
-    $pasekSzukania.Width     = $Script:SzerokoscPelna
-    $pasekSzukania.Height    = 6
-    # Wspolrzedna liczona z tych samych stalych, co reszta okna: pas zaczyna sie tam, gdzie
-    # konczy sie wiersz wyszukiwania, a konczy tuz nad lista wynikow.
-    $pasekSzukania.Top       = $Script:PanelBezListy - $Script:PasekPostepu + 2
-    $pasekSzukania.Visible   = $false
+    # klatki odmierza zegar na watku interfejsu, a ten stoi wtedy w zapytaniu.
+    $jezSzukania         = New-Object System.Windows.Forms.PictureBox
+    # Lewa krawedz od konca listy domen, prawa rowna prawej krawedzi calej zawartosci -
+    # zadnej wspolrzednej wpisanej liczba.
+    $jezSzukania.Left    = $cmbDomena.Right + $przerwa
+    $jezSzukania.Width   = $Script:Margines + $Script:SzerokoscPelna - $jezSzukania.Left
+    $jezSzukania.Visible = $false
+    # Procedura zdarzenia nie widzi zmiennych tej funkcji. $this jest kontrolka, ktora
+    # zdarzenie zglosila, i tylko stamtad wolno wziac jej rozmiar; $_ to argumenty
+    # zdarzenia, czyli PaintEventArgs z powierzchnia do rysowania. To jedyne miejsce
+    # w programie, ktore korzysta z $_ w procedurze zdarzenia.
+    $jezSzukania.Add_Paint({
+        Set-JezykRysunekJeza -Grafika $_.Graphics -Szerokosc $this.Width -Wysokosc $this.Height
+    })
 
     # Pole wypelnia to, co zostalo miedzy lista trybu a przyciskiem, wiec prawa krawedz
     # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej.
@@ -1417,7 +1573,7 @@ function New-JezykForm {
     $lblAutor.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
 
     $form.Controls.AddRange(@($lblDomena, $cmbDomena, $lblPodaj, $cmbTryb,
-                              $txtSzukaj, $pasekSzukania, $btnSzukaj, $cmbWynik,
+                              $txtSzukaj, $jezSzukania, $btnSzukaj, $cmbWynik,
                               $pnlKonto, $pnlKomputer, $lblAutor))
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
@@ -1426,9 +1582,11 @@ function New-JezykForm {
     # tekstu zrobiony wczesniej mierzylby czcionke domyslna.
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
-    Set-JezykSrodekPionowy @($lblDomena, $cmbDomena) $srodekDomeny
-    # Paska NIE MA na tej liscie: nie nalezy juz do wiersza wyszukiwania, tylko do wlasnego
-    # pasa pod nim, a jego wspolrzedna liczy sie ze stalych siatki.
+    # Wysokosc jeza bierze sie z listy domen, a nie z liczby: pas ma rosnac razem z nia,
+    # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz
+    # lista zna swoja rzeczywista wysokosc.
+    $jezSzukania.Height = $cmbDomena.Height
+    Set-JezykSrodekPionowy @($lblDomena, $cmbDomena, $jezSzukania) $srodekDomeny
     Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
 
     # Zapas nad wysokoscia tekstu jest konieczny: kwadrat ma stale 13 px i w ciasnym
@@ -1503,7 +1661,7 @@ function New-JezykForm {
         Tryb          = $cmbTryb
         PoleSzukaj    = $txtSzukaj
         Przycisk      = $btnSzukaj
-        PasekSzukania = $pasekSzukania
+        JezSzukania   = $jezSzukania
         ListaKont     = $cmbWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
@@ -1580,9 +1738,28 @@ function New-JezykForm {
     })
     $Script:ZegarTla = $zegar
 
+    # ZEGAR ANIMACJI JEZA - OSOBNY OD POWYZSZEGO, i to nie jest rozrzutnosc. Zegar zadan
+    # budzi sie co cwierc sekundy i tylko dopoki cos biegnie w tle; animacja potrzebuje
+    # kilkunastu klatek na sekunde. Zlaczone w jeden albo zamulilyby jeden koniec, albo
+    # drugi budzilyby bez potrzeby.
+    #
+    # Chodzi WYLACZNIE wtedy, gdy jez jest widoczny - zapala go i gasi Set-JezykPostepSzukania.
+    $zegarJeza          = New-Object System.Windows.Forms.Timer
+    $zegarJeza.Interval = $Script:TaktJeza
+    $zegarJeza.Add_Tick({
+        $Script:KlatkaJeza++
+        # Invalidate TYLKO tutaj. Jezyk-3-Widok.ps1 dotyka wylacznie Visible, bo atrapa
+        # kontrolki w zestawie weryfikacyjnym nie ma metod rysowania.
+        $Script:Kontrolki.JezSzukania.Invalidate()
+    })
+    $Script:ZegarJeza = $zegarJeza
+
     # Bez sprzatania proces potrafi zostac w pamieci, czekajac na przestrzen uruchomieniowa,
-    # ktorej nikt juz nie odbierze.
-    $form.Add_FormClosing({ Stop-JezykZadaniaTla })
+    # ktorej nikt juz nie odbierze. Zegar animacji gasimy przy tej samej okazji.
+    $form.Add_FormClosing({
+        Stop-JezykZadaniaTla
+        if ($Script:ZegarJeza) { $Script:ZegarJeza.Stop() }
+    })
 
     # Jedna procedura dla WSZYSTKICH przyciskow "!". Klucz pola przychodzi z Tag klikanego
     # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
