@@ -346,6 +346,7 @@ $Script:TytulyInformacji = @{
     Uzytkownik            = 'Ostatnio zalogowany użytkownik'
     KomputerWspoldzielony = 'Komputer współdzielony'
     Tworca                = 'Dodany do AD przez'
+    Mac                   = 'Adres MAC'
 }
 
 <#

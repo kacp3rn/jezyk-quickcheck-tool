@@ -614,6 +614,11 @@ $Script:StatusCzekaNaNumer  = $false
 # Pole tekstowe niesie ja razem z data, wiec nie nadaje sie do przeniesienia stanu.
 $Script:OstatniKomputer = ''
 
+# Adres IP, do ktorego dopasowano pokazany adres MAC. Bez niego ponowny ping nie mialby
+# jak zauwazyc, ze maszyna odpowiada juz spod innego adresu - a wtedy pokazany MAC
+# opisuje karte, ktorej pod tym adresem nie ma.
+$Script:MacDlaAdresu = ''
+
 # Gotowe teksty skryptow dla wszystkich zadan - skladane raz, patrz New-JezykSkryptTla.
 $Script:SkryptyTla = @{}
 
@@ -769,7 +774,8 @@ function New-JezykSkryptTla {
         # pinguje niczego, a funkcja wstrzyknieta bez potrzeby to martwy kod w przestrzeni.
         # Get-JezykKontaMaszyny dochodzi tu z tego samego powodu, co Get-JezykPingKomputera -
         # wola ja Get-JezykOstatnioUzywanyKomputer, wiec bez niej zadanie konczy sie cisza.
-        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykKontaMaszyny', 'Get-JezykOstatnioUzywanyKomputer')
+        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykKontaMaszyny',
+                                    'Get-JezykMacDlaAdresu', 'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
         $naglowek  = 'param($Login, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
@@ -1616,10 +1622,19 @@ function New-JezykForm {
     # wypchnalby z niego date ostatniej aktywnosci, a w kolumnie nie ma miejsca na oba
     # napisy naraz. Pion pod komputerem mowi bez slowa, ktorej maszyny adres to jest.
     #
-    # Lewa polowa tego wiersza zostaje pusta i jest to swiadoma cena: pol polowkowych jest
-    # jedenascie, czyli nieparzyscie, a trzy pozostale potrzebuja calej szerokosci (dwie
-    # daty logowania, sciezka katalogu, status). Jedno wolne miejsce musi wiec gdzies byc
-    # i najmniej przeszkadza wlasnie tu.
+    # Lewa polowa tego wiersza stala pusta - jako swiadoma cena za nieparzysta liczbe pol
+    # polowkowych - i wlasnie ona przyjela adres MAC. Nowa kontrolka nie kosztowala przez
+    # to ANI JEDNEJ wspolrzednej i nie podwyzszyla okna: MAC opisuje te sama karte, ktora
+    # odpowiada pod adresem obok, wiec sasiedztwo jest tu takze merytoryczne.
+    # Przycisk "!" jest NIEBIESKI - brak dopasowania to nie usterka, tylko inwentaryzacja
+    # SCCM starsza od biezacej dzierzawy DHCP.
+    $lblKomputerMac = New-JezykEtykieta 'Adres MAC:' $L (Get-JezykWiersz 2)
+    $txtKomputerMac = New-JezykPole                  $L (Get-JezykWierszPole 2) $W
+    $btnInfoMac     = New-JezykPrzyciskInfo 'Mac'
+    $btnInfoMac.BackColor = $Script:Config.KolorInfoTlo
+    $btnInfoMac.ForeColor = $Script:Config.KolorInfo
+    $btnInfoMac.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+
     $lblKomputerIp = New-JezykEtykieta 'Adres IP:' $P (Get-JezykWiersz 2)
     $txtKomputerIp = New-JezykPole                 $P (Get-JezykWierszPole 2) $W
 
@@ -1665,6 +1680,7 @@ function New-JezykForm {
         $lblOstatnieLogowanie, $txtOstatnieLogowanie,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
         $btnInfoKomputerWspoldzielony, $btnPinguj,
+        $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
         $lblKomputerIp, $txtKomputerIp,
         $lblKatalog, $txtKatalog, $lblStatus, $txtStatus, $btnInfoStatus))
 
@@ -1674,13 +1690,14 @@ function New-JezykForm {
     $kompWiersz1 = $kompWiersz0 + $Script:SkokWiersza
     $kompWiersz2 = $kompWiersz1 + $Script:SkokWiersza
     $kompWiersz3 = $kompWiersz2 + $Script:SkokWiersza
+    $kompWiersz4 = $kompWiersz3 + $Script:SkokWiersza
 
     $pnlKomputer         = New-Object System.Windows.Forms.Panel
     # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
-                                                     ($kompWiersz3 + $Script:OdstepPodEtykieta + 58))
+                                                     ($kompWiersz4 + $Script:OdstepPodEtykieta + 58))
     $pnlKomputer.Visible = $false
 
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
@@ -1708,13 +1725,21 @@ function New-JezykForm {
     # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
     # zapytania do SCCM, rownie dlugie. Jedno pole dwulinijkowe, a drugie jednolinijkowe
     # wygladaloby jak usterka.
-    $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz3
-    $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz3 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
+    # Konto komputera wylaczone w AD widac w "Centrum administracyjnym Active Directory"
+    # wyszarzonym monitorkiem z kropka - nazwa obiektu wyglada wtedy tak samo jak zawsze,
+    # wiec bez tego pola nie da sie tego z okna zauwazyc. Pole KOLOROWANE, bo niesie
+    # werdykt: zielone wlaczone, czerwone wylaczone, neutralne "nie wiadomo".
+    $lblKompWlaczone = New-JezykEtykieta 'Konto komputera w AD:' $Script:Margines $kompWiersz3
+    $txtKompWlaczone = New-JezykPole $Script:Margines ($kompWiersz3 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
+
+    $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz4
+    $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz4 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $txtKompStatus.Multiline = $true
 
     $pnlKomputer.Controls.AddRange(@($lblKompKatalog, $txtKompKatalog,
                                      $lblKompUzytkownik, $txtKompUzytkownik, $btnInfoUzytkownik,
                                      $lblKompTworca, $txtKompTworca, $btnInfoTworca,
+                                     $lblKompWlaczone, $txtKompWlaczone,
                                      $lblKompStatus, $txtKompStatus))
 
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
@@ -1786,7 +1811,7 @@ function New-JezykForm {
     # a te znaja swoja szerokosc dopiero po odziedziczeniu czcionki okna - i po tym, jak
     # wyrownanie wyzej poprzestawialo im wspolrzedne pionowe.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
-                        $btnInfoKomputerWspoldzielony, $btnInfoTworca)) {
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac)) {
         # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
         # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
@@ -1801,6 +1826,7 @@ function New-JezykForm {
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca     $lblKompTworca
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac       $lblKomputerMac
 
     # Drugi przycisk stoi TUZ ZA pierwszym, nie za etykieta - Top dziedziczy z niego (obaj
     # centruja sie wzgledem tej samej etykiety), Left dosuwa sie o wlasna szerokosc + odstep.
@@ -1844,6 +1870,7 @@ function New-JezykForm {
         TxtOstatnieLogowanie   = $txtOstatnieLogowanie
         TxtKomputerUzytkownika = $txtKomputerUzytkownika
         TxtKomputerIp          = $txtKomputerIp
+        TxtKomputerMac         = $txtKomputerMac
         PrzyciskPinguj         = $btnPinguj
         TxtKatalog        = $txtKatalog
         TxtStatus         = $txtStatus
@@ -1855,6 +1882,7 @@ function New-JezykForm {
         # nazwy juz raz kusily, zeby wpisac wynik nie w to pole, co trzeba.
         TxtKomputerUzytkownikMaszyny = $txtKompUzytkownik
         TxtKomputerTworca            = $txtKompTworca
+        TxtKomputerWlaczone          = $txtKompWlaczone
 
         # Przyciski "!". Klucze celowo nazwane "Info" + klucz z Set-JezykInfo - ta funkcja
         # skleja nazwe sama, wiec dolozenie kolejnego pola nie wymaga jej edycji.
@@ -1862,6 +1890,7 @@ function New-JezykForm {
         InfoKomputer              = $btnInfoKomputer
         InfoUzytkownik            = $btnInfoUzytkownik
         InfoTworca                = $btnInfoTworca
+        InfoMac                   = $btnInfoMac
         InfoKomputerWspoldzielony = $btnInfoKomputerWspoldzielony
     }
 
@@ -1927,7 +1956,7 @@ function New-JezykForm {
     # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
     # kontrolka, ktora zdarzenie zglosila.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
-                        $btnInfoKomputerWspoldzielony, $btnInfoTworca)) {
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 

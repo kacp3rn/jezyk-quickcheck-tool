@@ -1165,6 +1165,36 @@ function Get-JezykKontaMaszyny {
     (SMS_CombinedDeviceResources) - tylko ono niesie CurrentLogonUser/LastLogonUser/
     PrimaryUser w wierszu wyniku, patrz Get-JezykKontaMaszyny.
 #>
+<#
+.SYNOPSIS
+    Wybiera adres MAC karty, ktora odpowiada pod wskazanym adresem IP.
+
+.DESCRIPTION
+    Maszyna miewa kilka kart naraz - Ethernet, Wi-Fi, czesto jeszcze VPN albo Hyper-V -
+    a inwentaryzacja SCCM oddaje je wszystkie. Adres wziety "z brzegu" opisywalby inna
+    karte niz ta, ktora odpowiada pod pokazanym IP, i NIC BY TEGO NIE ZDRADZILO: jeden
+    adres MAC wyglada w oknie dokladnie jak kazdy inny.
+
+    IPAddress jest TABLICA - jedna karta miewa adres IPv4 i IPv6 naraz - wiec porownanie
+    idzie po calej tablicy, a nie po jej pierwszym elemencie.
+
+    Brak dopasowania oddajemy jako pusty napis, a nie jako pierwszy lepszy adres: "nie
+    wiadomo" i "wiadomo, ze ten" to dwie rozne odpowiedzi.
+#>
+function Get-JezykMacDlaAdresu {
+    param($Karty, [string]$Adres)
+
+    if (-not $Adres) { return '' }
+
+    foreach ($karta in @($Karty)) {
+        if (-not $karta) { continue }
+        if (-not $karta.MACAddress) { continue }
+        if (@($karta.IPAddress) -contains $Adres) { return [string]$karta.MACAddress }
+    }
+
+    return ''
+}
+
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
@@ -1172,9 +1202,12 @@ function Get-JezykOstatnioUzywanyKomputer {
     # Odpowiada i Adres wypelnia sonda ICMP na samym koncu, po ustaleniu nazwy maszyny.
     # $null w Odpowiada znaczy "nie sprawdzono albo nie wiadomo" i tak ma zostac na kazdej
     # sciezce bledu - patrz Get-JezykPingKomputera.
+    # Mac wypelnia sie PO sondzie i tylko wtedy, gdy karta z inwentaryzacji SCCM ma ten sam
+    # adres IP, ktory oddalo rozwiazanie nazwy. MacSzczegoly niesie powod, gdy sie nie udalo.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
                                 Blad = ''; Szczegoly = ''
-                                Wspoldzielony = $false; SzczegolyWspoldzielenia = '' }
+                                Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
+                                Mac = ''; MacSzczegoly = '' }
 
     # Login pochodzi z AD, wiec jest bezpieczny - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1374,6 +1407,44 @@ function Get-JezykOstatnioUzywanyKomputer {
             $opisPingu       = [string]$ping.Szczegoly
         }
         catch { $opisPingu = 'Sprawdzenie dostępności zawiodło: {0}' -f $_.Exception.Message }
+
+        # ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny.
+        # Laptop ma Ethernet, Wi-Fi, czesto jeszcze karte VPN albo Hyper-V - wybranie
+        # pierwszego z brzegu dawaloby adres innej karty niz ta, ktora odpowiada pod tym IP,
+        # i nic by tego nie zdradzilo. Dlatego pytamy o karty Z ICH ADRESAMI i dopasowujemy.
+        #
+        # Inwentaryzacja bywa starsza od dzierzawy DHCP, wiec BRAK DOPASOWANIA jest zwyklym,
+        # spodziewanym wynikiem - i ma wyjsc jako "nie wiadomo", a nie jako cudzy adres.
+        if (-not $wynik.Adres) {
+            $wynik.MacSzczegoly = 'Nie ustalono adresu IP maszyny, więc nie ma do czego dopasować karty sieciowej.'
+        }
+        elseif (-not $najlepsza.ResourceID) {
+            $wynik.MacSzczegoly = 'Źródło, które podało tę maszynę, nie niesie identyfikatora zasobu (ResourceID), a bez niego nie ma jak zapytać o jej karty sieciowe.'
+        }
+        else {
+            try {
+                $idKarty = [int]$najlepsza.ResourceID
+                $karty = @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
+                               -Zapytanie (
+                    "SELECT MACAddress, IPAddress FROM SMS_G_System_NETWORK_ADAPTER_CONFIGURATION WHERE ResourceId = $idKarty"))
+
+                $wynik.Mac = Get-JezykMacDlaAdresu -Karty $karty -Adres $wynik.Adres
+
+                if (-not $wynik.Mac) {
+                    $wynik.MacSzczegoly = if ($karty.Count) {
+                        'Żadna z {0} kart sieciowych znanych SCCM nie ma adresu {1}. Inwentaryzacja sprzętu jest odświeżana co kilka dni, więc po zmianie dzierżawy DHCP zapisany adres bywa starszy niż ten, pod którym maszyna odpowiada teraz.' -f $karty.Count, $wynik.Adres
+                    } else {
+                        'SCCM nie zna żadnej karty sieciowej tej maszyny. Klasa SMS_G_System_NETWORK_ADAPTER_CONFIGURATION bywa wyłączona w ustawieniach inwentaryzacji sprzętu.'
+                    }
+                }
+            }
+            catch {
+                # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa
+                # albo wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny
+                # bez kart sieciowych.
+                $wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
+            }
+        }
 
         $opisWyniku = @('źródło: {0}; protokół: {1}; stos: {2}; serwer: {3}' -f
                         $zrodlo, $sesja.Protokol, $stos, $polaczenie.Serwer)
@@ -2529,6 +2600,16 @@ function Get-JezykComputerStatus {
 
         $podpis = Get-JezykPodpisWlasciciela -Wlasciciel $wlasciciel -Serwer $Script:Config.Domena
 
+        # Konto komputera wylaczone w AD to dokladnie to, co "Centrum administracyjne Active
+        # Directory" pokazuje wyszarzonym monitorkiem z kropka i slowem "Wyłączone". Nazwa
+        # obiektu sie przy tym NIE zmienia, wiec z samego wyszukiwania tego nie widac -
+        # a maszyna z wylaczonym kontem nie zaloguje sie do domeny.
+        # Enabled jest wlasnoscia domyslna Get-ADComputer, wiec nie trzeba jej zamawiac
+        # w -Properties. Wartosc logiczna zostaje SUROWA, tak jak Enabled przy koncie -
+        # $null (atrybut nie przyszedl) to "nie wiadomo", a nie "wylaczone".
+        $wlaczone = $null
+        if ($null -ne $komputer.Enabled) { $wlaczone = [bool]$komputer.Enabled }
+
         # Data surowa - formatuje ja widok, tak samo jak kazda inna date w tym programie.
         $utworzono = $null
         if ($komputer.whenCreated) {
@@ -2541,6 +2622,7 @@ function Get-JezykComputerStatus {
             Lokalizacja = $lokalizacja
             Tworca      = $podpis.Podpis
             TworcaOsoba = $podpis.Osoba
+            Wlaczone    = $wlaczone
             Utworzono   = $utworzono
             # Nazwa Z AD, a nie ta wpisana: AD dopasowuje nazwe NetBIOS bez rozrozniania
             # wielkosci liter, wiec "jez-0123" znajduje JEZ-0123 - i to pisownia z AD ma

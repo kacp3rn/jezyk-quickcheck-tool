@@ -97,7 +97,7 @@ function Clear-JezykKonto {
                         $k.TxtHasloWygasa, $k.TxtKontoWygasa, $k.TxtOstatniaZmiana,
                         $k.TxtKontoUtworzono, $k.TxtTelefon, $k.TxtMenedzer,
                         $k.TxtOstatnieLogowanie, $k.TxtKomputerUzytkownika,
-                        $k.TxtKomputerIp, $k.TxtKatalog, $k.TxtStatus)) {
+                        $k.TxtKomputerIp, $k.TxtKomputerMac, $k.TxtKatalog, $k.TxtStatus)) {
         if ($pole) { $pole.Text = '' }
     }
 
@@ -105,6 +105,10 @@ function Clear-JezykKonto {
     # "Nazwa:" - bez tego zostalaby tak przy nastepnym wyszukaniu KONTA i opisywalaby login
     # slowem "Nazwa".
     if ($k.EtykietaLoginKonta) { $k.EtykietaLoginKonta.Text = 'Login:' }
+
+    # Adres, do ktorego dopasowano MAC, opisuje POPRZEDNIA maszyne - zostawiony kazalby
+    # ponownemu pingowi porownywac sie z czyms, czego w oknie juz nie ma.
+    $Script:MacDlaAdresu = ''
 
     # Data przyblizona nalezy do KONKRETNEGO konta - zostawiona wpisalaby sie do pola
     # opisujacego juz kogos innego.
@@ -319,8 +323,15 @@ function Clear-JezykKomputer {
     Stop-JezykZadanieUzytkownika
 
     foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny,
-                        $k.TxtKomputerTworca, $k.TxtKomputerStatus)) {
+                        $k.TxtKomputerTworca, $k.TxtKomputerWlaczone, $k.TxtKomputerStatus)) {
         if ($pole) { $pole.Text = '' }
+    }
+
+    # POLE KOLOROWANE CZYSCI SIE DWA RAZY: z tresci i z koloru. Sam tekst zdjety zostawia
+    # czerwien na kontrolce, wiec pierwsze wylaczone konto zabarwiloby pole NA STALE
+    # i kazda nastepna maszyna wygladalaby na wylaczona.
+    if ($k.TxtKomputerWlaczone) {
+        $k.TxtKomputerWlaczone.ForeColor = [System.Drawing.SystemColors]::WindowText
     }
 
     Set-JezykInfo 'Uzytkownik' ''
@@ -370,6 +381,20 @@ function Set-JezykComputerResult {
 
         if ($k.TxtKomputerTworca) {
             $k.TxtKomputerTworca.Text = Get-JezykOpisTworcy $Result.Tworca $Result.Utworzono
+        }
+
+        # TRZY STANY, TRZY KOLORY - jak przy dostepnosci maszyny. "Nie wiadomo" dostaje
+        # kolor neutralny, bo pomalowanie go zielenia albo czerwienia byloby nieprawda:
+        # nieodczytany atrybut to nie to samo, co odczytane "wyłączone".
+        if ($k.TxtKomputerWlaczone) {
+            $k.TxtKomputerWlaczone.Text = if ($null -eq $Result.Wlaczone) { 'nie wiadomo' }
+                                          elseif ($Result.Wlaczone)      { 'włączone' }
+                                          else                           { 'WYŁĄCZONE - ta maszyna nie zaloguje się do domeny' }
+
+            $k.TxtKomputerWlaczone.ForeColor =
+                if ($null -eq $Result.Wlaczone) { [System.Drawing.SystemColors]::WindowText }
+                elseif ($Result.Wlaczone)       { $Script:Config.KolorOk }
+                else                            { $Script:Config.KolorProblem }
         }
 
         # "!" zapala sie WYLACZNIE wtedy, gdy pole nie nazywa osoby - inaczej bylby stalym
@@ -713,6 +738,7 @@ function Set-JezykPoleKomputeraBezTla {
     if (-not $k.TxtKomputerUzytkownika) { return }
     $k.TxtKomputerUzytkownika.Text = 'nie sprawdzono'
     Set-JezykDostepnoscKomputera -Odpowiada $null -Adres ''
+    Set-JezykAdresMac -Mac '' -Szczegoly ''
     Set-JezykInfo 'Komputer'              $Blad
     Set-JezykInfo 'KomputerWspoldzielony' ''
 }
@@ -753,6 +779,35 @@ function Set-JezykDostepnoscKomputera {
                             else { 'nie sprawdzono' }
 }
 
+<#
+.SYNOPSIS
+    Wypelnia pole "Adres MAC" i rozstrzyga przy nim przycisk "!".
+
+.DESCRIPTION
+    MAC pokazujemy WYLACZNIE wtedy, gdy karta z inwentaryzacji SCCM ma ten sam adres IP,
+    ktory stoi w polu obok. Maszyna miewa kilka kart - Ethernet, Wi-Fi, VPN, Hyper-V -
+    i adres wziety "z brzegu" opisywalby inna z nich niz ta, ktora odpowiada pod pokazanym
+    IP. Nic by tego przy tym nie zdradzilo, bo jeden adres MAC wyglada jak kazdy inny.
+
+    Brak dopasowania jest zwyklym wynikiem, nie awaria: inwentaryzacja sprzetu odswieza sie
+    co kilka dni, wiec po zmianie dzierzawy DHCP zapisany adres bywa starszy niz biezacy.
+    Stad przycisk NIEBIESKI i tresc pod nim - zapalany tylko wtedy, gdy jest co wyjasnic.
+#>
+function Set-JezykAdresMac {
+    param([string]$Mac, [string]$Szczegoly)
+
+    $k = $Script:Kontrolki
+    if ($k.TxtKomputerMac) {
+        $k.TxtKomputerMac.Text = if ($Mac) { $Mac }
+                                 elseif ($Szczegoly) { 'nie dopasowano' }
+                                 else { 'nie sprawdzono' }
+    }
+
+    # Tresc tylko wtedy, gdy MAC-a NIE MA: przy trafieniu wyjasniac nie ma czego, a przycisk
+    # widoczny zawsze bylby stalym wyjasnieniem - takie z tego okna zostaly usuniete.
+    Set-JezykInfo 'Mac' $(if ($Mac) { '' } else { $Szczegoly })
+}
+
 # Obsluga przycisku "Pinguj": sprawdza JESZCZE RAZ maszyne, ktora jest juz na ekranie.
 # Nazwa idzie z $Script:OstatniKomputer, a nie z pola tekstowego - pole sluzy do
 # pokazywania i niesie takze date, wiec nie jest zrodlem prawdy.
@@ -778,6 +833,18 @@ function Update-JezykPingWTle {
     Set-JezykDostepnoscKomputera -Odpowiada $Ping.Odpowiada `
                                  -Adres ([string]$Ping.Adres) `
                                  -Opis ([string]$Ping.Blad)
+
+    # POKAZANY MAC OPISUJE KARTE SPOD KONKRETNEGO ADRESU. Gdy maszyna odpowiada juz spod
+    # innego - a wlasnie po to klika sie "Pinguj" po dluzszej chwili - dotychczasowy adres
+    # MAC przestaje byc odpowiedzia i nie wolno go zostawic. Sonda nie ma przy tym skad
+    # wziac nowego: idzie sama, bez sesji do SCCM.
+    $adres = [string]$Ping.Adres
+    if ($Script:MacDlaAdresu -and $adres -and $adres -ne $Script:MacDlaAdresu) {
+        Set-JezykAdresMac -Mac '' -Szczegoly (
+            'Maszyna odpowiada teraz spod adresu {0}, a pokazany wcześniej adres MAC opisywał kartę spod {1}. Nowego dopasowania sonda nie zna - zna je wyłącznie SCCM, więc wyszukaj konto ponownie.' -f
+                $adres, $Script:MacDlaAdresu)
+        $Script:MacDlaAdresu = ''
+    }
 }
 
 # To samo po drugiej stronie okna: zamyka pole uzytkownika maszyny w widoku komputera.
@@ -1138,6 +1205,11 @@ function Update-JezykKomputerWTle {
     # Wynik sondy przyszedl razem z nazwa - zapytanie do SCCM i ping poszly jednym zadaniem
     # w tle, wiec kolor i adres sa gotowe od razu, bez drugiej podrozy po sieci.
     Set-JezykDostepnoscKomputera -Odpowiada $Komputer.Odpowiada -Adres ([string]$Komputer.Adres)
+
+    # MAC dopasowany do TEGO adresu - i tylko do niego. Adres odkladamy osobno, zeby
+    # ponowny ping mial z czym porownac swoj wynik (patrz Update-JezykPingWTle).
+    Set-JezykAdresMac -Mac ([string]$Komputer.Mac) -Szczegoly ([string]$Komputer.MacSzczegoly)
+    $Script:MacDlaAdresu = if ($Komputer.Mac) { [string]$Komputer.Adres } else { '' }
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })
 
