@@ -40,7 +40,7 @@ function Format-JezykData {
     przyblizonej - data przeterminowana o kilka dni jest lepsza niz komunikat o porazce.
 #>
 function Get-JezykTekstLogowania {
-    param($Dokladna, $Przyblizona, [switch]$Trwa)
+    param($Dokladna, $Przyblizona, [switch]$Trwa, [string]$Kropki = '...')
 
     if ($null -ne $Dokladna) {
         if ($null -ne $Przyblizona) {
@@ -50,11 +50,11 @@ function Get-JezykTekstLogowania {
     }
 
     if ($null -ne $Przyblizona) {
-        if ($Trwa) { return 'Data przybliżona: {0} precyzowanie...' -f (Format-JezykData $Przyblizona) }
+        if ($Trwa) { return 'Data przybliżona: {0} precyzowanie{1}' -f (Format-JezykData $Przyblizona), $Kropki }
         return 'Data przybliżona: {0}' -f (Format-JezykData $Przyblizona)
     }
 
-    if ($Trwa) { return 'sprawdzanie...' }
+    if ($Trwa) { return 'sprawdzanie' + $Kropki }
     return 'brak danych'
 }
 
@@ -237,7 +237,6 @@ function Set-JezykResult {
             # zadanie: wartosc przyblizona przyszla razem z reszta konta, wiec pokazujemy ja
             # od razu, a tlo tylko ja uscisli. Komputer czekac musi - AD nie wie o nim nic.
             $Script:LogowaniePrzyblizone   = $Result.OstatnieLogowaniePrzyblizone
-            $k.TxtOstatnieLogowanie.Text   = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone -Trwa
             Set-JezykNotkeSprawdzania
             Set-JezykInfo 'Komputer'              ''
             Set-JezykInfo 'KomputerWspoldzielony' ''
@@ -729,6 +728,8 @@ function Invoke-JezykOdblokowanie {
 # Zamyka pole daty po nieudanym uscisleniu: data przyblizona ZOSTAJE, znika tylko dopisek
 # "precyzowanie...", bo nic sie juz nie precyzuje.
 function Set-JezykPoleLogowaniaBezTla {
+    Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
+
     $k = $Script:Kontrolki
     if (-not $k.TxtOstatnieLogowanie) { return }
     $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone
@@ -738,7 +739,7 @@ function Set-JezykPoleLogowaniaBezTla {
 # bez nazwy maszyny nie ma czego pingowac, a zostawiony kolor opisywalby poprzednia.
 function Set-JezykPoleKomputeraBezTla {
     param([string]$Blad)
-    Set-JezykNotkeSprawdzania -Wylacz
+    Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
 
     $k = $Script:Kontrolki
     if (-not $k.TxtKomputerUzytkownika) { return }
@@ -816,11 +817,16 @@ function Set-JezykAdresMac {
 
 <#
 .SYNOPSIS
-    Zapala i gasi notke "sprawdzanie" w trzech polach czekajacych na odpowiedz SCCM.
+    Zapala i gasi notki "sprawdzanie" w polach czekajacych na odpowiedz z tla.
 
 .DESCRIPTION
+    DWIE NOTKI, BO DWA NIEZALEZNE ZADANIA. Trzy pola SCCM ("Ostatnio uzywany komputer",
+    "Adres IP", "Adres MAC") czekaja na zadanie Komputer, a "Ostatnie logowanie" na zadanie
+    Logowanie - koncza sie w innych chwilach, wiec kazde gasi WYLACZNIE swoja notke.
+    Licznik klatek jest przy tym wspolny, zeby kropki w obu miejscach szly rownym krokiem.
+
     JEDNO MIEJSCE NA WSZYSTKIE CZYNNOSCI - dokladnie ta sama zasada, co przy
-    Set-JezykStanJeza. Notka to marker, licznik klatek ORAZ tresc trzech pol; rozpisana po
+    Set-JezykStanJeza. Notka to markery, licznik klatek ORAZ tresc pol; rozpisana po
     miejscach wywolania rozjechalaby sie przy pierwszej zmianie i zostawilaby w oknie slowo
     "sprawdzanie" nad praca, ktora dawno sie skonczyla.
 
@@ -832,40 +838,62 @@ function Set-JezykAdresMac {
     a wyczyszczenie pol tutaj dawaloby mrugniecie pustka miedzy jednym a drugim.
 #>
 function Set-JezykNotkeSprawdzania {
-    param([switch]$Wylacz)
+    param([ValidateSet('Obie', 'Sccm', 'Logowanie')][string]$Notka = 'Obie', [switch]$Wylacz)
 
-    $Script:PolaCzekajaNaSccm = -not $Wylacz
-    $Script:KlatkaKropek      = 0
+    $stan = -not $Wylacz
+    if ($Notka -ne 'Logowanie') { $Script:PolaCzekajaNaSccm    = $stan }
+    if ($Notka -ne 'Sccm')      { $Script:PoleCzekaNaLogowanie = $stan }
+
     if ($Wylacz) { return }
 
-    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara. Zapytanie do SCCM bywa krotsze
-    # niz cwierc sekundy i pola staly wtedy puste przez cale swoje czekanie.
+    # Licznik zerujemy WYLACZNIE przy zapalaniu. Zgaszenie jednej notki nie moze odrzucic
+    # kropek drugiej na poczatek cyklu - zadania koncza sie niezaleznie od siebie.
+    $Script:KlatkaKropek = 0
+
+    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara. Zapytanie bywa krotsze niz
+    # cwierc sekundy i pola staly wtedy puste przez cale swoje czekanie.
     Update-JezykKropkiSprawdzania
 }
 
 <#
 .SYNOPSIS
-    Jedna klatka animowanych kropek w polach czekajacych na odpowiedz SCCM.
+    Jedna klatka animowanych kropek w polach czekajacych na odpowiedz z tla.
 
 .DESCRIPTION
     BEZ WLASNEGO ZEGARA. Wolana z taktu $Script:ZegarTla, bo ten budzi sie co 250 ms i chodzi
-    dokladnie tak dlugo, jak zyje zadanie w tle - czyli w tym samym oknie czasu, o ktore tu
+    dokladnie tak dlugo, jak zyja zadania w tle - czyli w tym samym oknie czasu, o ktore tu
     chodzi. Osobny zegar budzilby watek interfejsu drugi raz po to samo, a zapomniany
     chodzilby nad nieruchomym napisem do konca dnia.
 
+    TAKT ZEGARA TO NIE KLATKA. Kropki zmieniaja sie co 500 ms, czyli co drugie budzenie -
+    stad dzielenie licznika przez $Script:TaktowNaKlatkeKropek. Cztery zmiany na sekunde
+    czytaja sie jak migotanie, a nie jak trwajaca praca.
+
     ZGASZONY MARKER ZATRZYMUJE WSZYSTKO i to jest zapora, nie oszczednosc: odpowiedz, ktora
-    przyszla w tym samym takcie, gasi marker w Receive-JezykZadanieKomputera - a ono idzie
+    przyszla w tym samym takcie, gasi swoj marker w Receive-JezykZadanie... - a te ida
     w zegarze PRZED ta funkcja, wiec klatka nie ma juz czego nadpisac.
 #>
 function Update-JezykKropkiSprawdzania {
-    if (-not $Script:PolaCzekajaNaSccm) { return }
+    if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie) { return }
 
-    $napis = 'sprawdzanie' + ('.' * (1 + ($Script:KlatkaKropek % 3)))
+    $klatka = [int][math]::Floor($Script:KlatkaKropek / $Script:TaktowNaKlatkeKropek)
+    $kropki = '.' * (1 + ($klatka % 3))
     $Script:KlatkaKropek++
 
     $k = $Script:Kontrolki
-    foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac)) {
-        if ($pole) { $pole.Text = $napis }
+
+    if ($Script:PolaCzekajaNaSccm) {
+        foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac)) {
+            if ($pole) { $pole.Text = 'sprawdzanie' + $kropki }
+        }
+    }
+
+    # Data przyblizona przyszla razem z kontem i siedzi juz w polu, wiec notka jest tu
+    # DOPISKIEM do prawdziwej odpowiedzi, a nie zamiast niej - stad ta sama funkcja
+    # skladajaca tekst, co przy gotowym wyniku.
+    if ($Script:PoleCzekaNaLogowanie -and $k.TxtOstatnieLogowanie) {
+        $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
+                                                               -Trwa -Kropki $kropki
     }
 }
 
@@ -1000,6 +1028,9 @@ function Show-JezykInformacja {
 #>
 function Update-JezykLogowanieWTle {
     param($Logowanie, [string]$Domena = '')
+
+    # Dokladna data przyszla - slowo "precyzowanie" przestaje byc prawdziwe.
+    Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
 
     $k = $Script:Kontrolki
 
@@ -1244,7 +1275,8 @@ function Update-JezykKomputerWTle {
     param($Komputer)
 
     # Odpowiedz przyszla - notka przestaje byc prawdziwa, i to ZANIM cokolwiek wpiszemy.
-    Set-JezykNotkeSprawdzania -Wylacz
+    # Gasimy WYLACZNIE swoja: zadanie daty logowania biegnie niezaleznie i moze jeszcze trwac.
+    Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
 
     $k = $Script:Kontrolki
 

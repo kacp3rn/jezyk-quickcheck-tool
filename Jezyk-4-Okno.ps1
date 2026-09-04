@@ -618,9 +618,20 @@ $Script:StatusCzekaNaNumer  = $false
 # Set-JezykNotkeSprawdzania w Jezyk-3-Widok.ps1.
 $Script:PolaCzekajaNaSccm   = $false
 
-# Numer klatki animacji kropek: liczba kropek to 1 + reszta z dzielenia przez 3. Trzymany
-# osobno od markera, bo zegar podbija go w innym miejscu, niz notka sie zapala.
+# To samo dla pola "Ostatnie logowanie", ktore czeka na WLASNE, niezalezne zadanie i konczy
+# je w innej chwili niz zapytanie do SCCM. Jeden wspolny marker gasilby napis nad praca,
+# ktora jeszcze trwa - albo zostawialby go nad ta, ktora juz sie skonczyla.
+$Script:PoleCzekaNaLogowanie = $false
+
+# Numer klatki animacji kropek - WSPOLNY dla obu notek, zeby kropki szly w oknie rownym
+# krokiem. Trzymany osobno od markerow, bo zegar podbija go w innym miejscu, niz notka
+# sie zapala.
 $Script:KlatkaKropek        = 0
+
+# Ile TAKTOW ZEGARA przypada na jedna klatke kropek. Zegar tla budzi sie co 250 ms, a kropki
+# maja zmieniac sie co 500: cztery zmiany na sekunde czytaja sie jak migotanie, a nie jak
+# trwajaca praca.
+$Script:TaktowNaKlatkeKropek = 2
 
 # Nazwa maszyny z ostatniej odpowiedzi SCCM - jedyne zrodlo prawdy dla przycisku "Pinguj".
 # Pole tekstowe niesie ja razem z data, wiec nie nadaje sie do przeniesienia stanu.
@@ -836,7 +847,9 @@ function Start-JezykZadanieLogowania {
     param([string]$Login, [string]$Dn = '')
 
     Stop-JezykZadanieLogowania
-    if (-not $Login) { return }
+    # Bez loginu zadanie nie ruszy WCALE, wiec notka o trwajacym precyzowaniu daty mrugalaby
+    # nad praca, ktorej nikt nie zaczal. Pole wraca do samej daty przyblizonej.
+    if (-not $Login) { Set-JezykPoleLogowaniaBezTla; return }
 
     $Script:PokolenieLogowania++
     $mojePokolenie = $Script:PokolenieLogowania
@@ -882,7 +895,8 @@ function Start-JezykZadanieKomputera {
     param([string]$Login)
 
     Stop-JezykZadanieKomputera
-    if (-not $Login) { return }
+    # Jak wyzej: bez loginu nie ma o co pytac SCCM, a zapalona notka mrugalaby bez konca.
+    if (-not $Login) { Set-JezykPoleKomputeraBezTla -Blad ''; return }
 
     # Brak ustawien SCCM rozstrzygamy TUTAJ, przed zbudowaniem czegokolwiek: inaczej kazde
     # znalezione konto powolywaloby pelna przestrzen uruchomieniowa po odpowiedz znana
