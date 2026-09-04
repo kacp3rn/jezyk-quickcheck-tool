@@ -317,6 +317,12 @@ $Script:Config = @{
     KolorInfoTlo  = [System.Drawing.Color]::FromArgb(224, 236, 255)
 
     Autor         = 'XYZ'
+
+    # Numer wersji pokazywany w prawym dolnym rogu okna. PODBIJANY RECZNIE - Jezyk niczego
+    # nie wykrywa sam na maszynie operatora, a gita tam nie ma. Nie jest to $Script:Ustawienia:
+    # to napis w oknie, nie adres polaczenia, wiec Confirm-JezykUstawienia nie ma go czego
+    # sprawdzac. Zaslepka do wpisania przed wdrozeniem, tak samo jak Autor wyzej.
+    Wersja        = 'X'
 }
 
 # Rejestr kontrolek GUI: wypelniany w SEKCJI 4, odczytywany w SEKCJI 3.

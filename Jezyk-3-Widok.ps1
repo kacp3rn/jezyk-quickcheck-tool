@@ -390,9 +390,9 @@ function Set-JezykComputerResult {
         # kolor neutralny, bo pomalowanie go zielenia albo czerwienia byloby nieprawda:
         # nieodczytany atrybut to nie to samo, co odczytane "wyłączone".
         if ($k.TxtKomputerWlaczone) {
-            $k.TxtKomputerWlaczone.Text = if ($null -eq $Result.Wlaczone) { 'nie wiadomo' }
-                                          elseif ($Result.Wlaczone)      { 'włączone' }
-                                          else                           { 'WYŁĄCZONE - ta maszyna nie zaloguje się do domeny' }
+            $k.TxtKomputerWlaczone.Text = if ($null -eq $Result.Wlaczone) { 'Nie wiadomo' }
+                                          elseif ($Result.Wlaczone)      { 'Włączone' }
+                                          else                           { 'Wyłączone - ta maszyna nie zaloguje się do domeny' }
 
             $k.TxtKomputerWlaczone.ForeColor =
                 if ($null -eq $Result.Wlaczone) { [System.Drawing.SystemColors]::WindowText }

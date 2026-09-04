@@ -337,6 +337,17 @@ function Set-JezykSrodekPionowy {
     }
 }
 
+# Dosuwa kontrolki PRAWA krawedzia do podanej wspolrzednej. Osobna funkcja, a nie linijka
+# w miejscu uzycia, z jednego powodu: zestaw weryfikacyjny nie buduje okna, wiec arytmetyke
+# wyrownania da sie sprawdzic tylko wtedy, gdy mozna ja zawolac na atrapie - tak samo jak
+# oba wyrownania powyzej.
+function Set-JezykDoPrawej {
+    param([object[]]$Kontrolki, [int]$Prawa)
+    foreach ($kontrolka in $Kontrolki) {
+        if ($kontrolka) { $kontrolka.Left = $Prawa - $kontrolka.Width }
+    }
+}
+
 <#
 .SYNOPSIS
     Rozklada kontrolki po rownych slupkach i srodkuje kazda w SWOIM slupku.
@@ -1773,9 +1784,20 @@ function New-JezykForm {
     $lblAutor.ForeColor = $Script:Config.KolorNieznany
     $lblAutor.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
 
+    # Numer wersji na DRUGIM koncu tego samego pasa - prawa polowa stala pusta, wiec napis
+    # nie kosztuje ani jednego piksela wysokosci okna i widac go w obu trybach.
+    #
+    # Y BIERZEMY Z PODPISU, a nie drugie "- 20" wpisane wprost: dwie kopie tej samej
+    # wspolrzednej rozjada sie przy pierwszej zmianie wysokosci pasa, a rozjazd o kilka
+    # pikseli na dole okna jest dokladnie tym, czego nikt nie zauwazy w kodzie.
+    # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
+    $lblWersja           = New-JezykEtykieta ('Wersja: ' + $Script:Config.Wersja) $Script:Margines $lblAutor.Top
+    $lblWersja.ForeColor = $lblAutor.ForeColor
+    $lblWersja.Font      = $lblAutor.Font
+
     $form.Controls.AddRange(@($lblDomena, $cmbDomena, $lblPodaj, $cmbTryb,
                               $txtSzukaj, $jezSzukania, $btnSzukaj, $cmbWynik,
-                              $pnlKonto, $pnlKomputer, $lblAutor))
+                              $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja))
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
     # CALE wyrownanie stoi TUTAJ, po dodaniu kontrolek do okna, i nie da sie go przeniesc
@@ -1783,6 +1805,14 @@ function New-JezykForm {
     # tekstu zrobiony wczesniej mierzylby czcionke domyslna.
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
+
+    # Napis z wersja dosuwamy do prawego marginesu DOPIERO TUTAJ i z tego samego powodu,
+    # ktory opisuje komentarz nad ta sekcja: New-JezykEtykieta wlacza AutoSize, a etykieta
+    # dziedziczy czcionke okna dopiero w momencie dodania - Width odczytany wczesniej
+    # bylby zmierzony czcionka domyslna i napis wyladowalby obok marginesu, tym bardziej
+    # przy DPI 125-150%.
+    Set-JezykDoPrawej @($lblWersja) ($Script:SzerokoscOkna - $Script:Margines)
+
     # Wysokosc jeza bierze sie z listy domen, a nie z liczby: pas ma rosnac razem z nia,
     # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz
     # lista zna swoja rzeczywista wysokosc.
