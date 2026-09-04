@@ -318,16 +318,42 @@ function Clear-JezykKomputer {
 
     Stop-JezykZadanieUzytkownika
 
-    foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny, $k.TxtKomputerStatus)) {
+    foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny,
+                        $k.TxtKomputerTworca, $k.TxtKomputerStatus)) {
         if ($pole) { $pole.Text = '' }
     }
 
     Set-JezykInfo 'Uzytkownik' ''
+    Set-JezykInfo 'Tworca' ''
 }
 
-# Widok komputera odpowiada na dwa pytania: gdzie w drzewie AD lezy ten komputer i kto
-# ostatnio z niego korzystal. Pierwsze wie AD i jest w wyniku od razu; drugie wie wylacznie
-# SCCM, wiec idzie w tlo - tak samo jak droga odwrotna w widoku konta.
+<#
+.SYNOPSIS
+    Sklada tresc pola "Dodany do AD przez" z podpisu wlasciciela i daty zalozenia.
+
+.DESCRIPTION
+    Jedno pole, bo to jedna odpowiedz na jedno pytanie - a dwa pola na tak krotkie wartosci
+    podwyzszalyby panel bez powodu. Data jest w tym samym zapisie, co "Konto utworzono"
+    w widoku konta, wiec obie strony okna czyta sie tak samo.
+
+    Pusty podpis znaczy "deskryptora nie udalo sie odczytac", a nie "nikt nie dodal" -
+    stad wlasny napis, a nie puste pole wygladajace jak brak wyszukiwania.
+#>
+function Get-JezykOpisTworcy {
+    param($Podpis, $Utworzono)
+
+    $tekst = [string]$Podpis
+    if (-not $tekst) { $tekst = 'nie udało się ustalić' }
+
+    if ($null -ne $Utworzono) { $tekst = '{0} · {1}' -f $tekst, (Format-JezykData $Utworzono) }
+
+    $tekst
+}
+
+# Widok komputera odpowiada na trzy pytania: gdzie w drzewie AD lezy ten komputer, kto
+# ostatnio z niego korzystal i kto go do AD dodal. Pierwsze i trzecie wie AD i sa w wyniku
+# od razu; drugie wie wylacznie SCCM, wiec idzie w tlo - tak samo jak droga odwrotna
+# w widoku konta.
 function Set-JezykComputerResult {
     param($Result)
 
@@ -341,6 +367,28 @@ function Set-JezykComputerResult {
         # w oryginalnej pisowni.
         if ($k.TxtKomputerUzytkownikMaszyny) { $k.TxtKomputerUzytkownikMaszyny.Text = 'sprawdzanie...' }
         Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
+
+        if ($k.TxtKomputerTworca) {
+            $k.TxtKomputerTworca.Text = Get-JezykOpisTworcy $Result.Tworca $Result.Utworzono
+        }
+
+        # "!" zapala sie WYLACZNIE wtedy, gdy pole nie nazywa osoby - inaczej bylby stalym
+        # wyjasnieniem, a takie z tego okna zostaly celowo usuniete. Trzy stany, nie dwa:
+        # $true osoba, $false grupa albo SID, $null deskryptor nieodczytany.
+        if ($Result.TworcaOsoba -eq $true) {
+            Set-JezykInfo 'Tworca' ''
+        }
+        elseif ($null -eq $Result.TworcaOsoba) {
+            Set-JezykInfo 'Tworca' ('Nie udało się odczytać właściciela obiektu komputera ' +
+                'w AD (atrybut nTSecurityDescriptor). Najczęściej znaczy to brak prawa ' +
+                'odczytu deskryptora zabezpieczeń tego obiektu.')
+        }
+        else {
+            Set-JezykInfo 'Tworca' ('Pole pokazuje właściciela obiektu w AD, czyli konto, ' +
+                'które ten komputer założyło. Tu właścicielem NIE jest osoba: gdy obiekt ' +
+                'zakłada członek grupy Administratorzy domeny, AD zapisuje jako właściciela ' +
+                'tę grupę, a nie jej członka - nazwiska nie da się wtedy z AD odczytać.')
+        }
     }
 
     $k.TxtKomputerStatus.Text = [string]$Result.Message

@@ -1673,13 +1673,14 @@ function New-JezykForm {
     $kompWiersz0 = 6
     $kompWiersz1 = $kompWiersz0 + $Script:SkokWiersza
     $kompWiersz2 = $kompWiersz1 + $Script:SkokWiersza
+    $kompWiersz3 = $kompWiersz2 + $Script:SkokWiersza
 
     $pnlKomputer         = New-Object System.Windows.Forms.Panel
     # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
-                                                     ($kompWiersz2 + $Script:OdstepPodEtykieta + 58))
+                                                     ($kompWiersz3 + $Script:OdstepPodEtykieta + 58))
     $pnlKomputer.Visible = $false
 
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
@@ -1692,15 +1693,28 @@ function New-JezykForm {
     $txtKompUzytkownik = New-JezykPole $Script:Margines ($kompWiersz1 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoUzytkownik = New-JezykPrzyciskInfo 'Uzytkownik'
 
+    # Wlasciciel obiektu w AD razem z data zalozenia - jedno pole, bo to jedna odpowiedz
+    # na jedno pytanie. Przycisk NIEBIESKI, jak przy komputerze wspoldzielonym: to nie
+    # usterka, tylko realna niejednoznacznosc TEGO wyniku - AD wpisuje jako wlasciciela
+    # grupe, gdy obiekt zakladal czlonek Administratorow domeny, i nazwiska nie da sie
+    # wtedy z niego odczytac. Zapala sie wylacznie wtedy, gdy pole nie nazywa osoby.
+    $lblKompTworca = New-JezykEtykieta 'Dodany do AD przez:' $Script:Margines $kompWiersz2
+    $txtKompTworca = New-JezykPole $Script:Margines ($kompWiersz2 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
+    $btnInfoTworca = New-JezykPrzyciskInfo 'Tworca'
+    $btnInfoTworca.BackColor = $Script:Config.KolorInfoTlo
+    $btnInfoTworca.ForeColor = $Script:Config.KolorInfo
+    $btnInfoTworca.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+
     # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
     # zapytania do SCCM, rownie dlugie. Jedno pole dwulinijkowe, a drugie jednolinijkowe
     # wygladaloby jak usterka.
-    $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz2
-    $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz2 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
+    $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz3
+    $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz3 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $txtKompStatus.Multiline = $true
 
     $pnlKomputer.Controls.AddRange(@($lblKompKatalog, $txtKompKatalog,
                                      $lblKompUzytkownik, $txtKompUzytkownik, $btnInfoUzytkownik,
+                                     $lblKompTworca, $txtKompTworca, $btnInfoTworca,
                                      $lblKompStatus, $txtKompStatus))
 
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
@@ -1771,7 +1785,8 @@ function New-JezykForm {
     # Stawiane NA SAMYM KONCU wyrownania, bo licza sie z rzeczywistej szerokosci etykiet,
     # a te znaja swoja szerokosc dopiero po odziedziczeniu czcionki okna - i po tym, jak
     # wyrownanie wyzej poprzestawialo im wspolrzedne pionowe.
-    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik, $btnInfoKomputerWspoldzielony)) {
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca)) {
         # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
         # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
@@ -1785,6 +1800,7 @@ function New-JezykForm {
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer   $lblKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca     $lblKompTworca
 
     # Drugi przycisk stoi TUZ ZA pierwszym, nie za etykieta - Top dziedziczy z niego (obaj
     # centruja sie wzgledem tej samej etykiety), Left dosuwa sie o wlasna szerokosc + odstep.
@@ -1838,12 +1854,14 @@ function New-JezykForm {
         # i niesie MASZYNE, to jest w widoku KOMPUTERA i niesie UZYTKOWNIKA. Podobne
         # nazwy juz raz kusily, zeby wpisac wynik nie w to pole, co trzeba.
         TxtKomputerUzytkownikMaszyny = $txtKompUzytkownik
+        TxtKomputerTworca            = $txtKompTworca
 
         # Przyciski "!". Klucze celowo nazwane "Info" + klucz z Set-JezykInfo - ta funkcja
         # skleja nazwe sama, wiec dolozenie kolejnego pola nie wymaga jej edycji.
         InfoStatus                = $btnInfoStatus
         InfoKomputer              = $btnInfoKomputer
         InfoUzytkownik            = $btnInfoUzytkownik
+        InfoTworca                = $btnInfoTworca
         InfoKomputerWspoldzielony = $btnInfoKomputerWspoldzielony
     }
 
@@ -1908,7 +1926,8 @@ function New-JezykForm {
     # Jedna procedura dla WSZYSTKICH przyciskow "!". Klucz pola przychodzi z Tag klikanego
     # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
     # kontrolka, ktora zdarzenie zglosila.
-    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik, $btnInfoKomputerWspoldzielony)) {
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 

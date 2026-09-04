@@ -1738,6 +1738,56 @@ function Get-JezykPodpisMenedzera {
     catch { return $zapasowy }
 }
 
+<#
+.SYNOPSIS
+    Zamienia wlasciciela obiektu AD ("DOMENA\konto") na czytelny podpis osoby.
+
+.DESCRIPTION
+    Wzorowana na Get-JezykPodpisMenedzera, z jedna roznica: oddaje obiekt, a nie napis.
+    Widok musi wiedziec, CZY trafila sie osoba - AD wpisuje jako wlasciciela GRUPE
+    (Administratorzy domeny), gdy obiekt zakladal jej czlonek, a nazwa grupy nie jest
+    odpowiedzia na pytanie "kto". Bez tej flagi okno nie odroznialoby nazwiska od grupy.
+
+    Osoba = $null znaczy "nie bylo czego sprawdzac", czyli pusty wlasciciel - deskryptor,
+    ktorego nie udalo sie odczytac. To nie to samo, co "sprawdzono i to nie jest osoba".
+#>
+function Get-JezykPodpisWlasciciela {
+    param([string]$Wlasciciel, [string]$Serwer = '')
+
+    if ($null -eq $Wlasciciel) { $Wlasciciel = '' }
+    $Wlasciciel = $Wlasciciel.Trim()
+    if (-not $Wlasciciel) { return [pscustomobject]@{ Podpis = ''; Osoba = $null } }
+
+    # Czesc za OSTATNIM ukosnikiem: "JEZYK\jkowalski" -> "jkowalski". Wartosc bez ukosnika
+    # (goly SID, gdy Windows nie zdolal przetlumaczyc) idzie do sprawdzenia w calosci -
+    # AD przyjmuje SID jako tozsamosc, wiec i taki zapis ma szanse zamienic sie w nazwisko.
+    $login = $Wlasciciel.Substring($Wlasciciel.LastIndexOf('\') + 1)
+
+    if (-not (Test-JezykNazwaKonta $login)) {
+        return [pscustomobject]@{ Podpis = $Wlasciciel; Osoba = $false }
+    }
+
+    try {
+        $adres = if ($Serwer) { $Serwer } else { $Script:Config.Domena }
+
+        $konto = Get-ADUser -Identity $login -Server $adres `
+                            -Properties DisplayName, GivenName, Surname `
+                            -ErrorAction Stop
+
+        $nazwa = Get-JezykOsoba ([string]$konto.DisplayName) ([string]$konto.GivenName) ([string]$konto.Surname)
+
+        # Bez nazwy wyswietlanej sam login, zamiast loginu z pustymi nawiasami - ta sama
+        # zasada co przy menedzerze i na liscie wyboru kont.
+        $podpis = if ($nazwa) { '{0} ({1})' -f $nazwa, $login } else { $login }
+        return [pscustomobject]@{ Podpis = $podpis; Osoba = $true }
+    }
+    catch {
+        # Grupa, konto komputera albo konto z innej domeny: Get-ADUser rzuca, a wlasciciel
+        # i tak jest prawdziwa odpowiedzia - pokazujemy go w zapisie, ktory zna administrator.
+        return [pscustomobject]@{ Podpis = $Wlasciciel; Osoba = $false }
+    }
+}
+
 function Get-JezykUserStatus {
     param([string]$Login, [string]$Serwer = '')
 
@@ -2424,8 +2474,11 @@ function Get-JezykPingKomputera {
 }
 
 # Sprawdza komputer w AD po nazwie NetBIOS. Widok komputera jest celowo krotszy od widoku
-# konta - odpowiada na jedno pytanie: gdzie w drzewie AD lezy ten komputer.
-# Nazwa NetBIOS jest dla Get-ADComputer prawidlowa tozsamoscia, wiec wystarczy -Identity.
+# konta - odpowiada na trzy pytania: gdzie w drzewie AD lezy ten komputer, kto ostatnio
+# z niego korzystal (to idzie w tlo, do SCCM) i kto go do AD dodal.
+# Nazwa NetBIOS jest dla Get-ADComputer prawidlowa tozsamoscia, wiec wystarczy -Identity;
+# AD dopasowuje ja przy tym BEZ rozrozniania wielkosci liter, wiec literowka w wielkosci
+# liter nie wymaga tu zadnego kodu - wystarczy pokazac pisownie, ktora oddalo AD.
 function Get-JezykComputerStatus {
     param([string]$Netbios)
 
@@ -2445,16 +2498,51 @@ function Get-JezykComputerStatus {
     try {
         $komputer = Get-ADComputer -Identity $Netbios `
                                    -Server $Script:Config.Domena `
-                                   -Properties CanonicalName `
+                                   -Properties CanonicalName, nTSecurityDescriptor, whenCreated `
                                    -ErrorAction Stop
 
         $lokalizacja = Get-JezykKatalogZeSciezki $komputer.CanonicalName
+
+        # AD nie ma atrybutu "tworca". Wlasciciel obiektu to konto, ktore go zalozylo -
+        # z jednym zastrzezeniem: gdy zakladal go czlonek Administratorow domeny, AD wpisuje
+        # tu GRUPE, a nie osobe. Dlatego obok podpisu idzie flaga, czy to w ogole osoba.
+        # mS-DS-CreatorSID celowo NIE jest czytany: wypelnia go wylacznie dolaczenie maszyny
+        # do domeny przez zwyklego uzytkownika, a tutaj wszystkie zaklada administrator.
+        $wlasciciel = ''
+        try {
+            # Pole przez PSObject.Properties, a NIE przez typ: ActiveDirectorySecurity nie
+            # istnieje pod pwsh na macOS, wiec sprawdzenie typu wylaczyloby te funkcje
+            # z zestawu weryfikacyjnego. Ten sam powod co w Get-JezykOpisBleduWmi.
+            $deskryptor = $komputer.nTSecurityDescriptor
+            if ($deskryptor -and $deskryptor.PSObject.Properties['Owner']) {
+                $wlasciciel = [string]$deskryptor.Owner
+            }
+        }
+        catch {
+            # Brak prawa odczytu deskryptora nie ma prawa przewrocic wyszukiwania komputera:
+            # katalog i uzytkownik maszyny sa nadal prawdziwa odpowiedzia.
+            $wlasciciel = ''
+        }
+
+        $podpis = Get-JezykPodpisWlasciciela -Wlasciciel $wlasciciel -Serwer $Script:Config.Domena
+
+        # Data surowa - formatuje ja widok, tak samo jak kazda inna date w tym programie.
+        $utworzono = $null
+        if ($komputer.whenCreated) {
+            try { $utworzono = [datetime]$komputer.whenCreated } catch { $utworzono = $null }
+        }
 
         [pscustomobject]@{
             Nazwa       = [string]$komputer.Name
             Status      = 'Ok'
             Lokalizacja = $lokalizacja
-            Message     = ('Znaleziono w domenie {0}.' -f $Script:Config.Domena)
+            Tworca      = $podpis.Podpis
+            TworcaOsoba = $podpis.Osoba
+            Utworzono   = $utworzono
+            # Nazwa Z AD, a nie ta wpisana: AD dopasowuje nazwe NetBIOS bez rozrozniania
+            # wielkosci liter, wiec "jez-0123" znajduje JEZ-0123 - i to pisownia z AD ma
+            # trafic przed oczy operatora.
+            Message     = ('Znaleziono komputer {0} w domenie {1}.' -f $komputer.Name, $Script:Config.Domena)
         }
     }
     catch {
