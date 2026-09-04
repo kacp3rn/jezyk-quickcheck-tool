@@ -610,6 +610,18 @@ $Script:ZegarTla            = $null
 # tym razem znalazlo sie juz po nazwie.
 $Script:StatusCzekaNaNumer  = $false
 
+# Czy trzy pola czekajace na odpowiedz SCCM - "Ostatnio uzywany komputer", "Adres IP"
+# i "Adres MAC" - niosa w tej chwili NOTKE O TRWAJACYM zapytaniu, a nie odpowiedz. Po samej
+# tresci pola tego nie poznasz: "sprawdzanie" wyglada jak kazdy inny napis, a zostawione po
+# zakonczonej pracy klamie dokladnie tak samo jak zdanie nieprawdziwe, tylko odwrotnie
+# w czasie. Marker gasi KAZDA galaz, ktora odpowiedz moze wyjsc - patrz
+# Set-JezykNotkeSprawdzania w Jezyk-3-Widok.ps1.
+$Script:PolaCzekajaNaSccm   = $false
+
+# Numer klatki animacji kropek: liczba kropek to 1 + reszta z dzielenia przez 3. Trzymany
+# osobno od markera, bo zegar podbija go w innym miejscu, niz notka sie zapala.
+$Script:KlatkaKropek        = 0
+
 # Nazwa maszyny z ostatniej odpowiedzi SCCM - jedyne zrodlo prawdy dla przycisku "Pinguj".
 # Pole tekstowe niesie ja razem z data, wiec nie nadaje sie do przeniesienia stanu.
 $Script:OstatniKomputer = ''
@@ -1908,6 +1920,11 @@ function New-JezykForm {
         Receive-JezykZadanieUzytkownika
         Receive-JezykZadaniePingu
         Receive-JezykZadanieNumeru
+
+        # PO wszystkich Receive, nie przed nimi. Odpowiedz, ktora przyszla w tym takcie,
+        # zdazyla juz zgasic notke - inaczej kolejna klatka kropek nadpisalaby wynik
+        # i operator ogladalby "sprawdzanie" nad praca, ktora wlasnie sie skonczyla.
+        Update-JezykKropkiSprawdzania
 
         Clear-JezykZadaniaPorzucone
 

@@ -110,6 +110,11 @@ function Clear-JezykKonto {
     # ponownemu pingowi porownywac sie z czyms, czego w oknie juz nie ma.
     $Script:MacDlaAdresu = ''
 
+    # Notka o trwajacym zapytaniu do SCCM gasnie razem z polami. Trzy pola sa tu czyszczone
+    # WPROST, z pominieciem obu funkcji, ktore normalnie ja zdejmuja - zapomniany marker
+    # kazalby zegarowi tla wpisywac kropki do widoku, w ktorym nic juz nie trwa.
+    Set-JezykNotkeSprawdzania -Wylacz
+
     # Data przyblizona nalezy do KONKRETNEGO konta - zostawiona wpisalaby sie do pola
     # opisujacego juz kogos innego.
     $Script:LogowaniePrzyblizone = $null
@@ -233,8 +238,7 @@ function Set-JezykResult {
             # od razu, a tlo tylko ja uscisli. Komputer czekac musi - AD nie wie o nim nic.
             $Script:LogowaniePrzyblizone   = $Result.OstatnieLogowaniePrzyblizone
             $k.TxtOstatnieLogowanie.Text   = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone -Trwa
-            $k.TxtKomputerUzytkownika.Text = 'sprawdzanie...'
-            if ($k.TxtKomputerIp) { $k.TxtKomputerIp.Text = 'sprawdzanie...' }
+            Set-JezykNotkeSprawdzania
             Set-JezykInfo 'Komputer'              ''
             Set-JezykInfo 'KomputerWspoldzielony' ''
             Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
@@ -734,6 +738,8 @@ function Set-JezykPoleLogowaniaBezTla {
 # bez nazwy maszyny nie ma czego pingowac, a zostawiony kolor opisywalby poprzednia.
 function Set-JezykPoleKomputeraBezTla {
     param([string]$Blad)
+    Set-JezykNotkeSprawdzania -Wylacz
+
     $k = $Script:Kontrolki
     if (-not $k.TxtKomputerUzytkownika) { return }
     $k.TxtKomputerUzytkownika.Text = 'nie sprawdzono'
@@ -806,6 +812,61 @@ function Set-JezykAdresMac {
     # Tresc tylko wtedy, gdy MAC-a NIE MA: przy trafieniu wyjasniac nie ma czego, a przycisk
     # widoczny zawsze bylby stalym wyjasnieniem - takie z tego okna zostaly usuniete.
     Set-JezykInfo 'Mac' $(if ($Mac) { '' } else { $Szczegoly })
+}
+
+<#
+.SYNOPSIS
+    Zapala i gasi notke "sprawdzanie" w trzech polach czekajacych na odpowiedz SCCM.
+
+.DESCRIPTION
+    JEDNO MIEJSCE NA WSZYSTKIE CZYNNOSCI - dokladnie ta sama zasada, co przy
+    Set-JezykStanJeza. Notka to marker, licznik klatek ORAZ tresc trzech pol; rozpisana po
+    miejscach wywolania rozjechalaby sie przy pierwszej zmianie i zostawilaby w oknie slowo
+    "sprawdzanie" nad praca, ktora dawno sie skonczyla.
+
+    MARKER, A NIE SAMA TRESC POLA. Po napisie w polu nie poznasz, czy to notka, czy juz
+    odpowiedz - "nie sprawdzono" wyglada jak kazdy inny wynik. Dopiero marker pozwala
+    zegarowi tla odroznic pole, ktore wolno przemalowac, od pola z gotowa odpowiedzia.
+
+    -Wylacz NIE RUSZA TRESCI POL. Kazdy wolajacy wpisuje zaraz potem wartosc prawdziwa,
+    a wyczyszczenie pol tutaj dawaloby mrugniecie pustka miedzy jednym a drugim.
+#>
+function Set-JezykNotkeSprawdzania {
+    param([switch]$Wylacz)
+
+    $Script:PolaCzekajaNaSccm = -not $Wylacz
+    $Script:KlatkaKropek      = 0
+    if ($Wylacz) { return }
+
+    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara. Zapytanie do SCCM bywa krotsze
+    # niz cwierc sekundy i pola staly wtedy puste przez cale swoje czekanie.
+    Update-JezykKropkiSprawdzania
+}
+
+<#
+.SYNOPSIS
+    Jedna klatka animowanych kropek w polach czekajacych na odpowiedz SCCM.
+
+.DESCRIPTION
+    BEZ WLASNEGO ZEGARA. Wolana z taktu $Script:ZegarTla, bo ten budzi sie co 250 ms i chodzi
+    dokladnie tak dlugo, jak zyje zadanie w tle - czyli w tym samym oknie czasu, o ktore tu
+    chodzi. Osobny zegar budzilby watek interfejsu drugi raz po to samo, a zapomniany
+    chodzilby nad nieruchomym napisem do konca dnia.
+
+    ZGASZONY MARKER ZATRZYMUJE WSZYSTKO i to jest zapora, nie oszczednosc: odpowiedz, ktora
+    przyszla w tym samym takcie, gasi marker w Receive-JezykZadanieKomputera - a ono idzie
+    w zegarze PRZED ta funkcja, wiec klatka nie ma juz czego nadpisac.
+#>
+function Update-JezykKropkiSprawdzania {
+    if (-not $Script:PolaCzekajaNaSccm) { return }
+
+    $napis = 'sprawdzanie' + ('.' * (1 + ($Script:KlatkaKropek % 3)))
+    $Script:KlatkaKropek++
+
+    $k = $Script:Kontrolki
+    foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac)) {
+        if ($pole) { $pole.Text = $napis }
+    }
 }
 
 # Obsluga przycisku "Pinguj": sprawdza JESZCZE RAZ maszyne, ktora jest juz na ekranie.
@@ -1181,6 +1242,9 @@ function Set-JezykStanJeza {
 # to nie usterka, wiec nie ma czego sygnalizowac wykrzyknikiem.
 function Update-JezykKomputerWTle {
     param($Komputer)
+
+    # Odpowiedz przyszla - notka przestaje byc prawdziwa, i to ZANIM cokolwiek wpiszemy.
+    Set-JezykNotkeSprawdzania -Wylacz
 
     $k = $Script:Kontrolki
 
