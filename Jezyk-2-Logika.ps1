@@ -2508,21 +2508,24 @@ function Get-JezykComputerStatus {
         # tu GRUPE, a nie osobe. Dlatego obok podpisu idzie flaga, czy to w ogole osoba.
         # mS-DS-CreatorSID celowo NIE jest czytany: wypelnia go wylacznie dolaczenie maszyny
         # do domeny przez zwyklego uzytkownika, a tutaj wszystkie zaklada administrator.
+        #
+        # Owner NIE JEST polem .NET: ActiveDirectorySecurity ma wylacznie metode GetOwner(),
+        # a wlasnosc Owner dokleja PowerShell - i to ona tlumaczy SID na nazwe. Tlumaczenie
+        # nie zawsze wychodzi: konto skasowane, z drugiego lasu albo zza relacji zaufania,
+        # ktora akurat nie odpowiada. Brak prawa do samego atrybutu wyglada inaczej (atrybut
+        # nie przychodzi wcale), ale konczy sie tym samym - pustym wlascicielem, czyli
+        # "nie wiadomo", stanem, ktory wynik i tak juz opisuje.
+        #
+        # OSLONA JEST UBEZPIECZENIEM, a nie reakcja na znany blad. Pod pwsh 7 sprawdzone:
+        # bledu wlasnosci doklejanej przez siebie PowerShell nie wypuszcza - odklada go
+        # do $Error i oddaje $null, wiec catch nie ma tu czego lapac. Produkt chodzi jednak
+        # WYLACZNIE na Windows PowerShell 5.1, ktorego z maszyny deweloperskiej sprawdzic
+        # sie nie da - a gdyby 5.1 jednak wyjatek wypuscil, polecialby przez CALE
+        # wyszukiwanie komputera i zamienil poprawny wynik w blad. Dlatego oslona obejmuje
+        # DOKLADNIE JEDNO wyrazenie: nie ma w niej kodu, ktorego usterke moglaby zagluszyc.
         $wlasciciel = ''
-        try {
-            # Pole przez PSObject.Properties, a NIE przez typ: ActiveDirectorySecurity nie
-            # istnieje pod pwsh na macOS, wiec sprawdzenie typu wylaczyloby te funkcje
-            # z zestawu weryfikacyjnego. Ten sam powod co w Get-JezykOpisBleduWmi.
-            $deskryptor = $komputer.nTSecurityDescriptor
-            if ($deskryptor -and $deskryptor.PSObject.Properties['Owner']) {
-                $wlasciciel = [string]$deskryptor.Owner
-            }
-        }
-        catch {
-            # Brak prawa odczytu deskryptora nie ma prawa przewrocic wyszukiwania komputera:
-            # katalog i uzytkownik maszyny sa nadal prawdziwa odpowiedzia.
-            $wlasciciel = ''
-        }
+        try   { $wlasciciel = [string]$komputer.nTSecurityDescriptor.Owner }
+        catch { $wlasciciel = '' }
 
         $podpis = Get-JezykPodpisWlasciciela -Wlasciciel $wlasciciel -Serwer $Script:Config.Domena
 
