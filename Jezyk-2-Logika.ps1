@@ -60,11 +60,11 @@ function Test-JezykDn {
 # biezacym katalogu - w obu przypadkach o tym, co sie uruchomi, decydowalaby maszyna
 # operatora, a nie konfiguracja (twarda zasada nr 1).
 #
-# KSZTALT SPRAWDZAMY WLASNYM WZORCEM, NIE [System.IO.Path]::IsPathRooted. Ta metoda
-# odpowiada wedlug systemu, na ktorym akurat biegnie: pod pwsh na macOS - czyli tam, gdzie
-# stoi zestaw weryfikacyjny - "C:\..." nie jest dla niej sciezka zakotwiczona i zapora
-# odrzucalaby poprawna wartosc. Jezyk dziala wylacznie na Windows, wiec pytamy wprost
-# o litere dysku albo o sciezke UNC.
+# KSZTALT SPRAWDZAMY WLASNYM WZORCEM, A NIE [System.IO.Path]::IsPathRooted. Tamta metoda
+# odpowiada na INNE PYTANIE niz nasze: mowi, czy sciezka jest zakotwiczona wedlug regul
+# platformy, na ktorej akurat pracuje. My pytamy wezej i konkretnie - czy to PELNA SCIEZKA
+# WINDOWSOWA, czyli litera dysku albo UNC, bo tylko taka ma tu sens. Regula wpisana wprost
+# nie zalezy od niczego poza soba i mowi dokladnie to, co sprawdza.
 #
 # Istnienia pliku NIE sprawdzamy tutaj: Test-Path na martwym udziale sieciowym potrafi
 # stanac na dlugo, a te funkcje wola sie z watku interfejsu. Brakujacy plik i tak zglosi

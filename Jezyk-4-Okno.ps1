@@ -103,12 +103,12 @@ $Script:MapaJeza = @(
     '.......###..###.#....'
 )
 
-# KOLORY TU, PEDZLE NIE - i to nie jest kosmetyka. System.Drawing.SolidBrush RZUCA
-# WYJATKIEM pod pwsh na macOS, a zestaw weryfikacyjny dolacza ten plik kropka: pedzel
-# zalozony na poziomie skryptu wywrocilby CALY zestaw, zanim ruszyloby pierwsze
-# sprawdzenie. Color::FromArgb jest czysta struktura i dziala wszedzie, wiec paleta
-# moze tu stac. Pedzle powstaja leniwie w Set-JezykRysunekJeza, ktore wola wylacznie
-# procedura Paint - a tej zestaw nie wykonuje nigdy.
+# KOLORY TU, PEDZLE NIE - i to nie jest kosmetyka. Pedzel to zasob GDI zakladany przy samym
+# wczytaniu pliku, a ten plik dolacza kropka takze zestaw weryfikacyjny, ktory GDI nie ma:
+# pedzel na poziomie skryptu wywrocilby CALY zestaw, zanim ruszyloby pierwsze sprawdzenie.
+# Color::FromArgb jest czysta struktura, wiec paleta moze tu stac. Pedzle powstaja leniwie
+# w Set-JezykRysunekJeza, ktore wola wylacznie procedura Paint - a tej zestaw nie wykonuje
+# nigdy.
 # JABLKO, ktore jez dostaje po udanym wyszukaniu. Nakladka na sylwetke, a NIE osobna
 # mapa osiemnastowierszowa: druga kopia jeza rozjechalaby sie z pierwsza przy pierwszej
 # zmianie rysunku. Ogonek bierze '#', a polysk '*' - oba kolory juz sa, wiec paleta rosnie
@@ -215,8 +215,8 @@ function Get-JezykSpriteJeza {
 
 .DESCRIPTION
     CALA ARYTMETYKA JEST TUTAJ, A NIE W RYSOWANIU, I TO NIE JEST PORZADKOWANIE. Graphics
-    i SolidBrush nie istnieja pod pwsh na macOS, wiec funkcji rysujacej zestaw weryfikacyjny
-    nie wykona nigdy - liczba schowana w jej wnetrzu nie bylaby sprawdzona ani razu.
+    i SolidBrush wymagaja GDI, ktorego zestaw weryfikacyjny nie ma - funkcji rysujacej nie
+    wykona wiec nigdy, a liczba schowana w jej wnetrzu nie bylaby sprawdzona ani razu.
     Rysowanie dostaje gotowe wspolrzedne i samo niczego nie liczy.
 
     ROZMIAR KOMORKI PRZEZ [Math]::Floor, A NIE [int]. [int] w PowerShellu ZAOKRAGLA
