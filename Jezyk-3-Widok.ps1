@@ -124,6 +124,7 @@ function Clear-JezykKonto {
     # sprawdzac komputer kogos, kogo juz nie ma na ekranie.
     $Script:OstatniKomputer = ''
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = $false }
+    Set-JezykPrzyciskPolacz ''
 
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
@@ -1266,6 +1267,57 @@ function Set-JezykStanJeza {
     }
 }
 
+<#
+.SYNOPSIS
+    Pokazuje albo chowa przycisk "Polacz" - jedyne miejsce z warunkiem jego widocznosci.
+
+.DESCRIPTION
+    Przycisk ZNIKA I POJAWIA SIE, a nie wyszarza sie jak "Pinguj" i "Odblokuj konto".
+    Roznica jest zamierzona: tamte dwa maja stany, ktore warto pokazac ("jest, ale nie
+    teraz"), a ten ma tylko jeden powod istnienia - jest maszyna i jest czym sie z nia
+    polaczyc. Przycisk wyszarzony na stale w kazdym wdrozeniu bez konsoli ConfigMgr bylby
+    obietnica, ktorej nikt tam nigdy nie spelni.
+
+    Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan - rozpisany
+    rozjechalby sie przy pierwszej zmianie i przycisk zostawalby widoczny po przelaczeniu
+    konta.
+#>
+function Set-JezykPrzyciskPolacz {
+    param([string]$Netbios)
+
+    $przycisk = $Script:Kontrolki.PrzyciskPolacz
+    if (-not $przycisk) { return }
+
+    # Pusta sciezka w konfiguracji = funkcja swiadomie wylaczona, dokladnie tak samo jak
+    # puste SccmSerwer. Czytamy ja przy kazdym wywolaniu, a nie raz przy starcie, bo to
+    # jedna linia mniej stanu do zgubienia.
+    $sciezka = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
+
+    $przycisk.Visible = ([bool]$Netbios -and [bool]$sciezka)
+}
+
+# Obsluga przycisku "Polacz": oddaje wykryta maszyne zdalnej konsoli z ConfigMgr.
+# Nazwa idzie z $Script:OstatniKomputer, a nie z pola tekstowego - dokladnie z tego samego
+# powodu, co przy "Pinguj": w polu siedzi razem z data ostatniej aktywnosci.
+#
+# Wynik obslugujemy NIESYMETRYCZNIE i to jest swiadome. Niepowodzenie ma gdzie trafic
+# (pole Status i przycisk "!"), bo inaczej klikniecie nie robiloby nic i nie mowiloby
+# dlaczego. Powodzenie nie rusza NICZEGO: otwarte okno konsoli jest samo w sobie
+# potwierdzeniem, a Set-JezykInfo 'Status' '' skasowaloby diagnostyke nalezaca do
+# WYSZUKIWANIA, nie do tego klikniecia - to nie jest wykrzyknik tego przycisku.
+function Invoke-JezykPolacz {
+    $k = $Script:Kontrolki
+    if (-not $Script:OstatniKomputer) { return }
+
+    $wynik = Start-JezykRemoteControl -Netbios $Script:OstatniKomputer `
+                                      -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
+
+    if (-not $wynik.Udane) {
+        if ($k.TxtStatus) { $k.TxtStatus.Text = [string]$wynik.Komunikat }
+        Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
+    }
+}
+
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
 # idzie pod przycisk "!" WYLACZNIE PRZY BLEDZIE: w polu jest na nia za malo miejsca, a bez
 # niej nazwa przyczyny mowi, CO sie stalo, ale nie mowi, co z tym zrobic. Na sukcesie
@@ -1297,6 +1349,7 @@ function Update-JezykKomputerWTle {
     # stanu. Przycisk jest czynny dokladnie wtedy, gdy jest co pingowac.
     $Script:OstatniKomputer = [string]$Komputer.Nazwa
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = [bool]$Script:OstatniKomputer }
+    Set-JezykPrzyciskPolacz $Script:OstatniKomputer
 
     # Wynik sondy przyszedl razem z nazwa - zapytanie do SCCM i ping poszly jednym zadaniem
     # w tle, wiec kolor i adres sa gotowe od razu, bez drugiej podrozy po sieci.

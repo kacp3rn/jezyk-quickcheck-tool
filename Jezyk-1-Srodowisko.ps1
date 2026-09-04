@@ -240,6 +240,20 @@ $Script:Ustawienia = @{
     # aktywacje DCOM, a wejscie przez WinRM wymaga osobnego czlonkostwa na serwerze.
     # $false = probujemy wylacznie protokolu z SccmProtokol.
     SccmProtokolZapasowy = $true
+
+    # PELNA sciezka do CmRcViewer.exe - zdalnej konsoli z ConfigMgr. Uruchamia ja przycisk
+    # "Polacz", ktory pojawia sie nad "Pinguj" wtedy i tylko wtedy, gdy SCCM podal nazwe
+    # maszyny, A TA SCIEZKA JEST WYPELNIONA. PUSTE = przycisku nie ma i to jest wartosc
+    # domyslna - dokladnie ta sama zasada, co przy pustym SccmSerwer.
+    #
+    # SCIEZKA MUSI BYC PELNA, od litery dysku albo \\serwera. Sama nazwa pliku bylaby
+    # szukana po PATH, czyli na maszynie operatora - a Jezyk niczego tam nie wykrywa
+    # (twarda zasada nr 1). Z tego samego powodu nie ma tu wartosci zapasowej: katalog
+    # konsoli bywa inny w kazdym wdrozeniu i zgadywanie go konczyloby sie uruchomieniem
+    # nie tego programu, co trzeba.
+    #
+    # Przyklad: 'C:\Program Files (x86)\Microsoft Endpoint Manager\AdminConsole\bin\i386\CmRcViewer.exe'
+    SciezkaRemoteControl = ''
 }
 
 # Normalizacja obu list: male litery i bez spacji na brzegach. Od tego zalezy porownanie
@@ -402,6 +416,12 @@ function Get-JezykOpisKonfiguracji {
             $(if ($Script:Ustawienia.SccmProtokolZapasowy) { ' (przy braku połączenia próbuje drugiego protokołu)' } else { '' })
     } else {
         'SCCM: nieskonfigurowany - pole "Ostatnio używany komputer" pozostaje puste'
+    }
+
+    $wiersze += if ($Script:Ustawienia.SciezkaRemoteControl) {
+        'Zdalna konsola: {0}' -f $Script:Ustawienia.SciezkaRemoteControl
+    } else {
+        'Zdalna konsola: nieskonfigurowana - przycisk "Połącz" się nie pojawia'
     }
 
     $wiersze -join [Environment]::NewLine

@@ -1655,6 +1655,24 @@ function New-JezykForm {
     $btnPinguj.Enabled   = $false
     $btnPinguj.TabStop   = $false
 
+    # "Polacz" - zdalna konsola do tej samej maszyny. STOI NAD "PINGUJ", w linii etykiety,
+    # za przyciskami "!". Ta czesc wiersza stoi pusta: etykieta z dwoma wykrzyknikami konczy
+    # sie grubo przed prawa krawedzia kolumny, wiec przycisk nie zabral miejsca ZADNEMU polu
+    # w oknie - ani nazwisku wyzej, ani nazwie maszyny obok, ani adresowi IP nizej. Panel
+    # konta zostaje dziewieciowierszowy i okno nie uroslo ani o piksel.
+    #
+    # W ODROZNIENIU OD "PINGUJ" ten przycisk ZNIKA, a nie wyszarza sie - powod przy
+    # Set-JezykPrzyciskPolacz. Wspolrzedne dostaje na koncu, razem z calym wyrownaniem.
+    $btnPolacz           = New-Object System.Windows.Forms.Button
+    $btnPolacz.Text      = 'Połącz'
+    $btnPolacz.Width     = $szerokoscPingu
+    $btnPolacz.Height    = 22
+    $btnPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnPolacz.BackColor = $Script:Config.KolorKontrolki
+    $btnPolacz.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    $btnPolacz.Visible   = $false
+    $btnPolacz.TabStop   = $false
+
     # ADRES IP W OSOBNYM POLU, DOKLADNIE POD NAZWA MASZYNY. Doklejony do pola obok
     # wypchnalby z niego date ostatniej aktywnosci, a w kolumnie nie ma miejsca na oba
     # napisy naraz. Pion pod komputerem mowi bez slowa, ktorej maszyny adres to jest.
@@ -1716,7 +1734,7 @@ function New-JezykForm {
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
         $lblOstatnieLogowanie, $txtOstatnieLogowanie,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
-        $btnInfoKomputerWspoldzielony, $btnPinguj,
+        $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
         $lblKomputerIp, $txtKomputerIp,
         $lblKatalog, $txtKatalog, $lblStatus, $txtStatus, $btnInfoStatus))
@@ -1878,6 +1896,15 @@ function New-JezykForm {
     Set-JezykSrodekPionowy @($btnPinguj) `
         ($txtKomputerUzytkownika.Top + [int]($txtKomputerUzytkownika.Height / 2))
 
+    # "Polacz" LICZY SIE Z SASIADA, NIE Z SIATKI - i to jest tu istotne. Wysrodkowanie go
+    # na etykiecie (tak, jak stoja przyciski "!") wygladaloby poprawnie przy 100% DPI
+    # i dosuwalo sie do "Pinguj" na styk przy 125-150%: etykieta i pole dzieli STALE 20 px
+    # ($Script:OdstepPodEtykieta), a wysokosc obu rosnie z czcionka. Odjete od gotowego Top
+    # sasiada daje odstep, ktory nie zalezy od DPI w ogole.
+    $odstepPionowyPolacz = 2
+    $btnPolacz.Left = $btnPinguj.Left
+    $btnPolacz.Top  = $btnPinguj.Top - $btnPolacz.Height - $odstepPionowyPolacz
+
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer   $lblKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
@@ -1888,6 +1915,28 @@ function New-JezykForm {
     # centruja sie wzgledem tej samej etykiety), Left dosuwa sie o wlasna szerokosc + odstep.
     $btnInfoKomputerWspoldzielony.Top  = $btnInfoKomputer.Top
     $btnInfoKomputerWspoldzielony.Left = $btnInfoKomputer.Left + $btnInfoKomputer.Width + 4
+
+    # WYKRZYKNIKI USTEPUJA PRZYCISKOWI "POLACZ", bo tylko one maja dokad sie cofnac.
+    # Etykieta "Ostatnio uzywany komputer:" ma AutoSize i rosnie z czcionka systemu, wiec
+    # przy 125-150% DPI wypycha oba wykrzykniki o kilkadziesiat pikseli w prawo - a "Polacz"
+    # stoi na wspolrzednej liczonej ze stalych i uciec nie ma gdzie. Bez tego cofniecia
+    # wykrzyknik zaslonilby przycisk, i to WYLACZNIE przy usterce i WYLACZNIE na cudzym
+    # pulpicie: dokladnie ten rodzaj wady, ktorej u siebie sie nie zobaczy.
+    #
+    # Cena jest swiadoma: przy takim DPI para wykrzyknikow wchodzi na koniec napisu
+    # etykiety. Przyciety ogon slowa da sie przeczytac, zakryty przycisk przestaje istniec.
+    #
+    # ODSTEP 4 PX, TAKI SAM JAK MIEDZY WYKRZYKNIKAMI - i to nie jest kosmetyka. Ten wiersz
+    # jest pelny: etykieta, dwa wykrzykniki i przycisk zajmuja przy zwyklej czcionce niemal
+    # cala kolumne. Szerszy odstep kazalby sie parze cofac JUZ PRZY 100% DPI, czyli u kazdego.
+    $odstepPrzedPolaczem      = 4
+    $prawaGranicaWykrzyknikow = $btnPolacz.Left - $odstepPrzedPolaczem
+    $nadmiarWykrzyknikow = ($btnInfoKomputerWspoldzielony.Left + $btnInfoKomputerWspoldzielony.Width) -
+                           $prawaGranicaWykrzyknikow
+    if ($nadmiarWykrzyknikow -gt 0) {
+        $btnInfoKomputer.Left              = $btnInfoKomputer.Left - $nadmiarWykrzyknikow
+        $btnInfoKomputerWspoldzielony.Left = $btnInfoKomputerWspoldzielony.Left - $nadmiarWykrzyknikow
+    }
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
@@ -1928,6 +1977,7 @@ function New-JezykForm {
         TxtKomputerIp          = $txtKomputerIp
         TxtKomputerMac         = $txtKomputerMac
         PrzyciskPinguj         = $btnPinguj
+        PrzyciskPolacz         = $btnPolacz
         TxtKatalog        = $txtKatalog
         TxtStatus         = $txtStatus
 
@@ -2032,6 +2082,7 @@ function New-JezykForm {
 
     $btnOdblokuj.Add_Click({ Invoke-JezykOdblokowanie })
     $btnPinguj.Add_Click({ Invoke-JezykPing })
+    $btnPolacz.Add_Click({ Invoke-JezykPolacz })
 
     $cmbTryb.Add_SelectedIndexChanged({ Set-JezykWidok })
     $cmbWynik.Add_SelectedIndexChanged({ Invoke-JezykWyborKonta })

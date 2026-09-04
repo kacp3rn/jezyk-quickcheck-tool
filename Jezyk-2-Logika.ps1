@@ -53,6 +53,36 @@ function Test-JezykDn {
     return ($Dn -match '^[A-Za-z]+=..*' -and $Dn -match '(?i)DC=')
 }
 
+# Sciezka do programu uruchamianego przez przycisk "Polacz" - jedyne miejsce w Jezyku,
+# w ktorym cokolwiek startuje jako osobny proces. Zadanie tej zapory jest wezsze niz
+# "czy plik istnieje": ma NIE PRZEPUSCIC sciezki, ktora system musialby dopiero gdzies
+# odszukac. Sama nazwa pliku ("CmRcViewer.exe") poszlaby po PATH, a sciezka wzgledna po
+# biezacym katalogu - w obu przypadkach o tym, co sie uruchomi, decydowalaby maszyna
+# operatora, a nie konfiguracja (twarda zasada nr 1).
+#
+# KSZTALT SPRAWDZAMY WLASNYM WZORCEM, NIE [System.IO.Path]::IsPathRooted. Ta metoda
+# odpowiada wedlug systemu, na ktorym akurat biegnie: pod pwsh na macOS - czyli tam, gdzie
+# stoi zestaw weryfikacyjny - "C:\..." nie jest dla niej sciezka zakotwiczona i zapora
+# odrzucalaby poprawna wartosc. Jezyk dziala wylacznie na Windows, wiec pytamy wprost
+# o litere dysku albo o sciezke UNC.
+#
+# Istnienia pliku NIE sprawdzamy tutaj: Test-Path na martwym udziale sieciowym potrafi
+# stanac na dlugo, a te funkcje wola sie z watku interfejsu. Brakujacy plik i tak zglosi
+# sie wyjatkiem przy uruchomieniu - i tam ma nazwe, ktora da sie pokazac operatorowi.
+function Test-JezykSciezkaProgramu {
+    param([string]$Sciezka)
+
+    if ([string]::IsNullOrWhiteSpace($Sciezka)) { return $false }
+    if ($Sciezka.Length -gt 260) { return $false }
+    # Znaki sterujace i cudzyslow - to drugie dlatego, ze wartosc trafia do wiersza
+    # polecen tworzonego procesu, gdzie cudzyslow ma znaczenie skladniowe.
+    if ($Sciezka -match '["\x00-\x1F]') { return $false }
+    if (-not $Sciezka.EndsWith('.exe', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+    # Litera dysku (C:\...) albo UNC (\\serwer\...). Nic innego nie jest sciezka pelna.
+    return ($Sciezka -match '^(?:[A-Za-z]:\\|\\\\[^\\])')
+}
+
 <#
 .SYNOPSIS
     Poddrzewo przeszukania po numerze dla WYBRANEJ domeny - puste, gdy jej nie wymieniono.
@@ -261,6 +291,14 @@ function Confirm-JezykUstawienia {
         if ($Script:Ustawienia.SccmProtokolZapasowy -isnot [bool]) {
             $bledy += 'SccmProtokolZapasowy: ma być $true albo $false.'
         }
+    }
+
+    # Zdalna konsola jest opcjonalna: puste = przycisk "Połącz" sie nie pojawia. Wpis BLEDNY
+    # juz nie - przycisk pokazywalby sie przy kazdej wykrytej maszynie, a kazde klikniecie
+    # konczylo sie tym samym komunikatem, czyli literowka wygladalaby na awarie konsoli.
+    $sciezkaRc = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
+    if ($sciezkaRc -and -not (Test-JezykSciezkaProgramu $sciezkaRc)) {
+        $bledy += 'SciezkaRemoteControl: "{0}" nie jest pełną ścieżką do pliku .exe (wymagana litera dysku albo \\serwer).' -f $sciezkaRc
     }
 
     return @($bledy)
@@ -2539,6 +2577,83 @@ function Get-JezykPingKomputera {
     }
     finally {
         if ($ping) { try { $ping.Dispose() } catch { } }
+    }
+
+    return $wynik
+}
+
+<#
+.SYNOPSIS
+    Uruchamia zdalna konsole (CmRcViewer.exe z ConfigMgr) dla wskazanej maszyny.
+
+.DESCRIPTION
+    JEDYNE miejsce w calym narzedziu, ktore startuje osobny proces. Dotad Jezyk wychodzil
+    poza siebie wylacznie przez AD, DNS, ICMP i WMI - i kazda z tych drog wracala z danymi.
+    Ta nie wraca z niczym: oddaje maszyne pod cudzy program.
+
+    Sciezka pochodzi WYLACZNIE z $Script:Ustawienia i jest podawana argumentem, a nie
+    czytana tutaj - dzieki temu funkcja daje sie sprawdzic bez konfiguracji, a odpowiedz
+    na pytanie "co uruchamiamy" ma jedno zrodlo.
+
+    Zwraca ten sam ksztalt, co Unlock-JezykKonto (Udane / Komunikat / Szczegoly), bo widok
+    obsluguje oba tak samo: krotkie zdanie do pola Status, pelna tresc pod przycisk "!".
+    Funkcja NIE RZUCA WYJATKIEM - jak wszystko, czego wynik ma trafic do okna.
+
+.NOTES
+    Bez -Wait: Start-Process wraca zaraz po utworzeniu procesu, wiec watek interfejsu nie
+    czeka na zamkniecie konsoli i nie trzeba tu zadania w tle. Z -Wait okno stalo by przez
+    cala sesje zdalna.
+#>
+function Start-JezykRemoteControl {
+    param([string]$Netbios, [string]$Sciezka)
+
+    if ($null -eq $Netbios) { $Netbios = '' }
+    if ($null -eq $Sciezka) { $Sciezka = '' }
+    $Netbios = $Netbios.Trim()
+    $Sciezka = $Sciezka.Trim()
+
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
+
+    # BIALA LISTA NA NAZWIE MASZYNY. Nazwa idzie argumentem tworzonego procesu, czyli
+    # w miejsce, gdzie tekst przestaje byc tekstem - ta sama zapora, co przy odczycie
+    # komputera z AD i przy zapytaniu do SCCM. Do pola trafia z SCCM, wiec w praktyce
+    # jest poprawna; sprawdzamy ja mimo to, bo "w praktyce" nie jest gwarancja.
+    if (-not (Test-JezykNazwaKonta $Netbios)) {
+        $wynik.Komunikat = 'Nie mam nazwy maszyny, z którą można się połączyć.'
+        $wynik.Szczegoly = 'Wartość "{0}" nie wygląda na nazwę komputera, więc nie została nikomu podana.' -f $Netbios
+        return $wynik
+    }
+
+    # SCIEZKA SPRAWDZANA TAKZE TUTAJ, nie tylko przy sterowaniu przyciskiem. Ta sama zasada,
+    # co przy uprawnieniu do odblokowania: stan interfejsu da sie rozspojnic, a funkcja
+    # wykonujaca operacje ma bronic sie sama.
+    if (-not $Sciezka) {
+        $wynik.Komunikat = 'Nie ustawiono ścieżki do zdalnej konsoli.'
+        $wynik.Szczegoly = 'Uzupełnij SciezkaRemoteControl w $Script:Ustawienia (plik Jezyk-1-Srodowisko.ps1) - pełną ścieżką do CmRcViewer.exe z konsoli ConfigMgr.'
+        return $wynik
+    }
+
+    if (-not (Test-JezykSciezkaProgramu $Sciezka)) {
+        $wynik.Komunikat = 'Ścieżka do zdalnej konsoli jest niepoprawna.'
+        $wynik.Szczegoly = 'SciezkaRemoteControl ma być pełną ścieżką do pliku .exe - od litery dysku albo od \\serwera. Wpisano: "{0}"' -f $Sciezka
+        return $wynik
+    }
+
+    try {
+        # -ArgumentList TABLICA, nie sklejony napis: kazdy element idzie osobnym argumentem
+        # i nie ma miejsca, w ktorym spacja albo cudzyslow zmienialyby podzial.
+        Start-Process -FilePath $Sciezka -ArgumentList @($Netbios) -ErrorAction Stop
+        $wynik.Udane     = $true
+        $wynik.Komunikat = 'Uruchomiono zdalną konsolę dla maszyny {0}.' -f $Netbios
+    }
+    catch {
+        # Tu laduje brakujacy plik, odmowa uruchomienia i martwy udzial sieciowy. Rozroznia
+        # je tresc wyjatku, ktora zostaje w calosci - skracanie zabieraloby dokladnie te
+        # informacje, po ktora sie do komunikatu siega.
+        $opis = Get-JezykOpisBledu $_ ('Uruchomienie zdalnej konsoli dla {0}' -f $Netbios)
+        $wynik.Komunikat = $opis.Krotki
+        $wynik.Szczegoly = '{0}{1}Ścieżka z konfiguracji: {2}' -f
+                           $opis.Szczegoly, ([Environment]::NewLine + [Environment]::NewLine), $Sciezka
     }
 
     return $wynik
