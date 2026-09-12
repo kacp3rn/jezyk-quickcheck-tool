@@ -390,6 +390,11 @@ function New-JezykResult {
         [string]$TelefonKomorkowy = '',
         [string]$Menedzer = '',
 
+        # Nazwy grup gotowe do pokazania - patrz Get-JezykNazwyGrup. Tablica, a nie napis:
+        # okno stawia je jedna pod druga na liscie, a sklejenie ich tutaj kazaloby mu ten
+        # napis z powrotem rozebrac.
+        [string[]]$Grupy = @(),
+
         [string]$Lokalizacja = '',
         $ZmianaHaslaWymuszona = $null,
         $HasloWygasa          = $null,
@@ -429,6 +434,18 @@ function New-JezykResult {
         TelefonKomorkowy = $TelefonKomorkowy
 
         Menedzer = $Menedzer
+
+        # DOKLADNIE ZAKLADKA "Czlonek grupy" Z KONSOLI AD, i tylko ona. Nie ma tu grupy
+        # PODSTAWOWEJ (zwykle "Uzytkownicy domeny") - AD nie trzyma jej w memberOf, tylko
+        # w primaryGroupID - ani czlonkostw DZIEDZICZONYCH przez grupy zagniezdzone.
+        # Obie granice sa swiadome: rozwiniecie drzewa to zapytanie rekurencyjne do
+        # kontrolera, czyli dokladnie ta klasa kosztu, ktorej to pole mialo nie miec.
+        #
+        # ODSIANIE PUSTYCH JEST WARUNKIEM POPRAWNOSCI, A NIE PORZADKAMI. @($null) to
+        # w PowerShellu tablica JEDNOELEMENTOWA, wiec konto bez grup przyszlo by tu
+        # z Count = 1 - przycisk "Grupy AD" zapalalby sie przy KAZDYM koncie i otwieral
+        # liste z jedna pusta pozycja. Filtr gwarantuje, ze Count niesie liczbe grup.
+        Grupy = @($Grupy | Where-Object { $_ })
 
         Lokalizacja = $Lokalizacja
 
@@ -1849,6 +1866,51 @@ function Get-JezykPodpisMenedzera {
 
 <#
 .SYNOPSIS
+    Zamienia liste czlonkostw z memberOf na nazwy grup.
+
+.DESCRIPTION
+    Atrybut memberOf niesie NAZWY WYROZNIAJACE grup ("CN=GG_Kadry_Odczyt,OU=Grupy,
+    DC=jezyk,DC=pl"), a nie nazwy - tak samo jak Manager przy przelozonym. Bierzemy
+    pierwszy czlon i zdejmujemy odwrotne ukosniki, ktorymi LDAP oslania przecinki
+    w nazwie ("CN=Dzial IT\, Warszawa") - inaczej byly by widoczne w oknie. Wzorzec
+    jest ten sam, co przy podpisie zapasowym w Get-JezykPodpisMenedzera: ten sam
+    problem ma miec jedna odpowiedz.
+
+    ZADNEGO ZAPYTANIA DO AD. Nazwa grupy siedzi w jej wlasnej nazwie wyrozniajacej,
+    wiec odczyt kazdej grupy z osobna bylby N podrozami po sieci po wartosc, ktora
+    juz mamy w reku - a lista bywa kilkudziesieciopozycyjna.
+
+    Zapis, ktory nie zaczyna sie od CN=, oddajemy w CALOSCI. Lepiej pokazac nazwe
+    wyrozniajaca niz zgubic czlonkostwo, o ktorego istnieniu operator ma sie dowiedziec.
+
+    Sortujemy tutaj, bo memberOf przychodzi w kolejnosci dowolnej, a okno ma tylko
+    pokazac gotowa liste - formatowanie po stronie widoku nie ma tu czego rozstrzygac.
+#>
+function Get-JezykNazwyGrup {
+    param($Czlonkostwa)
+
+    $nazwy = @()
+    foreach ($dn in @($Czlonkostwa)) {
+        $tekst = ([string]$dn).Trim()
+        if (-not $tekst) { continue }
+
+        if ($tekst -match '^\s*CN=((?:[^,\\]|\\.)+)') {
+            $nazwy += ($Matches[1] -replace '\\(.)', '$1').Trim()
+        } else {
+            $nazwy += $tekst
+        }
+    }
+
+    # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice oddawana
+    # z funkcji: przy zerze grup wolajacy dostaje $null, a przy jednej sam napis, a nie
+    # tablice jednoelementowa. Dlatego kazde wywolanie owija sie w @() NA MIEJSCU WYWOLANIA
+    # - ta sama konwencja, co przy @(Confirm-JezykUstawienia) - a New-JezykResult odsiewa
+    # jeszcze puste pozycje, bo @($null) to tablica JEDNOELEMENTOWA.
+    return @($nazwy | Sort-Object -Unique)
+}
+
+<#
+.SYNOPSIS
     Zamienia wlasciciela obiektu AD ("DOMENA\konto") na czytelny podpis osoby.
 
 .DESCRIPTION
@@ -1930,7 +1992,7 @@ function Get-JezykUserStatus {
                            -Server $adres `
                            -Properties LockedOut, Enabled, LockoutTime, DisplayName,
                                        GivenName, Surname, EmailAddress,
-                                       OfficePhone, MobilePhone, Manager,
+                                       OfficePhone, MobilePhone, Manager, MemberOf,
                                        CanonicalName, pwdLastSet, PasswordLastSet,
                                        'msDS-UserPasswordExpiryTimeComputed',
                                        AccountExpirationDate, Created, LastLogonDate `
@@ -1958,6 +2020,11 @@ function Get-JezykUserStatus {
         # Serwer przekazujemy ten sam, z ktorego czytalismy konto: przelozony lezy zwykle
         # w tej samej domenie, a odpytanie innego kontrolera bylo by druga podroza po sieci.
         $menedzer = Get-JezykPodpisMenedzera -Dn ([string]$user.Manager) -Serwer $adres
+
+        # Grupy przychodza W TYM SAMYM ZAPYTANIU, co reszta konta - memberOf jest zwyklym
+        # atrybutem obiektu, wiec nie kosztuje ani jednej dodatkowej podrozy po sieci.
+        # Nie ma tu drugiego odczytu ani zadania w tle, bo nie ma na co czekac.
+        $grupy = @(Get-JezykNazwyGrup $user.MemberOf)
 
         # pwdLastSet rowne zero to sposob, w jaki AD zapisuje "uzytkownik musi zmienic haslo
         # przy nastepnym logowaniu".
@@ -1997,6 +2064,7 @@ function Get-JezykUserStatus {
                                -TelefonGlowny $telefonGlowny `
                                -TelefonKomorkowy $telefonKomorkowy `
                                -Menedzer $menedzer `
+                               -Grupy $grupy `
                                -LockoutTime $czasBlokady `
                                -Lokalizacja $lokalizacja `
                                -ZmianaHaslaWymuszona $wymuszonaZmiana `
@@ -2421,7 +2489,7 @@ function Get-JezykKontaktStatus {
         $kontakt = Get-ADObject -Identity $Dn `
                                 -Server $Script:Config.Domena `
                                 -Properties displayName, givenName, sn, mail,
-                                            telephoneNumber, mobile,
+                                            telephoneNumber, mobile, memberOf,
                                             CanonicalName, whenCreated `
                                 -ErrorAction Stop
 
@@ -2454,6 +2522,7 @@ function Get-JezykKontaktStatus {
                                -Email ([string]$kontakt.mail) `
                                -TelefonGlowny $telefonGlowny `
                                -TelefonKomorkowy $telefonKomorkowy `
+                               -Grupy @(Get-JezykNazwyGrup $kontakt.memberOf) `
                                -Lokalizacja $lokalizacja `
                                -KontoUtworzono $utworzono `
                                -Dn ([string]$kontakt.DistinguishedName) `

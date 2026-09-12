@@ -1389,6 +1389,100 @@ function Stop-JezykZadaniaTla {
 
 <#
 .SYNOPSIS
+    Pokazuje grupy AD zalezionego konta w osobnym oknie z lista. Wolane z przycisku "Grupy AD".
+
+.DESCRIPTION
+    OSOBNE OKNO, A NIE MessageBox jak przy przycisku "!". Konto potrafi nalezec do
+    kilkudziesieciu grup, a okno komunikatu rosnie z trescia i nie przewija sie - koniec
+    listy wypadalby poza ekran i nie dalo by sie do niego dojsc. Lista przewija sie sama.
+
+    ZRODLEM JEST $Script:OstatnieKonto, a nie osobna zmienna z grupami. Pokazane konto ma
+    juz swoje jedno miejsce w pamieci i jest zerowane w Clear-JezykKonto, wiec druga kopia
+    byla by wylacznie kolejna rzecza, ktora mozna zapomniec wyczyscic - a lista grup
+    poprzedniego konta opisywala by KOGOS INNEGO niz reszta widoku.
+
+    STRAZ STOI PRZED PIERWSZA KONTROLKA. Przycisk bywa czynny wylacznie wtedy, gdy grupy
+    sa (Set-JezykPrzyciskGrupy), ale warunek sprawdzamy takze tutaj: puste okno z tytulem
+    "(0)" nie mowiloby nic ponad to, co mowi wyszarzony przycisk.
+
+    Nazwy grup przychodza z logiki JUZ POSORTOWANE (Get-JezykNazwyGrup) - okno nie sortuje
+    ich po raz drugi, bo dwa miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
+#>
+function Show-JezykGrupyAd {
+    $konto = $Script:OstatnieKonto
+    if (-not $konto) { return }
+
+    $grupy = @($konto.Grupy)
+    if ($grupy.Count -eq 0) { return }
+
+    # Kontakt loginu nie ma, wiec podpis spada na nazwe obiektu - ta sama zasada, co przy
+    # etykiecie pierwszego pola w oknie glownym ("Login:" kontra "Nazwa:").
+    $podpis = [string]$konto.Login
+    if (-not $podpis) { $podpis = [string]$konto.NazwaObiektu }
+
+    # Wymiary liczone ze stalych siatki okna glownego, zeby oba okna mialy ten sam rytm.
+    $margines           = $Script:Margines
+    $szerokosc          = $Script:SzerokoscKolumny + 2 * $margines
+    $wysokoscListy      = 300
+    $wysokoscPrzycisku  = 24
+    $szerokoscPrzycisku = 90
+
+    # Napis skladamy do zmiennej, a nie w argumencie metody: w wywolaniu metody przecinki
+    # naleza do listy argumentow METODY, wiec operator -f dostalby tylko pierwsza wartosc.
+    $tytul = 'Jeżyk - Grupy AD: {0} ({1})' -f $podpis, $grupy.Count
+
+    $okno = $null
+    try {
+        $okno                 = New-Object System.Windows.Forms.Form
+        $okno.Text            = $tytul
+        $okno.ClientSize      = [System.Drawing.Size]::new($szerokosc,
+                                    ($wysokoscListy + $wysokoscPrzycisku + 3 * $margines))
+        $okno.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $okno.MaximizeBox     = $false
+        $okno.MinimizeBox     = $false
+        $okno.ShowInTaskbar   = $false
+        $okno.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
+        # Ta sama czcionka, co w oknie glownym - honoruje ustawienia systemu i skalowanie DPI.
+        $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
+
+        $lista          = New-Object System.Windows.Forms.ListBox
+        $lista.Location = [System.Drawing.Point]::new($margines, $margines)
+        $lista.Size     = [System.Drawing.Size]::new(($szerokosc - 2 * $margines), $wysokoscListy)
+        # Bez tego ListBox przycina swoja wysokosc do calkowitej liczby wierszy i zostawia
+        # pod soba szpare zalezna od czcionki - a wysokosc mamy policzona ze stalych.
+        $lista.IntegralHeight      = $false
+        # Nazwy grup bywaja dluzsze niz kolumna; poziomy pasek daje je doczytac zamiast
+        # ucinac w polowie.
+        $lista.HorizontalScrollbar = $true
+        $lista.Items.AddRange([object[]]$grupy)
+
+        $btnZamknij           = New-Object System.Windows.Forms.Button
+        $btnZamknij.Text      = 'Zamknij'
+        $btnZamknij.Size      = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
+        $btnZamknij.Left      = $szerokosc - $margines - $szerokoscPrzycisku
+        $btnZamknij.Top       = $wysokoscListy + 2 * $margines
+        $btnZamknij.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        $btnZamknij.BackColor = $Script:Config.KolorKontrolki
+        $btnZamknij.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+        $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+        $okno.Controls.AddRange(@($lista, $btnZamknij))
+        # Enter i Esc zamykaja tak samo jak przycisk - okno jest do przeczytania, nie do
+        # podjecia decyzji, wiec nie ma w nim wyboru, ktory te dwa klawisze mialy by rozroznic.
+        $okno.AcceptButton = $btnZamknij
+        $okno.CancelButton = $btnZamknij
+
+        [void]$okno.ShowDialog($Script:Kontrolki.Okno)
+    }
+    finally {
+        # ShowDialog NIE zwalnia okna sam (w odroznieniu od Show) - bez tego kazde
+        # klikniecie zostawialoby w procesie komplet uchwytow GDI po jednym oknie.
+        if ($okno) { $okno.Dispose() }
+    }
+}
+
+<#
+.SYNOPSIS
     Buduje okno, wypelnia rejestr kontrolek i podpina zdarzenia.
 
 .DESCRIPTION
@@ -1710,12 +1804,59 @@ function New-JezykForm {
     $lblMenedzer = New-JezykEtykieta 'Przełożony:' $P (Get-JezykWiersz 5)
     $txtMenedzer = New-JezykPole                 $P (Get-JezykWierszPole 5) $W
 
-    # Cala szerokosc, bo pole niesie dwie daty naraz.
-    $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 6)
-    $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 6) $C
+    # KATALOG PRZED DATA LOGOWANIA, i o polowe wezszy niz dotad. Sciezka w drzewie
+    # ("jezyk.pl/Uzytkownicy/Dzial IT") miesci sie w kolumnie tak samo jak telefon,
+    # a pole jest zwyklym TextBoxem - dluzsza tresc przewija sie w nim sama i nadal
+    # da sie ja zaznaczyc i skopiowac.
+    #
+    # ZWOLNIONA PRAWA POLOWA TEGO WIERSZA PRZYJELA GRUPY I LICENCJE. Nowy blok nie
+    # kosztowal przez to ANI JEDNEJ wspolrzednej ani jednego wiersza - panel konta
+    # zostaje dziewieciowierszowy i okno nie uroslo o piksel. Ta sama droga, ktora
+    # weszly wczesniej jez i przycisk "Polacz": najpierw policz, co juz stoi puste.
+    $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 6)
+    $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 6) $W
 
-    $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 7)
-    $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 7) $C
+    # Etykieta stoi w linii etykiet, oba przyciski w linii pol - czyli dokladnie tam,
+    # gdzie w kazdym innym wierszu lezy pole tekstowe.
+    #
+    # SZEROKOSC PRZYCISKU LICZONA Z KOLUMNY, a nie wpisana liczba: dwa rowne przyciski
+    # z jednym odstepem miedzy nimi maja wypelnic kolumne bez wzgledu na to, ile ona ma.
+    $odstepGrup     = 8
+    $szerokoscGrupy = [int](($W - $odstepGrup) / 2)
+
+    $lblGrupy = New-JezykEtykieta 'Grupy i licencje użytkownika:' $P (Get-JezykWiersz 6)
+
+    # Wyszarzony do momentu, w ktorym znajdzie sie konto majace grupy - bez tego przycisk
+    # otwieralby puste okno i nie mowil dlaczego. Dostepnoscia steruje JEDNO miejsce:
+    # Set-JezykPrzyciskGrupy w Jezyk-3-Widok.ps1. Pion dostaje na koncu, z wyrownaniem.
+    $btnGrupyAd           = New-Object System.Windows.Forms.Button
+    $btnGrupyAd.Text      = 'Grupy AD'
+    $btnGrupyAd.Width     = $szerokoscGrupy
+    $btnGrupyAd.Height    = 22
+    $btnGrupyAd.Left      = $P
+    $btnGrupyAd.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnGrupyAd.BackColor = $Script:Config.KolorKontrolki
+    $btnGrupyAd.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    $btnGrupyAd.Enabled   = $false
+    $btnGrupyAd.TabStop   = $false
+
+    # WYSZARZONY NA STALE - zapowiedziane miejsce na licencje z Entra, ktorych Jezyk
+    # jeszcze nie czyta. Nic w kodzie nie ustawia mu Enabled na $true i nie ma pod nim
+    # zadnego zdarzenia; az do czasu, gdy dostanie tresc, ma tylko mowic, ze tu bedzie.
+    $btnLicencjeEntra           = New-Object System.Windows.Forms.Button
+    $btnLicencjeEntra.Text      = 'Licencje Entra'
+    $btnLicencjeEntra.Width     = $szerokoscGrupy
+    $btnLicencjeEntra.Height    = 22
+    $btnLicencjeEntra.Left      = $P + $szerokoscGrupy + $odstepGrup
+    $btnLicencjeEntra.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnLicencjeEntra.BackColor = $Script:Config.KolorKontrolki
+    $btnLicencjeEntra.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    $btnLicencjeEntra.Enabled   = $false
+    $btnLicencjeEntra.TabStop   = $false
+
+    # Cala szerokosc, bo pole niesie dwie daty naraz.
+    $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
+    $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 7) $C
 
     # DWIE LINIJKI, NIE JEDNA. To pole niesie najdluzsze teksty w oknie - komunikat
     # o numerze uzywanym przez wiele osob ma ponad sto trzydziesci znakow i w jednej
@@ -1737,7 +1878,9 @@ function New-JezykForm {
         $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
         $lblKomputerIp, $txtKomputerIp,
-        $lblKatalog, $txtKatalog, $lblStatus, $txtStatus, $btnInfoStatus))
+        $lblKatalog, $txtKatalog,
+        $lblGrupy, $btnGrupyAd, $btnLicencjeEntra,
+        $lblStatus, $txtStatus, $btnInfoStatus))
 
     # --- PANEL: WIDOK KOMPUTERA ------------------------------------------------------
     # Ten sam rytm co w widoku konta, tylko liczony od gory panelu.
@@ -1896,6 +2039,13 @@ function New-JezykForm {
     Set-JezykSrodekPionowy @($btnPinguj) `
         ($txtKomputerUzytkownika.Top + [int]($txtKomputerUzytkownika.Height / 2))
 
+    # Grupy i licencje srodkuja sie na polu KATALOGU, czyli na swoim sasiedzie z tego
+    # samego wiersza - nie na wspolrzednej siatki. Wysokosc pola rosnie z czcionka,
+    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI, a przyciski
+    # maja staly bok 22 px i uciec nie maja gdzie.
+    Set-JezykSrodekPionowy @($btnGrupyAd, $btnLicencjeEntra) `
+        ($txtKatalog.Top + [int]($txtKatalog.Height / 2))
+
     # "Polacz" LICZY SIE Z SASIADA, NIE Z SIATKI - i to jest tu istotne. Wysrodkowanie go
     # na etykiecie (tak, jak stoja przyciski "!") wygladaloby poprawnie przy 100% DPI
     # i dosuwalo sie do "Pinguj" na styk przy 125-150%: etykieta i pole dzieli STALE 20 px
@@ -1978,6 +2128,9 @@ function New-JezykForm {
         TxtKomputerMac         = $txtKomputerMac
         PrzyciskPinguj         = $btnPinguj
         PrzyciskPolacz         = $btnPolacz
+        # Widok zapala go i gasi. $btnLicencjeEntra NIE MA tu klucza celowo - nikt go nie
+        # czyta, a klucz, ktorego nikt nie odczytuje, jest tylko kolejna rzecza do zgubienia.
+        PrzyciskGrupyAd        = $btnGrupyAd
         TxtKatalog        = $txtKatalog
         TxtStatus         = $txtStatus
 
@@ -2083,6 +2236,7 @@ function New-JezykForm {
     $btnOdblokuj.Add_Click({ Invoke-JezykOdblokowanie })
     $btnPinguj.Add_Click({ Invoke-JezykPing })
     $btnPolacz.Add_Click({ Invoke-JezykPolacz })
+    $btnGrupyAd.Add_Click({ Show-JezykGrupyAd })
 
     $cmbTryb.Add_SelectedIndexChanged({ Set-JezykWidok })
     $cmbWynik.Add_SelectedIndexChanged({ Invoke-JezykWyborKonta })

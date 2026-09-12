@@ -126,6 +126,11 @@ function Clear-JezykKonto {
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = $false }
     Set-JezykPrzyciskPolacz ''
 
+    # Grupy naleza do KONKRETNEGO konta - zostawiony czynny przycisk pokazywalby liste
+    # opisujaca kogos, kogo juz nie ma w oknie. Samej listy nie ma czego zerowac osobno:
+    # jedzie w $Script:OstatnieKonto, ktore gasnie linijke wyzej.
+    Set-JezykPrzyciskGrupy @()
+
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
     Set-JezykInfo 'Status'                ''
@@ -168,6 +173,11 @@ function Set-JezykResult {
     $k = $Script:Kontrolki
     Clear-JezykKonto
     $Script:OstatnieKonto = $Result
+
+    # JEDNO WYWOLANIE NA WSZYSTKIE GALEZIE. Wynik bez konta ("nie znaleziono", "blad",
+    # pusty login) niesie pusta liste grup, wiec warunek w Set-JezykPrzyciskGrupy gasi
+    # przycisk sam - bez wpisu w kazdej galezi switcha z osobna.
+    Set-JezykPrzyciskGrupy $Result.Grupy
 
     switch ($Result.Status) {
 
@@ -1316,6 +1326,32 @@ function Invoke-JezykPolacz {
         if ($k.TxtStatus) { $k.TxtStatus.Text = [string]$wynik.Komunikat }
         Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
     }
+}
+
+<#
+.SYNOPSIS
+    Zapala albo gasi przycisk "Grupy AD" - jedyne miejsce z warunkiem jego dostepnosci.
+
+.DESCRIPTION
+    Przycisk SIE WYSZARZA, a nie znika jak "Polacz". Roznica jest zamierzona: "Polacz"
+    ma jeden powod istnienia i we wdrozeniu bez konsoli ConfigMgr nie zadziala NIGDY,
+    a ten ma normalny stan przejsciowy - "jest, ale najpierw znajdz konto" - dokladnie
+    taki, jaki pokazuja "Pinguj" i "Odblokuj konto".
+
+    Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan. Rozpisany
+    rozjechalby sie przy pierwszej zmianie i przycisk zostawalby czynny po przelaczeniu
+    na konto bez grup - otwierajac liste opisujaca kogos, kogo juz nie ma na ekranie.
+#>
+function Set-JezykPrzyciskGrupy {
+    param([string[]]$Grupy)
+
+    $przycisk = $Script:Kontrolki.PrzyciskGrupyAd
+    if (-not $przycisk) { return }
+
+    # FILTR, A NIE SAMO @().Count. W PowerShellu @($null) to tablica JEDNOELEMENTOWA,
+    # wiec licznik bez odsiania pustych zapalalby przycisk przy koncie bez grup - czyli
+    # dokladnie tam, gdzie ma byc wyszarzony, i bez zadnego komunikatu o pomylce.
+    $przycisk.Enabled = (@($Grupy | Where-Object { $_ }).Count -gt 0)
 }
 
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
