@@ -1389,6 +1389,180 @@ function Stop-JezykZadaniaTla {
 
 <#
 .SYNOPSIS
+    Sklada tytul okna grup: podpis konta i licznik pozycji.
+
+.DESCRIPTION
+    JEDNO MIEJSCE, bo tytul powstaje dwa razy - przy budowie okna i po kazdym znaku wpisanym
+    do pola filtra. Dwa miejsca skladajace ten sam napis rozjechalyby sie przy pierwszej zmianie.
+
+    Licznik ma dwie postaci celowo. Przy pelnej liscie sama liczba odpowiada na pytanie "do ilu
+    grup nalezy to konto"; przy zawezonej dopiero "X z Y" mowi, ze reszta nie znikla, tylko jest
+    odfiltrowana - bez tego zawezona lista wygladalaby jak konto o trzech grupach.
+#>
+function Get-JezykTytulGrup {
+    param([string]$Podpis, [int]$Ile, [int]$Wszystkich)
+
+    # Napisy skladamy do zmiennych, a nie w argumencie metody: w wywolaniu metody przecinki
+    # naleza do listy argumentow METODY, wiec operator -f dostalby tylko pierwsza wartosc.
+    $licznik = if ($Ile -eq $Wszystkich) { [string]$Wszystkich }
+               else                      { '{0} z {1}' -f $Ile, $Wszystkich }
+
+    $tytul = 'Jeżyk - Grupy AD: {0} ({1})' -f $Podpis, $licznik
+    return $tytul
+}
+
+<#
+.SYNOPSIS
+    Wybiera grupy pasujace do wpisanego fragmentu nazwy i numeruje je do pokazania na liscie.
+
+.DESCRIPTION
+    DOPASOWANIE PRZEZ IndexOf, A NIE PRZEZ -like. Operator wpisuje TEKST, nie wzorzec: w -like
+    znaki '*', '?' i '[' z pola filtra bylyby wieloznacznikami, wiec sama gwiazdka pokazywalaby
+    komplet, a nawias kwadratowy nie pokazywalby nic i wygladaloby to na zgubione grupy.
+    OrdinalIgnoreCase odpowiada przy tym na pytanie operatora ("czy ten ciag znakow w niej jest"),
+    a nie na pytanie o kolejnosc alfabetu.
+
+    FRAGMENT W DOWOLNYM MIEJSCU, a nie od poczatku nazwy. Nazwy grup zaczynaja sie od przedrostka
+    typu "GG_" albo "DL_", ktorego nikt nie chce przepisywac, zeby dojsc do slowa niosacego sens.
+
+    NUMER LICZY SIE PO ODSIANIU, wiec widoczne pozycje zawsze ida 1, 2, 3... Ostatni numer jest
+    dzieki temu od razu liczba trafien. Numer z pelnej listy nie powiedzialby nic komus, kto tej
+    pelnej listy juz nie widzi.
+
+    ODSIEW PUSTYCH STOI TUTAJ, a nie u wolajacego. @($null) to w PowerShellu tablica
+    JEDNOELEMENTOWA, wiec pusty wpis dokladalby do listy ponumerowany, pusty wiersz.
+#>
+function Select-JezykGrupyDoPokazania {
+    param([string[]]$Grupy, [string]$Fraza)
+
+    $fraza = ([string]$Fraza).Trim()
+    $wynik = @()
+    $nr    = 0
+
+    foreach ($grupa in @($Grupy | Where-Object { $_ })) {
+        if ($fraza -and ($grupa.IndexOf($fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+            continue
+        }
+        $nr++
+        $wynik += '{0}. {1}' -f $nr, $grupa
+    }
+
+    # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice w wyniku, wiec
+    # przy zerze trafien nie wyjdzie stad nic (i @() u wolajacego da Count 0), a przy jednym -
+    # sam napis. Owiniecie @() musi stac na miejscu wywolania.
+    return @($wynik)
+}
+
+<#
+.SYNOPSIS
+    Liczy nowy pierwszy widoczny wiersz listy po ruchu kolkiem myszy.
+
+.DESCRIPTION
+    Sama arytmetyka, bez kontrolki - dzieki temu da sie ja zawolac w zestawie weryfikacyjnym,
+    ktory okna nie buduje.
+
+    KROK JEST STALY I WLASNY. Lista pozostawiona sama sobie przewija tyle wierszy, ile mowi
+    ustawienie Windows "Przewin o:", a przy wartosci "jeden ekran naraz" system oddaje -1
+    i jedno klikniecie kolka przerzuca CALA strone. Stad wrazenie, ze lista sie rozpedza
+    i nie da sie zatrzymac na wlasciwej pozycji.
+
+    [Math]::Truncate, A NIE SAMO [int]: [int] w PowerShellu zaokragla (bankiersko), wiec
+    [int](60/120) dalo by 1 zamiast 0, a [int](-60/120) - 0 zamiast -1.
+
+    Delta DODATNIA to ruch kolka od siebie, czyli patrzenie WYZEJ - numer pierwszego wiersza maleje.
+#>
+function Get-JezykNowyWierszListy {
+    param([int]$Gora, [int]$Delta, [int]$Ile, [int]$Widoczne, [int]$WierszeNaObrot = 3)
+
+    if ($Delta -eq 0) { return $Gora }
+
+    $obroty = [int][Math]::Truncate($Delta / 120)
+    # Kolko o drobniejszym skoku oddaje mniej niz pelne 120 na jedno zdarzenie. Bez tej linii
+    # lista stalaby w miejscu az do uzbierania calego obrotu, czyli wygladalaby na zawieszona.
+    if ($obroty -eq 0) {
+        if ($Delta -gt 0) { $obroty = 1 } else { $obroty = -1 }
+    }
+
+    # Ostatni wiersz ma dojsc na gore okna, ale nie wyzej - inaczej pod lista zostaje pustka.
+    $najnizszy = $Ile - $Widoczne
+    if ($najnizszy -lt 0) { $najnizszy = 0 }
+
+    $nowa = $Gora - $obroty * $WierszeNaObrot
+    if ($nowa -lt 0)          { $nowa = 0 }
+    if ($nowa -gt $najnizszy) { $nowa = $najnizszy }
+    return $nowa
+}
+
+<#
+.SYNOPSIS
+    Przewija liste kolkiem myszy wlasnym, stalym krokiem. Procedura zdarzenia MouseWheel.
+
+.DESCRIPTION
+    Handled USTAWIAMY PRZEZ PSObject.Properties, a nie po sprawdzeniu typu zdarzenia: zestaw
+    weryfikacyjny wola te funkcje na atrapie, bez WinForms, a odwolanie do typu zamkneloby ja
+    przed nim. Wzor: Get-JezykOpisBleduWmi.
+
+    Bez Handled obsluga wlasna nie ZASTEPUJE domyslnej, tylko sie z nia DODAJE - lista skacze
+    wtedy dalej niz przedtem, czyli poprawka pogarsza dokladnie to, co miala naprawic.
+#>
+function Set-JezykPrzewijanieListy {
+    param($Lista, $Zdarzenie)
+
+    if ($Zdarzenie.PSObject.Properties['Handled']) { $Zdarzenie.Handled = $true }
+
+    $wysokoscWiersza = [int]$Lista.ItemHeight
+    if ($wysokoscWiersza -le 0) { return }
+
+    # Floor, bo wiersz widoczny w polowie nie jest wierszem, na ktorym da sie zatrzymac.
+    $widoczne = [int][Math]::Floor($Lista.ClientSize.Height / $wysokoscWiersza)
+
+    $Lista.TopIndex = Get-JezykNowyWierszListy -Gora $Lista.TopIndex -Delta $Zdarzenie.Delta `
+                                              -Ile $Lista.Items.Count -Widoczne $widoczne
+}
+
+<#
+.SYNOPSIS
+    Wypelnia liste grup wedlug tresci pola filtra i uaktualnia licznik w tytule okna.
+
+.DESCRIPTION
+    JEDNA SCIEZKA DLA PIERWSZEGO WYPELNIENIA I DLA KAZDEGO ZNAKU. Osobny kod na start i osobny
+    na filtrowanie rozjechalby sie przy pierwszej zmianie, a roznicy nie widac: okno po prostu
+    otwieraloby sie inaczej, niz wyglada po skasowaniu filtra.
+
+    STAN IDZIE PRZEZ Tag. Procedury zdarzen nie sa domknieciami i nie widza zmiennych lokalnych
+    Show-JezykGrupyAd, a $Script:Kontrolki opisuje okno GLOWNE. Tag ginie razem z oknem, wiec
+    pelna lista grup nie staje sie druga rzecza, ktora trzeba pamietac o wyczyszczeniu przy
+    zmianie konta - inaczej niz zmienna skryptowa.
+
+    BeginUpdate/EndUpdate: bez nich lista przerysowuje sie przy kazdej dokladanej pozycji, czyli
+    kilkadziesiat razy na jedno nacisniecie klawisza.
+#>
+function Update-JezykFiltrGrup {
+    param($Pole)
+
+    $lista = $Pole.Tag
+    if (-not $lista) { return }
+
+    $grupy   = @($lista.Tag)
+    $pozycje = @(Select-JezykGrupyDoPokazania -Grupy $grupy -Fraza $Pole.Text)
+
+    $lista.BeginUpdate()
+    try {
+        $lista.Items.Clear()
+        if ($pozycje.Count -gt 0) { $lista.Items.AddRange([object[]]$pozycje) }
+        # Po zawezeniu listy poprzedni pierwszy wiersz wskazywalby poza jej koniec.
+        $lista.TopIndex = 0
+    }
+    finally { $lista.EndUpdate() }
+
+    $okno = $Pole.FindForm()
+    if (-not $okno) { return }
+    $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag) -Ile $pozycje.Count `
+                                    -Wszystkich $grupy.Count
+}
+
+<#
+.SYNOPSIS
     Pokazuje grupy AD zalezionego konta w osobnym oknie z lista. Wolane z przycisku "Grupy AD".
 
 .DESCRIPTION
@@ -1407,6 +1581,12 @@ function Stop-JezykZadaniaTla {
 
     Nazwy grup przychodza z logiki JUZ POSORTOWANE (Get-JezykNazwyGrup) - okno nie sortuje
     ich po raz drugi, bo dwa miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
+
+    GEOMETRIA LICZY SIE PO DODANIU KONTROLEK DO OKNA. Wysokosc pola tekstowego i szerokosc
+    etykiety wychodza dopiero z czcionki, a te kontrolka dziedziczy po oknie w chwili dodania;
+    wysokosc listy przycina do calych wierszy IntegralHeight. Wpisane na sztywno wspolrzedne
+    przestaja pasowac przy skalowaniu DPI - dlatego kazdy wiersz mierzy sie od sasiada, a okno
+    od ostatniego z nich.
 #>
 function Show-JezykGrupyAd {
     $konto = $Script:OstatnieKonto
@@ -1426,17 +1606,14 @@ function Show-JezykGrupyAd {
     $wysokoscListy      = 300
     $wysokoscPrzycisku  = 24
     $szerokoscPrzycisku = 90
-
-    # Napis skladamy do zmiennej, a nie w argumencie metody: w wywolaniu metody przecinki
-    # naleza do listy argumentow METODY, wiec operator -f dostalby tylko pierwsza wartosc.
-    $tytul = 'Jeżyk - Grupy AD: {0} ({1})' -f $podpis, $grupy.Count
+    $odstepEtykiety     = 8
 
     $okno = $null
     try {
         $okno                 = New-Object System.Windows.Forms.Form
-        $okno.Text            = $tytul
-        $okno.ClientSize      = [System.Drawing.Size]::new($szerokosc,
-                                    ($wysokoscListy + $wysokoscPrzycisku + 3 * $margines))
+        # Podpis zostaje pod reka okna, bo licznik w tytule przelicza sie po kazdym znaku
+        # wpisanym do filtra - a procedura zdarzenia nie widzi zmiennych lokalnych tej funkcji.
+        $okno.Tag             = $podpis
         $okno.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
         $okno.MaximizeBox     = $false
         $okno.MinimizeBox     = $false
@@ -1445,30 +1622,65 @@ function Show-JezykGrupyAd {
         # Ta sama czcionka, co w oknie glownym - honoruje ustawienia systemu i skalowanie DPI.
         $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
 
-        $lista          = New-Object System.Windows.Forms.ListBox
-        $lista.Location = [System.Drawing.Point]::new($margines, $margines)
-        $lista.Size     = [System.Drawing.Size]::new(($szerokosc - 2 * $margines), $wysokoscListy)
-        # Bez tego ListBox przycina swoja wysokosc do calkowitej liczby wierszy i zostawia
-        # pod soba szpare zalezna od czcionki - a wysokosc mamy policzona ze stalych.
-        $lista.IntegralHeight      = $false
+        $lblFiltr = New-JezykEtykieta 'Szukaj grupy:' $margines $margines
+
+        # Zwykly TextBox, a nie New-JezykPole: tamto pole jest ReadOnly, bo sluzy do pokazywania
+        # odpowiedzi AD. To jedyne pole w programie poza wyszukiwaniem, do ktorego sie pisze.
+        $txtFiltr           = New-Object System.Windows.Forms.TextBox
+        $txtFiltr.MaxLength = 256
+
+        $lista = New-Object System.Windows.Forms.ListBox
+        # Wysokosc przycieta do calych wierszy. Czesciowy wiersz na dole rozjezdzal zawartosc
+        # z paskiem przewijania (pasek liczy zakres z liczby pozycji, lista przewija calymi
+        # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Szpara, ktora
+        # przyciecie zostawia pod lista, nic juz nie kosztuje: przycisk i okno mierza sie od
+        # $lista.Bottom, a nie od wpisanej na sztywno wysokosci.
+        $lista.IntegralHeight = $true
         # Nazwy grup bywaja dluzsze niz kolumna; poziomy pasek daje je doczytac zamiast
         # ucinac w polowie.
         $lista.HorizontalScrollbar = $true
-        $lista.Items.AddRange([object[]]$grupy)
+        # Pelna lista wisi na kontrolce, bo to ona jest filtrowana, i ginie razem z oknem.
+        $lista.Tag = [string[]]$grupy
+        # Pole filtra musi trafic do swojej listy bez pomocy zmiennych lokalnych tej funkcji.
+        $txtFiltr.Tag = $lista
 
         $btnZamknij           = New-Object System.Windows.Forms.Button
         $btnZamknij.Text      = 'Zamknij'
         $btnZamknij.Size      = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
-        $btnZamknij.Left      = $szerokosc - $margines - $szerokoscPrzycisku
-        $btnZamknij.Top       = $wysokoscListy + 2 * $margines
         $btnZamknij.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
         $btnZamknij.BackColor = $Script:Config.KolorKontrolki
         $btnZamknij.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
         $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
-        $okno.Controls.AddRange(@($lista, $btnZamknij))
-        # Enter i Esc zamykaja tak samo jak przycisk - okno jest do przeczytania, nie do
-        # podjecia decyzji, wiec nie ma w nim wyboru, ktory te dwa klawisze mialy by rozroznic.
+        # Pole filtra jest PIERWSZE, wiec dostaje fokus samo - pisac mozna od razu po otwarciu,
+        # bez osobnej procedury na Shown.
+        $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista, $btnZamknij))
+
+        $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
+        $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
+        Set-JezykSrodekPionowy -Kontrolki @($lblFiltr, $txtFiltr) `
+                               -Srodek ($margines + [int]($txtFiltr.Height / 2))
+
+        $lista.Left   = $margines
+        $lista.Width  = $szerokosc - 2 * $margines
+        $lista.Top    = $txtFiltr.Bottom + $margines
+        $lista.Height = $wysokoscListy
+
+        $btnZamknij.Left = $szerokosc - $margines - $szerokoscPrzycisku
+        $btnZamknij.Top  = $lista.Bottom + $margines
+
+        $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
+                               ($btnZamknij.Bottom + $margines))
+
+        # Pierwsze wypelnienie idzie TA SAMA droga, co kazdy nacisniety klawisz - razem
+        # z tytulem, ktory niesie licznik.
+        Update-JezykFiltrGrup $txtFiltr
+
+        $txtFiltr.Add_TextChanged({ Update-JezykFiltrGrup $this })
+        $lista.Add_MouseWheel({ Set-JezykPrzewijanieListy $this $_ })
+
+        # Enter i Esc zamykaja tak samo jak przycisk - lista zaweza sie po kazdym znaku, wiec
+        # nie ma czego zatwierdzac, a okno jest do przeczytania, nie do podjecia decyzji.
         $okno.AcceptButton = $btnZamknij
         $okno.CancelButton = $btnZamknij
 
