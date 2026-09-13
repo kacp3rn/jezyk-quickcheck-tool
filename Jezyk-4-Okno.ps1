@@ -2028,22 +2028,19 @@ function New-JezykForm {
     $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 6)
     $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 6) $W
 
-    # Etykieta stoi w linii etykiet, oba przyciski w linii pol - czyli dokladnie tam,
-    # gdzie w kazdym innym wierszu lezy pole tekstowe.
+    # Etykieta stoi w linii etykiet, przycisk w linii pol - czyli dokladnie tam, gdzie
+    # w kazdym innym wierszu lezy pole tekstowe.
     #
-    # SZEROKOSC PRZYCISKU LICZONA Z KOLUMNY, a nie wpisana liczba: dwa rowne przyciski
-    # z jednym odstepem miedzy nimi maja wypelnic kolumne bez wzgledu na to, ile ona ma.
-    $odstepGrup     = 8
-    $szerokoscGrupy = [int](($W - $odstepGrup) / 2)
-
-    $lblGrupy = New-JezykEtykieta 'Grupy i licencje użytkownika:' $P (Get-JezykWiersz 6)
+    # SZEROKOSC LICZONA Z KOLUMNY ($W), a nie wpisana liczba: liczba zgadzalaby sie
+    # tylko przy dzisiejszej szerokosci okna, a ta wylicza sie ze stalych.
+    $lblGrupy = New-JezykEtykieta 'Grupy AD użytkownika:' $P (Get-JezykWiersz 6)
 
     # Wyszarzony do momentu, w ktorym znajdzie sie konto majace grupy - bez tego przycisk
     # otwieralby puste okno i nie mowil dlaczego. Dostepnoscia steruje JEDNO miejsce:
     # Set-JezykPrzyciskGrupy w Jezyk-3-Widok.ps1. Pion dostaje na koncu, z wyrownaniem.
     $btnGrupyAd           = New-Object System.Windows.Forms.Button
-    $btnGrupyAd.Text      = 'Grupy AD'
-    $btnGrupyAd.Width     = $szerokoscGrupy
+    $btnGrupyAd.Text      = 'Wyświetl grupy'
+    $btnGrupyAd.Width     = $W
     $btnGrupyAd.Height    = 22
     $btnGrupyAd.Left      = $P
     $btnGrupyAd.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -2051,20 +2048,6 @@ function New-JezykForm {
     $btnGrupyAd.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
     $btnGrupyAd.Enabled   = $false
     $btnGrupyAd.TabStop   = $false
-
-    # WYSZARZONY NA STALE - zapowiedziane miejsce na licencje z Entra, ktorych Jezyk
-    # jeszcze nie czyta. Nic w kodzie nie ustawia mu Enabled na $true i nie ma pod nim
-    # zadnego zdarzenia; az do czasu, gdy dostanie tresc, ma tylko mowic, ze tu bedzie.
-    $btnLicencjeEntra           = New-Object System.Windows.Forms.Button
-    $btnLicencjeEntra.Text      = 'Licencje Entra'
-    $btnLicencjeEntra.Width     = $szerokoscGrupy
-    $btnLicencjeEntra.Height    = 22
-    $btnLicencjeEntra.Left      = $P + $szerokoscGrupy + $odstepGrup
-    $btnLicencjeEntra.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnLicencjeEntra.BackColor = $Script:Config.KolorKontrolki
-    $btnLicencjeEntra.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
-    $btnLicencjeEntra.Enabled   = $false
-    $btnLicencjeEntra.TabStop   = $false
 
     # Cala szerokosc, bo pole niesie dwie daty naraz.
     $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
@@ -2091,7 +2074,7 @@ function New-JezykForm {
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
         $lblKomputerIp, $txtKomputerIp,
         $lblKatalog, $txtKatalog,
-        $lblGrupy, $btnGrupyAd, $btnLicencjeEntra,
+        $lblGrupy, $btnGrupyAd,
         $lblStatus, $txtStatus, $btnInfoStatus))
 
     # --- PANEL: WIDOK KOMPUTERA ------------------------------------------------------
@@ -2251,11 +2234,11 @@ function New-JezykForm {
     Set-JezykSrodekPionowy @($btnPinguj) `
         ($txtKomputerUzytkownika.Top + [int]($txtKomputerUzytkownika.Height / 2))
 
-    # Grupy i licencje srodkuja sie na polu KATALOGU, czyli na swoim sasiedzie z tego
+    # Przycisk grup srodkuje sie na polu KATALOGU, czyli na swoim sasiedzie z tego
     # samego wiersza - nie na wspolrzednej siatki. Wysokosc pola rosnie z czcionka,
-    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI, a przyciski
-    # maja staly bok 22 px i uciec nie maja gdzie.
-    Set-JezykSrodekPionowy @($btnGrupyAd, $btnLicencjeEntra) `
+    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI, a przycisk
+    # ma staly bok 22 px i uciec nie ma gdzie.
+    Set-JezykSrodekPionowy @($btnGrupyAd) `
         ($txtKatalog.Top + [int]($txtKatalog.Height / 2))
 
     # "Polacz" LICZY SIE Z SASIADA, NIE Z SIATKI - i to jest tu istotne. Wysrodkowanie go
@@ -2340,8 +2323,7 @@ function New-JezykForm {
         TxtKomputerMac         = $txtKomputerMac
         PrzyciskPinguj         = $btnPinguj
         PrzyciskPolacz         = $btnPolacz
-        # Widok zapala go i gasi. $btnLicencjeEntra NIE MA tu klucza celowo - nikt go nie
-        # czyta, a klucz, ktorego nikt nie odczytuje, jest tylko kolejna rzecza do zgubienia.
+        # Widok zapala go i gasi - patrz Set-JezykPrzyciskGrupy w Jezyk-3-Widok.ps1.
         PrzyciskGrupyAd        = $btnGrupyAd
         TxtKatalog        = $txtKatalog
         TxtStatus         = $txtStatus
