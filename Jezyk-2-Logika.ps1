@@ -1540,12 +1540,19 @@ function Get-JezykOstatnioUzywanyKomputer {
     Maszyna ZNALEZIONA, ale bez zapisanego uzytkownika, to co innego niz maszyna nieznana
     w SCCM - pierwsze znaczy "klient nie zameldowal jeszcze logowania", drugie "tej maszyny
     tu nie ma". Komunikaty rozroznia te dwa przypadki, bo prowadza do zupelnie innych krokow.
+
+    Razem z uzytkownikiem oddajemy DOSTEPNOSC MASZYNY (sonda ICMP) i adres MAC karty, ktora
+    odpowiada pod znalezionym adresem - tak samo jak droga odwrotna i z tego samego powodu:
+    obie rzeczy sa dodatkiem do zapytania, ktore i tak idzie w tle, wiec nie kosztuja okna
+    ani jednej milisekundy. Nazwy pol sa IDENTYCZNE jak w Get-JezykOstatnioUzywanyKomputer,
+    zeby widok mial jedna sciezke renderowania dla obu polowek okna.
 #>
 function Get-JezykUzytkownikKomputera {
     param([string]$Netbios, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
-    $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = '' }
+    $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = ''
+                                Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = '' }
 
     # Nazwa pochodzi z AD, wiec jest bezpieczna - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1554,6 +1561,25 @@ function Get-JezykUzytkownikKomputera {
         $wynik.Szczegoly = 'Nazwa "{0}" zawiera znaki spoza dozwolonego zestawu.' -f $Netbios
         return $wynik
     }
+
+    # SONDA ICMP PRZED ZAPYTANIEM DO SCCM, a nie po nim. Z tej funkcji wychodzi PIEC drog
+    # powrotu (brak ustawien, brak sesji, odmowa, brak zapisanego uzytkownika, wynik),
+    # a dostepnosc maszyny jest prawdziwa odpowiedzia w kazdej z nich - ICMP nie potrzebuje
+    # SCCM do niczego. Postawiona na koncu wypadlaby ze wszystkich drog poza ostatnia,
+    # czyli akurat tam, gdzie maszyny nie ma w inwentaryzacji, a pytanie "czy ona w ogole
+    # odpowiada" jest najczestsze. Cena to najwyzej 1,5 s (caly budzet sondy) doliczone do
+    # zapytania z wlasnym limitem 15 s, w polu, ktore i tak animuje kropki.
+    #
+    # Wlasny try: sonda jest DODATKIEM. Uzytkownik maszyny ma sie pokazac takze wtedy, gdy
+    # sprawdzenie dostepnosci samo zawiedzie.
+    $opisPingu = ''
+    try {
+        $ping = Get-JezykPingKomputera -Nazwa $Netbios
+        $wynik.Odpowiada = $ping.Odpowiada
+        $wynik.Adres     = [string]$ping.Adres
+        $opisPingu       = [string]$ping.Szczegoly
+    }
+    catch { $opisPingu = 'Sprawdzenie dostępności zawiodło: {0}' -f $_.Exception.Message }
 
     $polaczenie = Get-JezykSccmPolaczenie -Serwer $Serwer -KodLokacji $KodLokacji -Protokol $Protokol
     if ($polaczenie.Blad) {
@@ -1585,17 +1611,17 @@ function Get-JezykUzytkownikKomputera {
         # zdarzenie.
         $zrodla = @(
             @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
-               Wql   = "SELECT Name, CurrentLogonUser, LastLogonUser, PrimaryUser, LastActiveTime " +
+               Wql   = "SELECT ResourceID, Name, CurrentLogonUser, LastLogonUser, PrimaryUser, LastActiveTime " +
                        "FROM SMS_CombinedDeviceResources WHERE Name = '$bezpieczny'"
                Pola  = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser') }
 
             @{ Nazwa = 'SMS_R_System.LastLogonUserName'
-               Wql   = "SELECT Name, NetbiosName, LastLogonUserName FROM SMS_R_System " +
+               Wql   = "SELECT ResourceID, Name, NetbiosName, LastLogonUserName FROM SMS_R_System " +
                        "WHERE NetbiosName = '$bezpieczny' OR Name = '$bezpieczny'"
                Pola  = @('LastLogonUserName') }
 
             @{ Nazwa = 'SMS_G_System_COMPUTER_SYSTEM.UserName'
-               Wql   = "SELECT Name, UserName FROM SMS_G_System_COMPUTER_SYSTEM " +
+               Wql   = "SELECT ResourceID, Name, UserName FROM SMS_G_System_COMPUTER_SYSTEM " +
                        "WHERE Name = '$bezpieczny'"
                Pola  = @('UserName') }
         )
@@ -1608,6 +1634,9 @@ function Get-JezykUzytkownikKomputera {
         $odmowa      = $null
         $niedostepne = @()
         $znaleziona  = $false
+        # Wiersz, ktory opisal TE maszyne - trzymany wylacznie dla identyfikatora zasobu,
+        # ktorym pytamy pozniej o karty sieciowe.
+        $wierszMaszyny = $null
 
         foreach ($z in $zrodla) {
             $odp = Invoke-JezykZapytanieSccm -Sesja $sesja.Sesja -Serwer $polaczenie.Serwer `
@@ -1626,7 +1655,13 @@ function Get-JezykUzytkownikKomputera {
             }
 
             foreach ($wiersz in @($odp.Wiersze)) {
-                if ($wiersz.Name -or $wiersz.NetbiosName) { $znaleziona = $true }
+                if ($wiersz.Name -or $wiersz.NetbiosName) {
+                    $znaleziona = $true
+                    # PIERWSZY wiersz opisujacy maszyne, takze gdy nie niesie zadnego
+                    # uzytkownika: karta sieciowa jest wtedy nadal znana, a maszyna
+                    # w inwentaryzacji bez zapisanego logowania to czesty przypadek.
+                    if (-not $wierszMaszyny) { $wierszMaszyny = $wiersz }
+                }
 
                 foreach ($nazwaPola in $z.Pola) {
                     $wartosc = ([string]$wiersz.$nazwaPola).Trim()
@@ -1656,6 +1691,51 @@ function Get-JezykUzytkownikKomputera {
             return $wynik
         }
 
+        # ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny -
+        # ten sam powod i ten sam sposob, co przy drodze odwrotnej: laptop ma Ethernet,
+        # Wi-Fi, czesto jeszcze karte VPN albo Hyper-V, a jeden adres MAC wyglada w oknie
+        # dokladnie jak kazdy inny.
+        #
+        # Blok stoi PO odmowie (tam przestrzeni juz raz odmowiono, wiec pytanie o karty
+        # powtorzyloby tylko te sama odmowe), ale PRZED wyjsciem "brak zapisanego
+        # uzytkownika": maszyna bywa w inwentaryzacji bez zapisanego logowania, a karte
+        # sieciowa SCCM zna wtedy tak samo dobrze.
+        #
+        # Maszyny NIEZNANEJ w SCCM zostawiamy bez powodu - pole ma wtedy powiedziec
+        # "nie sprawdzono", bo nie bylo czego dopasowywac, a nie "nie dopasowano".
+        if ($wierszMaszyny) {
+            if (-not $wynik.Adres) {
+                $wynik.MacSzczegoly = 'Nie ustalono adresu IP maszyny, więc nie ma do czego dopasować karty sieciowej.'
+            }
+            elseif (-not $wierszMaszyny.ResourceID) {
+                $wynik.MacSzczegoly = 'Źródło, które podało tę maszynę, nie niesie identyfikatora zasobu (ResourceID), a bez niego nie ma jak zapytać o jej karty sieciowe.'
+            }
+            else {
+                try {
+                    $idKarty = [int]$wierszMaszyny.ResourceID
+                    $karty = @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
+                                   -Zapytanie (
+                        "SELECT MACAddress, IPAddress FROM SMS_G_System_NETWORK_ADAPTER_CONFIGURATION WHERE ResourceId = $idKarty"))
+
+                    $wynik.Mac = Get-JezykMacDlaAdresu -Karty $karty -Adres $wynik.Adres
+
+                    if (-not $wynik.Mac) {
+                        $wynik.MacSzczegoly = if ($karty.Count) {
+                            'Żadna z {0} kart sieciowych znanych SCCM nie ma adresu {1}. Inwentaryzacja sprzętu jest odświeżana co kilka dni, więc po zmianie dzierżawy DHCP zapisany adres bywa starszy niż ten, pod którym maszyna odpowiada teraz.' -f $karty.Count, $wynik.Adres
+                        } else {
+                            'SCCM nie zna żadnej karty sieciowej tej maszyny. Klasa SMS_G_System_NETWORK_ADAPTER_CONFIGURATION bywa wyłączona w ustawieniach inwentaryzacji sprzętu.'
+                        }
+                    }
+                }
+                catch {
+                    # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa
+                    # albo wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny
+                    # bez kart sieciowych.
+                    $wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
+                }
+            }
+        }
+
         if (-not $uzytkownik) {
             # Dwa rozne braki, dwie rozne odpowiedzi: maszyna bez zapisanego uzytkownika
             # czeka na meldunek klienta, maszyny nieznanej trzeba szukac gdzie indziej.
@@ -1675,6 +1755,10 @@ function Get-JezykUzytkownikKomputera {
             if ($niedostepne.Count) {
                 $szczegolyBraku += @('', ('Klasy, które nie odpowiedziały: {0}.' -f ($niedostepne -join '; ')))
             }
+            # Sonda odbyla sie takze na tej drodze, a jej wynik bywa TU najciekawszy: maszyny
+            # nie ma w inwentaryzacji, wiec "czy ona w ogole odpowiada" zostaje jedyna
+            # odpowiedzia, jaka okno ma. Pole adresu pokazuje ja skrotem, pelne zdanie tutaj.
+            if ($opisPingu) { $szczegolyBraku += @('', $opisPingu) }
             $wynik.Szczegoly = $szczegolyBraku -join [Environment]::NewLine
             return $wynik
         }
@@ -1684,6 +1768,7 @@ function Get-JezykUzytkownikKomputera {
 
         $opisWyniku = @('źródło: {0} (pole {1}); protokół: {2}; stos: {3}; serwer: {4}' -f
                         $zrodlo, $pole, $sesja.Protokol, $stos, $polaczenie.Serwer)
+        if ($opisPingu) { $opisWyniku += $opisPingu }
         if ($niedostepne.Count) {
             $opisWyniku += 'klasy, które nie odpowiedziały: {0}' -f ($niedostepne -join '; ')
         }

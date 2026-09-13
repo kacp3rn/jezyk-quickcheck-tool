@@ -367,6 +367,11 @@ $Script:TytulyInformacji = @{
     KomputerWspoldzielony = 'Komputer współdzielony'
     Tworca                = 'Dodany do AD przez'
     Mac                   = 'Adres MAC'
+    # Widok komputera ma wlasne kontrolki, wiec i wlasne klucze - przycisk "!" to JEDNA
+    # kontrolka, a dwa panele istnieja naraz (widoczny jest zawsze tylko jeden). Tytuly
+    # celowo brzmia tak samo, jak po stronie konta: okno ma nazywac pole, nie panel.
+    MacMaszyny            = 'Adres MAC'
+    StatusMaszyny         = 'Status'
 }
 
 <#

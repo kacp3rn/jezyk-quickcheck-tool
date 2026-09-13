@@ -335,21 +335,39 @@ function Clear-JezykKomputer {
     $k = $Script:Kontrolki
 
     Stop-JezykZadanieUzytkownika
+    Stop-JezykZadaniePingu
 
     foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny,
-                        $k.TxtKomputerTworca, $k.TxtKomputerWlaczone, $k.TxtKomputerStatus)) {
+                        $k.TxtKomputerTworca, $k.TxtKomputerWlaczone, $k.TxtKomputerStatus,
+                        $k.TxtKomputerIpMaszyny, $k.TxtKomputerMacMaszyny)) {
         if ($pole) { $pole.Text = '' }
     }
 
+    # Pola SCCM czyscimy tu wprost, z pominieciem funkcji, ktore normalnie gasza marker
+    # kropek - wiec gasimy go osobno. Zostawiony animowalby napis nad polami, w ktorych
+    # nic juz nie stoi.
+    Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
+
     # POLE KOLOROWANE CZYSCI SIE DWA RAZY: z tresci i z koloru. Sam tekst zdjety zostawia
     # czerwien na kontrolce, wiec pierwsze wylaczone konto zabarwiloby pole NA STALE
-    # i kazda nastepna maszyna wygladalaby na wylaczona.
-    if ($k.TxtKomputerWlaczone) {
-        $k.TxtKomputerWlaczone.ForeColor = [System.Drawing.SystemColors]::WindowText
+    # i kazda nastepna maszyna wygladalaby na wylaczona. Dotyczy to takze pola adresu IP,
+    # ktore po tej stronie okna niesie kolor sondy.
+    foreach ($pole in @($k.TxtKomputerWlaczone, $k.TxtKomputerIpMaszyny)) {
+        if ($pole) { $pole.ForeColor = [System.Drawing.SystemColors]::WindowText }
     }
+
+    # Maszyna zapomniana RAZEM z polami: to ona jest zrodlem prawdy dla obu przyciskow,
+    # a nie pole tekstowe. Przyciski gasna tu, a nie przy wyniku - wynik nie-Ok idzie
+    # ta sama droga i niczego nie zapala.
+    $Script:OstatniKomputer = ''
+    $Script:MacDlaAdresu    = ''
+    if ($k.PrzyciskPingujMaszyny) { $k.PrzyciskPingujMaszyny.Enabled = $false }
+    Set-JezykPrzyciskPolacz '' -Widok Maszyna
 
     Set-JezykInfo 'Uzytkownik' ''
     Set-JezykInfo 'Tworca' ''
+    Set-JezykInfo 'MacMaszyny' ''
+    Set-JezykInfo 'StatusMaszyny' ''
 }
 
 <#
@@ -388,10 +406,24 @@ function Set-JezykComputerResult {
     if ($Result.Status -eq 'Ok') {
         $k.TxtKomputerKatalog.Text = [string]$Result.Lokalizacja
 
-        # Nazwa Z AD, a nie z pola tekstowego: idzie do zapytania WQL, a AD zna ja
-        # w oryginalnej pisowni.
-        if ($k.TxtKomputerUzytkownikMaszyny) { $k.TxtKomputerUzytkownikMaszyny.Text = 'sprawdzanie...' }
+        # Nazwa Z AD, a nie z pola tekstowego: idzie do zapytania WQL i do zdalnej konsoli,
+        # a AD zna ja w oryginalnej pisowni. Ona tez jest zrodlem prawdy dla obu przyciskow.
+        $Script:OstatniKomputer = [string]$Result.Nazwa
+        if ($k.PrzyciskPingujMaszyny) {
+            $k.PrzyciskPingujMaszyny.Enabled = [bool]$Script:OstatniKomputer
+        }
+        Set-JezykPrzyciskPolacz $Script:OstatniKomputer -Widok Maszyna
+
+        # Kropki zamiast napisu nieruchomego: trzy pola czekaja teraz na to samo zapytanie
+        # (uzytkownik, adres IP, adres MAC), a napis nieruchomy nie odroznia trwajacej
+        # pracy od zawieszonej.
+        Set-JezykNotkeSprawdzania -Notka 'Sccm'
         Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
+
+        # ZADANIE SCCM BYWA NIEURUCHOMIONE - bez ustawien wraca, zanim cokolwiek zbuduje.
+        # Dostepnosc maszyny jest wtedy nadal odpowiedzia, bo ICMP nie potrzebuje SCCM do
+        # niczego; bez tego sonda "automatyczna" nie odbylaby sie w takim wdrozeniu ani raz.
+        if (-not $Script:ZadanieUzytkownika) { Invoke-JezykPing -Widok Maszyna }
 
         if ($k.TxtKomputerTworca) {
             $k.TxtKomputerTworca.Text = Get-JezykOpisTworcy $Result.Tworca $Result.Utworzono
@@ -763,6 +795,36 @@ function Set-JezykPoleKomputeraBezTla {
 
 <#
 .SYNOPSIS
+    Oddaje kontrolki sondy nalezace do WSKAZANEGO panelu - oba widoki maja wlasna trojke.
+
+.DESCRIPTION
+    WIDOK PODAJE SIE JAWNIE, a nie odczytuje z listy trybu. Sonda obsluguje obie polowki
+    okna, a Set-JezykWidok czysci JE OBIE juz PO przestawieniu listy - czyszczenie konta
+    trafialoby wtedy w kontrolki maszyny. Wolajacy zawsze wie, czyj wynik renderuje.
+
+    W widoku maszyny kolor niesie SAMO pole adresu: nazwy maszyny nie ma tam w zadnym polu,
+    bo to ona jest pytaniem wpisanym przez operatora.
+#>
+function Get-JezykPolaSondy {
+    param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
+
+    $k = $Script:Kontrolki
+
+    if ($Widok -eq 'Maszyna') {
+        return [pscustomobject]@{ Kolor    = $k.TxtKomputerIpMaszyny
+                                  Ip       = $k.TxtKomputerIpMaszyny
+                                  Mac      = $k.TxtKomputerMacMaszyny
+                                  KluczMac = 'MacMaszyny' }
+    }
+
+    [pscustomobject]@{ Kolor    = $k.TxtKomputerUzytkownika
+                       Ip       = $k.TxtKomputerIp
+                       Mac      = $k.TxtKomputerMac
+                       KluczMac = 'Mac' }
+}
+
+<#
+.SYNOPSIS
     Maluje pole komputera wedlug dostepnosci maszyny i wpisuje jej adres IP.
 
 .DESCRIPTION
@@ -779,22 +841,25 @@ function Set-JezykPoleKomputeraBezTla {
     Adres IP zostaje wpisany takze wtedy, gdy maszyna nie odpowiada - DNS ja zna, a to
     osobny fakt od tego, czy jest wlaczona, i wlasnie ten adres jest potrzebny do
     polaczenia zdalnego.
+
+    Ktory panel wypelnic, mowi -Widok - patrz Get-JezykPolaSondy wyzej.
 #>
 function Set-JezykDostepnoscKomputera {
-    param($Odpowiada, [string]$Adres, [string]$Opis = '')
+    param($Odpowiada, [string]$Adres, [string]$Opis = '',
+          [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
-    $k = $Script:Kontrolki
-    if (-not $k.TxtKomputerUzytkownika) { return }
+    $pola = Get-JezykPolaSondy -Widok $Widok
+    if (-not $pola.Kolor) { return }
 
-    $k.TxtKomputerUzytkownika.ForeColor = if ($null -eq $Odpowiada) { [System.Drawing.SystemColors]::WindowText }
-                                          elseif ($Odpowiada)       { $Script:Config.KolorOk }
-                                          else                      { $Script:Config.KolorProblem }
+    $pola.Kolor.ForeColor = if ($null -eq $Odpowiada) { [System.Drawing.SystemColors]::WindowText }
+                            elseif ($Odpowiada)       { $Script:Config.KolorOk }
+                            else                      { $Script:Config.KolorProblem }
 
-    if (-not $k.TxtKomputerIp) { return }
+    if (-not $pola.Ip) { return }
 
-    $k.TxtKomputerIp.Text = if ($Adres) { $Adres }
-                            elseif ($Opis) { $Opis }
-                            else { 'nie sprawdzono' }
+    $pola.Ip.Text = if ($Adres) { $Adres }
+                    elseif ($Opis) { $Opis }
+                    else { 'nie sprawdzono' }
 }
 
 <#
@@ -812,18 +877,19 @@ function Set-JezykDostepnoscKomputera {
     Stad przycisk NIEBIESKI i tresc pod nim - zapalany tylko wtedy, gdy jest co wyjasnic.
 #>
 function Set-JezykAdresMac {
-    param([string]$Mac, [string]$Szczegoly)
+    param([string]$Mac, [string]$Szczegoly,
+          [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
-    $k = $Script:Kontrolki
-    if ($k.TxtKomputerMac) {
-        $k.TxtKomputerMac.Text = if ($Mac) { $Mac }
-                                 elseif ($Szczegoly) { 'nie dopasowano' }
-                                 else { 'nie sprawdzono' }
+    $pola = Get-JezykPolaSondy -Widok $Widok
+    if ($pola.Mac) {
+        $pola.Mac.Text = if ($Mac) { $Mac }
+                         elseif ($Szczegoly) { 'nie dopasowano' }
+                         else { 'nie sprawdzono' }
     }
 
     # Tresc tylko wtedy, gdy MAC-a NIE MA: przy trafieniu wyjasniac nie ma czego, a przycisk
     # widoczny zawsze bylby stalym wyjasnieniem - takie z tego okna zostaly usuniete.
-    Set-JezykInfo 'Mac' $(if ($Mac) { '' } else { $Szczegoly })
+    Set-JezykInfo $pola.KluczMac $(if ($Mac) { '' } else { $Szczegoly })
 }
 
 <#
@@ -893,8 +959,14 @@ function Update-JezykKropkiSprawdzania {
 
     $k = $Script:Kontrolki
 
+    # SZESC POL, NIE TRZY: oba widoki maja swoja trojke i oba czekaja na zapytanie do SCCM.
+    # Jeden marker wystarcza, bo zadania "Komputer" i "Uzytkownik" nigdy nie biegna naraz -
+    # Set-JezykWidok przerywa przy zmianie trybu oba. Kropki lecace w panelu niewidocznym
+    # nikomu nie przeszkadzaja, a czyszczenie przy powrocie i tak je zdejmie.
     if ($Script:PolaCzekajaNaSccm) {
-        foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac)) {
+        foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac,
+                            $k.TxtKomputerUzytkownikMaszyny, $k.TxtKomputerIpMaszyny,
+                            $k.TxtKomputerMacMaszyny)) {
             if ($pole) { $pole.Text = 'sprawdzanie' + $kropki }
         }
     }
@@ -912,13 +984,20 @@ function Update-JezykKropkiSprawdzania {
 # Nazwa idzie z $Script:OstatniKomputer, a nie z pola tekstowego - pole sluzy do
 # pokazywania i niesie takze date, wiec nie jest zrodlem prawdy.
 function Invoke-JezykPing {
-    $k = $Script:Kontrolki
+    param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
+
     if (-not $Script:OstatniKomputer) { return }
 
-    if ($k.TxtKomputerIp) { $k.TxtKomputerIp.Text = 'sprawdzanie...' }
-    if ($k.TxtKomputerUzytkownika) {
-        $k.TxtKomputerUzytkownika.ForeColor = [System.Drawing.SystemColors]::WindowText
-    }
+    # KTORY WIDOK ZAMOWIL SONDE, ODKLADAMY TERAZ. Wynik wraca z tla po sekundach, przez
+    # osobne zadanie, a wtedy nikt juz nie pamieta, ktory przycisk go zamowil - i nie ma
+    # tego skad odczytac, bo obie polowki okna maja wlasna trojke pol.
+    $Script:WidokSondy = $Widok
+
+    $pola = Get-JezykPolaSondy -Widok $Widok
+    # NAPIS STATYCZNY, nie animowany. Ta praca trwa do poltorej sekundy - nie ma czym migac,
+    # a zapalenie markera kropek gasiloby odpowiedzi zadania SCCM, ktore o tym nie wie.
+    if ($pola.Ip)    { $pola.Ip.Text = 'sprawdzanie...' }
+    if ($pola.Kolor) { $pola.Kolor.ForeColor = [System.Drawing.SystemColors]::WindowText }
 
     # W TLE, NIE TUTAJ. Rozwiazanie nazwy i sonda ICMP to do poltorej sekundy, a policzone
     # na watku interfejsu byloby tyle samo zamrozonego okna.
@@ -930,9 +1009,13 @@ function Invoke-JezykPing {
 function Update-JezykPingWTle {
     param($Ping)
 
+    # Widok bierzemy z markera odlozonego przy zamawianiu sondy - patrz Invoke-JezykPing.
+    $widok = if ($Script:WidokSondy) { $Script:WidokSondy } else { 'Konto' }
+
     Set-JezykDostepnoscKomputera -Odpowiada $Ping.Odpowiada `
                                  -Adres ([string]$Ping.Adres) `
-                                 -Opis ([string]$Ping.Blad)
+                                 -Opis ([string]$Ping.Blad) `
+                                 -Widok $widok
 
     # POKAZANY MAC OPISUJE KARTE SPOD KONKRETNEGO ADRESU. Gdy maszyna odpowiada juz spod
     # innego - a wlasnie po to klika sie "Pinguj" po dluzszej chwili - dotychczasowy adres
@@ -940,8 +1023,8 @@ function Update-JezykPingWTle {
     # wziac nowego: idzie sama, bez sesji do SCCM.
     $adres = [string]$Ping.Adres
     if ($Script:MacDlaAdresu -and $adres -and $adres -ne $Script:MacDlaAdresu) {
-        Set-JezykAdresMac -Mac '' -Szczegoly (
-            'Maszyna odpowiada teraz spod adresu {0}, a pokazany wcześniej adres MAC opisywał kartę spod {1}. Nowego dopasowania sonda nie zna - zna je wyłącznie SCCM, więc wyszukaj konto ponownie.' -f
+        Set-JezykAdresMac -Widok $widok -Mac '' -Szczegoly (
+            'Maszyna odpowiada teraz spod adresu {0}, a pokazany wcześniej adres MAC opisywał kartę spod {1}. Nowego dopasowania sonda nie zna - zna je wyłącznie SCCM, więc wyszukaj ponownie.' -f
                 $adres, $Script:MacDlaAdresu)
         $Script:MacDlaAdresu = ''
     }
@@ -950,9 +1033,16 @@ function Update-JezykPingWTle {
 # To samo po drugiej stronie okna: zamyka pole uzytkownika maszyny w widoku komputera.
 function Set-JezykPoleUzytkownikaBezTla {
     param([string]$Blad)
+    # Marker gasnie PRZED czymkolwiek innym, w kazdej galezi, ktora odpowiedz moze wyjsc -
+    # slowo "sprawdzanie" zostawione po skonczonej pracy klamie tak samo, jak jego brak
+    # w trakcie.
+    Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
+
     $k = $Script:Kontrolki
     if (-not $k.TxtKomputerUzytkownikMaszyny) { return }
     $k.TxtKomputerUzytkownikMaszyny.Text = 'nie sprawdzono'
+    Set-JezykDostepnoscKomputera -Odpowiada $null -Adres '' -Widok Maszyna
+    Set-JezykAdresMac -Mac '' -Szczegoly '' -Widok Maszyna
     Set-JezykInfo 'Uzytkownik' $Blad
 }
 
@@ -1077,6 +1167,10 @@ function Update-JezykLogowanieWTle {
 function Update-JezykUzytkownikaWTle {
     param($Uzytkownik)
 
+    # Marker kropek gasnie PRZED wpisaniem czegokolwiek - inaczej nastepny takt zegara
+    # nadpisalby gotowa odpowiedz napisem "sprawdzanie".
+    Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
+
     $k = $Script:Kontrolki
     if (-not $k.TxtKomputerUzytkownikMaszyny) { return }
 
@@ -1090,6 +1184,18 @@ function Update-JezykUzytkownikaWTle {
     else {
         $k.TxtKomputerUzytkownikMaszyny.Text = if ($Uzytkownik.Blad) { $Uzytkownik.Blad } else { 'brak danych' }
     }
+
+    # Dostepnosc i karta sieciowa przychodza TYM SAMYM wynikiem, co uzytkownik - jedna
+    # podroz po sieci na trzy pola, dokladnie jak po drugiej stronie okna.
+    Set-JezykDostepnoscKomputera -Odpowiada $Uzytkownik.Odpowiada `
+                                 -Adres ([string]$Uzytkownik.Adres) -Widok Maszyna
+
+    Set-JezykAdresMac -Mac ([string]$Uzytkownik.Mac) `
+                      -Szczegoly ([string]$Uzytkownik.MacSzczegoly) -Widok Maszyna
+
+    # Adres, do ktorego MAC zostal dopasowany - ponowny ping sprawdzi po nim, czy pokazana
+    # karta nadal opisuje te maszyne.
+    $Script:MacDlaAdresu = if ($Uzytkownik.Mac) { [string]$Uzytkownik.Adres } else { '' }
 
     Set-JezykInfo 'Uzytkownik' $(if ($Uzytkownik.Blad) { [string]$Uzytkownik.Szczegoly } else { '' })
 }
@@ -1293,9 +1399,10 @@ function Set-JezykStanJeza {
     konta.
 #>
 function Set-JezykPrzyciskPolacz {
-    param([string]$Netbios)
+    param([string]$Netbios, [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
-    $przycisk = $Script:Kontrolki.PrzyciskPolacz
+    $przycisk = if ($Widok -eq 'Maszyna') { $Script:Kontrolki.PrzyciskPolaczMaszyny }
+                else                      { $Script:Kontrolki.PrzyciskPolacz }
     if (-not $przycisk) { return }
 
     # Pusta sciezka w konfiguracji = funkcja swiadomie wylaczona, dokladnie tak samo jak
@@ -1316,15 +1423,22 @@ function Set-JezykPrzyciskPolacz {
 # potwierdzeniem, a Set-JezykInfo 'Status' '' skasowaloby diagnostyke nalezaca do
 # WYSZUKIWANIA, nie do tego klikniecia - to nie jest wykrzyknik tego przycisku.
 function Invoke-JezykPolacz {
+    param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
+
     $k = $Script:Kontrolki
     if (-not $Script:OstatniKomputer) { return }
+
+    # Kazdy widok ma wlasne pole Status: i wlasny przycisk "!" przy nim - niepowodzenie ma
+    # trafic tam, gdzie operator patrzy, a nie do panelu, ktorego w tej chwili nie widac.
+    $pole  = if ($Widok -eq 'Maszyna') { $k.TxtKomputerStatus } else { $k.TxtStatus }
+    $klucz = if ($Widok -eq 'Maszyna') { 'StatusMaszyny' }      else { 'Status' }
 
     $wynik = Start-JezykRemoteControl -Netbios $Script:OstatniKomputer `
                                       -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
 
     if (-not $wynik.Udane) {
-        if ($k.TxtStatus) { $k.TxtStatus.Text = [string]$wynik.Komunikat }
-        Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
+        if ($pole) { $pole.Text = [string]$wynik.Komunikat }
+        Set-JezykInfo $klucz ([string]$wynik.Szczegoly)
     }
 }
 
