@@ -155,6 +155,121 @@ $Script:StanJeza   = 'Ukryty'   # Ukryty | Szuka | Jablko | NaPlecach
 $Script:TaktJeza = 60        # ms miedzy klatkami, czyli okolo 16 klatek na sekunde
 $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 
+# --- IKONKA MOTYWU --------------------------------------------------------------------
+# Ksiezyc albo slonce na przycisku w prawym dolnym rogu. Mapa pikseli, a nie znak
+# z czcionki: glify ksiezyca i slonca nie ma Segoe UI, wiec Windows schodzi na czcionke
+# zastepcza - a ta bywa inna na kazdej stacji i inaczej wysrodkowana. Mapa wyglada
+# wszedzie tak samo i skaluje sie tak samo jak jez.
+#
+# BOK NIEPARZYSTY (15), zeby obie figury mialy srodkowy wiersz i srodkowa kolumne. Przy
+# parzystym osi symetrii wypadaja miedzy pikselami i kazda figura jest o piksel krzywa.
+$Script:BokIkonyMotywu    = 18   # tyle samo, co bok przycisku "!"
+$Script:OdstepIkonyMotywu = 8    # przerwa miedzy ikonka a napisem z wersja
+
+# KSIEZYC pokazuje sie w motywie JASNYM - niesie to, co klikniecie WLACZY.
+$Script:MapaKsiezyca = @(
+    '.......#.......'
+    '....####.......'
+    '...###.........'
+    '..###..........'
+    '.####..........'
+    '.###...........'
+    '.###...........'
+    '####...........'
+    '.###...........'
+    '.###...........'
+    '.####..........'
+    '..###..........'
+    '...###.........'
+    '....####.......'
+    '.......#.......'
+)
+
+# SLONCE pokazuje sie w motywie CIEMNYM - tak samo, niesie powrot do jasnego.
+$Script:MapaSlonca = @(
+    '.......#.......'
+    '.......#.......'
+    '..#.........#..'
+    '...#...#...#...'
+    '.....#####.....'
+    '....#######....'
+    '....#######....'
+    '##.#########.##'
+    '....#######....'
+    '....#######....'
+    '.....#####.....'
+    '...#...#...#...'
+    '..#.........#..'
+    '.......#.......'
+    '.......#.......'
+)
+
+# Bufor pedzla ikonki. ZEROWANY PRZY KAZDEJ ZMIANIE MOTYWU (patrz Set-JezykMotyw) - inaczej
+# ikonka rysowalaby sie kolorem poprzedniej palety, czyli po przejsciu na ciemny motyw
+# malowalaby czarne slonce na czarnym tle. To ta sama pulapka, ktora omija bufor jeza:
+# tamten trzyma stale kolory zwierzecia i uniewazniac go nie ma po co.
+$Script:PedzelMotywu = $null
+
+# Pedzel GDI. Wydzielony, bo to JEDYNE miejsce rysowania ikonki, ktore wychodzi poza
+# proces - zestaw weryfikacyjny podstawia tutaj wlasna atrape i cala petla rysujaca
+# wykonuje sie naprawde, zamiast byc sprawdzana regeksem po tresci funkcji.
+function New-JezykPedzel {
+    param($Kolor)
+    [System.Drawing.SolidBrush]::new($Kolor)
+}
+
+# Mapa dla podanego motywu. Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu wywolania,
+# tak samo jak przy Get-JezykSpriteJeza.
+function Get-JezykSpriteMotywu {
+    param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw)
+
+    if ($Motyw -eq 'Ciemny') { return $Script:MapaSlonca }
+    return $Script:MapaKsiezyca
+}
+
+<#
+.SYNOPSIS
+    Rysuje ikonke motywu na przycisku - kolorem tekstu z biezacej palety.
+
+.DESCRIPTION
+    ROZMIAR KOMORKI NIE MOZE WYJSC ZEROWY. Przy przycisku wezszym niz mapa dzielenie
+    calkowite dalo by zero, petla narysowalaby pietnascie prostokatow o boku 0 i przycisk
+    zostalby PUSTY - bez wyjatku, bez sladu, bez niczego, co by to zglosilo. Stad Max(1).
+    Ta sama pulapka co jablko jeza, ktore przy komorce 1 px bylo za male, zeby je zobaczyc.
+
+    Figura jest srodkowana w przycisku, a nie dosuwana do rogu: bok przycisku jest stala,
+    a bok mapy - nieparzysty, wiec resztka po podzieleniu prawie nigdy nie jest zerem.
+#>
+function Set-JezykRysunekMotywu {
+    param($Grafika, [int]$Bok)
+
+    $sprite = @(Get-JezykSpriteMotywu -Motyw $Script:Motyw)
+    if ($sprite.Count -eq 0) { return }
+
+    # Floor PRZED rzutowaniem: [int] w PowerShellu ZAOKRAGLA (bankiersko), wiec [int]1.6
+    # dalby komorke o piksel za duza i sprite wyszedlby poza przycisk.
+    $komorka    = [int][Math]::Max(1, [Math]::Floor($Bok / $sprite.Count))
+    $odsuniecie = [int][Math]::Floor(($Bok - $komorka * $sprite.Count) / 2)
+
+    if (-not $Script:PedzelMotywu) {
+        $Script:PedzelMotywu = New-JezykPedzel $Script:Config.KolorTekstu
+    }
+
+    # Piksel-art ma byc ostry - wygladzanie rozmylo by krawedzie komorek.
+    $Grafika.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+
+    for ($w = 0; $w -lt $sprite.Count; $w++) {
+        $linia = $sprite[$w]
+        for ($k = 0; $k -lt $linia.Length; $k++) {
+            if ([string]$linia[$k] -ne '#') { continue }
+            $Grafika.FillRectangle($Script:PedzelMotywu,
+                                   $odsuniecie + $k * $komorka,
+                                   $odsuniecie + $w * $komorka,
+                                   $komorka, $komorka)
+        }
+    }
+}
+
 <#
 .SYNOPSIS
     Rysunek jeza dla zadanego stanu - gotowa mapa znakow, bez GDI.
@@ -423,6 +538,87 @@ function Set-JezykSrodekTekstu {
 # Blokada zdarzen na czas programowego wypelniania listy - patrz Set-JezykListaKont.
 $Script:BlokadaZdarzen = $false
 
+<#
+.SYNOPSIS
+    Maluje kontrolke wedlug jej ROLI w oknie, kolorami z biezacej palety.
+
+.DESCRIPTION
+    JEDNO MIEJSCE Z REGULAMI KOLORU, wolane dwa razy w zyciu kazdej kontrolki: przy budowie
+    okna i przy kazdym przelaczeniu motywu. Dwie kopie tych regul rozjechalyby sie przy
+    pierwszej zmianie, a rozjazd widac dopiero po powrocie z ciemnego motywu do jasnego.
+
+    ROLA, A NIE TYP KONTROLKI. Rozpoznawanie po [System.Windows.Forms.Button] zamykaloby te
+    funkcje przed zestawem weryfikacyjnym - ten podstawia [pscustomobject], wiec zaden
+    warunek na typ nie bylby w nim prawdziwy i petla malujaca nie wykonalaby sie ani razu.
+    To ta sama zasada, co przy czytaniu pol wyjatku przez PSObject.Properties.
+
+    -REJESTRUJ PODAJE WYLACZNIE New-JezykForm. Okno "Grupy AD" wola te same role bez niego:
+    jego kontrolki gina razem z oknem w finally { Dispose() }, a zarejestrowane zostawialyby
+    w $Script:KontrolkiMotywu martwe uchwyty, przybywajace po jednym komplecie na otwarcie.
+
+    Rejestr jest TABLICA kontrolka -> rola, a nie lista na kazda role: cztery niebieskie
+    przyciski "!" rodza sie czerwone i dopiero potem dostaja swoj kolor, wiec druga
+    rejestracja ma ZASTAPIC pierwsza. W liscie zostalyby w obu i kolor zalezalby od
+    kolejnosci przemalowania.
+
+    Kolor NIESIONY PRZEZ TRESC (werdykt, wygasle haslo, dostepnosc maszyny) nie nalezy do
+    zadnej roli - ustawia go Set-JezykKolorPola i to on ma ostatnie slowo, bo Set-JezykMotyw
+    odtwarza role kolorow PO rolach wygladu.
+#>
+function Set-JezykWyglad {
+    param($Kontrolka,
+          [ValidateSet('Okno', 'Pole', 'Lista', 'Przycisk',
+                       'InfoProblem', 'InfoNiebieski', 'Ikona')][string]$Rola,
+          [switch]$Rejestruj)
+
+    if (-not $Kontrolka) { return }
+
+    if ($Rejestruj) { $Script:KontrolkiMotywu[$Kontrolka] = $Rola }
+
+    switch ($Rola) {
+        'Okno' {
+            $Kontrolka.BackColor = $Script:Config.KolorOkna
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+        }
+        'Pole' {
+            # Tlo JAWNIE, bo pole ReadOnly bez tego rysuje sie na kolorze tla okna
+            # i wyglada jak nieczynne. Kolor tekstu tez jawnie: pole moze wracac
+            # ze stanu kolorowanego przez Set-JezykKolorPola.
+            $Kontrolka.BackColor = $Script:Config.KolorTla
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+        }
+        'Lista' {
+            $Kontrolka.BackColor = $Script:Config.KolorKontrolki
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+        }
+        'Przycisk' {
+            $Kontrolka.BackColor = $Script:Config.KolorKontrolki
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+            $Kontrolka.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+        }
+        'InfoProblem' {
+            $Kontrolka.BackColor = $Script:Config.KolorProblemTlo
+            $Kontrolka.ForeColor = $Script:Config.KolorProblem
+            $Kontrolka.FlatAppearance.BorderColor = $Script:Config.KolorProblem
+        }
+        'InfoNiebieski' {
+            $Kontrolka.BackColor = $Script:Config.KolorInfoTlo
+            $Kontrolka.ForeColor = $Script:Config.KolorInfo
+            $Kontrolka.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+        }
+        'Ikona' {
+            # Tlo okna, zeby ikonka siedziala w nim jak wpisana, a nie jak naklejka.
+            # Rysunek bierze kolor z palety przy KAZDYM przerysowaniu, wiec po zmianie
+            # motywu trzeba o nie poprosic - zmiana BackColor sama zdarzenia Paint nie
+            # wywoluje. BEZ FlatAppearance: te sama role dostaje takze PictureBox, ktory
+            # tego pola nie ma.
+            $Kontrolka.BackColor = $Script:Config.KolorOkna
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+            $Kontrolka.Invalidate()
+        }
+    }
+}
+
 # Etykieta opisujaca pole.
 function New-JezykEtykieta {
     param([string]$Tekst, [int]$X, [int]$Y)
@@ -445,9 +641,7 @@ function New-JezykPole {
     $txt.Location  = [System.Drawing.Point]::new($X, $Y)
     $txt.Width     = $Szerokosc
     $txt.ReadOnly  = $true
-    # Jawnie kolor okna, bo pole ReadOnly rysuje sie domyslnie na szarym tle i wygladaloby
-    # jak nieczynne.
-    $txt.BackColor = [System.Drawing.SystemColors]::Window
+    Set-JezykWyglad $txt 'Pole' -Rejestruj
     $txt
 }
 
@@ -495,9 +689,7 @@ function New-JezykPrzyciskInfo {
     $btn.Tag       = $Klucz
     $btn.Size      = [System.Drawing.Size]::new($Bok, $Bok)
     $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btn.BackColor = $Script:Config.KolorProblemTlo
-    $btn.ForeColor = $Script:Config.KolorProblem
-    $btn.FlatAppearance.BorderColor = $Script:Config.KolorProblem
+    Set-JezykWyglad $btn 'InfoProblem' -Rejestruj
     $btn.FlatAppearance.BorderSize  = 2
     $btn.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
     $btn.TabStop   = $false
@@ -1637,6 +1829,9 @@ function Show-JezykGrupyAd {
         $okno.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
         # Ta sama czcionka, co w oknie glownym - honoruje ustawienia systemu i skalowanie DPI.
         $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
+        # BEZ -Rejestruj: to okno powstaje na zadanie i ginie w finally { Dispose() }, wiec
+        # czyta paleta obowiazujaca w chwili otwarcia i nigdy nie jest przemalowywane.
+        Set-JezykWyglad $okno 'Okno'
 
         $lblFiltr = New-JezykEtykieta 'Szukaj grupy:' $margines $margines
 
@@ -1644,8 +1839,10 @@ function Show-JezykGrupyAd {
         # odpowiedzi AD. To jedyne pole w programie poza wyszukiwaniem, do ktorego sie pisze.
         $txtFiltr           = New-Object System.Windows.Forms.TextBox
         $txtFiltr.MaxLength = 256
+        Set-JezykWyglad $txtFiltr 'Pole'
 
         $lista = New-Object System.Windows.Forms.ListBox
+        Set-JezykWyglad $lista 'Lista'
         # Wysokosc przycieta do calych wierszy. Czesciowy wiersz na dole rozjezdzal zawartosc
         # z paskiem przewijania (pasek liczy zakres z liczby pozycji, lista przewija calymi
         # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Szpara, ktora
@@ -1664,8 +1861,7 @@ function Show-JezykGrupyAd {
         $btnZamknij.Text      = 'Zamknij'
         $btnZamknij.Size      = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
         $btnZamknij.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-        $btnZamknij.BackColor = $Script:Config.KolorKontrolki
-        $btnZamknij.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+        Set-JezykWyglad $btnZamknij 'Przycisk'
         $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
         # Pole filtra jest PIERWSZE, wiec dostaje fokus samo - pisac mozna od razu po otwarciu,
@@ -1687,6 +1883,13 @@ function Show-JezykGrupyAd {
 
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnZamknij.Bottom + $margines))
+
+        # Pasek tytulu i pasek przewijania listy - jedyne dwie rzeczy w tym oknie, ktorych
+        # nie zalatwia kolor kontrolki. Siegniecie po Handle TWORZY uchwyt, wiec wywolanie
+        # dziala mimo tego, ze okna jeszcze nie widac; ShowDialog i tak pokaze je za chwile.
+        $ciemny = ($Script:Motyw -eq 'Ciemny')
+        Set-JezykCiemnyPasekTytulu      $okno.Handle  -Ciemny:$ciemny
+        Set-JezykCiemnyPasekPrzewijania $lista.Handle -Ciemny:$ciemny
 
         # Pierwsze wypelnienie idzie TA SAMA droga, co kazdy nacisniety klawisz - razem
         # z tytulem, ktory niesie licznik.
@@ -1723,6 +1926,10 @@ function New-JezykForm {
     # wiec wspolrzedne kontrolek zgadzaja sie niezaleznie od motywu Windows.
     $form                 = New-Object System.Windows.Forms.Form
     $form.Text            = $Script:Config.TytulOkna
+    # Tlo okna JAWNIE, a nie z domyslnego SystemColors.Control: to od niego dziedziczy
+    # kolor kazda etykieta i kazdy znacznik, wiec to jedno przypisanie odpowiada za
+    # wiekszosc powierzchni okna w obu motywach.
+    Set-JezykWyglad $form 'Okno' -Rejestruj
 
     # DZIEWIEC WIERSZY (0-8). Osmy doszedl razem z polem "Adres IP" - pol polowkowych jest
     # jedenascie, czyli nieparzyscie, a trzy dolne potrzebuja calej szerokosci, wiec jedno
@@ -1792,7 +1999,7 @@ function New-JezykForm {
     $cmbDomena.Width         = 240
     $cmbDomena.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $cmbDomena.FlatStyle     = [System.Windows.Forms.FlatStyle]::Flat
-    $cmbDomena.BackColor     = $Script:Config.KolorKontrolki
+    Set-JezykWyglad $cmbDomena 'Lista' -Rejestruj
     foreach ($d in $Script:Domeny) { [void]$cmbDomena.Items.Add($d) }
     $cmbDomena.SelectedIndex = 0
 
@@ -1805,7 +2012,7 @@ function New-JezykForm {
     $cmbTryb.Width         = 180
     $cmbTryb.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     $cmbTryb.FlatStyle     = [System.Windows.Forms.FlatStyle]::Flat
-    $cmbTryb.BackColor     = $Script:Config.KolorKontrolki
+    Set-JezykWyglad $cmbTryb 'Lista' -Rejestruj
     [void]$cmbTryb.Items.Add($Script:Config.TrybNazwa)
     [void]$cmbTryb.Items.Add($Script:Config.TrybKomputer)
     $cmbTryb.SelectedIndex = 0
@@ -1817,8 +2024,7 @@ function New-JezykForm {
     $btnSzukaj.Width     = 96
     $btnSzukaj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnSzukaj.Width
     $btnSzukaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnSzukaj.BackColor = $Script:Config.KolorKontrolki
-    $btnSzukaj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnSzukaj 'Przycisk' -Rejestruj
 
     # JEZ - znak, ze okno pracuje, i odpowiedz, gdy skonczy. Zaczyna biec przy KAZDYM
     # klinieciu "Szukaj", a gdy nie ma juz na co czekac, staje: z jablkiem, jesli cos sie
@@ -1857,6 +2063,7 @@ function New-JezykForm {
     $txtSzukaj.Width     = $btnSzukaj.Left - $przerwa - $txtSzukaj.Left
     # Zabezpieczenie przed wklejeniem calego akapitu tekstu.
     $txtSzukaj.MaxLength = 256
+    Set-JezykWyglad $txtSzukaj 'Pole' -Rejestruj
 
     # Lista wyboru kont - widoczna wylacznie przy wyszukiwaniu czesciowym. DisplayMember
     # sprawia, ze pokazuje pole Opis, a kod ma pod reka caly obiekt kandydata.
@@ -1866,11 +2073,17 @@ function New-JezykForm {
     $cmbWynik.Location      = [System.Drawing.Point]::new($Script:Margines, $Script:PanelBezListy)
     $cmbWynik.Width         = $Script:SzerokoscPelna
     $cmbWynik.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    # FlatStyle = Flat z tego samego powodu, co przy dwoch listach wyzej: bez niego przy
+    # wlaczonych stylach wizualnych BackColor jest ignorowany i lista zostalaby biala
+    # w ciemnym motywie. Cena ta sama - kontrolka traci wyglad systemowy.
+    $cmbWynik.FlatStyle     = [System.Windows.Forms.FlatStyle]::Flat
+    Set-JezykWyglad $cmbWynik 'Lista' -Rejestruj
     $cmbWynik.DisplayMember = 'Opis'
     $cmbWynik.Visible       = $false
 
     # --- PANEL: WIDOK KONTA ----------------------------------------------------------
     $pnlKonto      = New-Object System.Windows.Forms.Panel
+    Set-JezykWyglad $pnlKonto 'Okno' -Rejestruj
     $pnlKonto.Size = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscPanelu)
 
     # Werdykt: jedyna kontrolka, ktora zmienia kolor, i jedyna, ktorej tresc zalezy od stanu
@@ -1880,7 +2093,7 @@ function New-JezykForm {
     # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
     # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
-    $lblWerdykt.ForeColor = $Script:Config.KolorNieznany
+    Set-JezykKolorPola $lblWerdykt 'Nieznany'
 
     # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu.
     $btnOdblokuj           = New-Object System.Windows.Forms.Button
@@ -1889,13 +2102,13 @@ function New-JezykForm {
     $btnOdblokuj.Height    = 26
     $btnOdblokuj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnOdblokuj.Width
     $btnOdblokuj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnOdblokuj.BackColor = $Script:Config.KolorKontrolki
-    $btnOdblokuj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnOdblokuj 'Przycisk' -Rejestruj
     $btnOdblokuj.Enabled   = $false
 
     # Siatka faktow, z ktorych powstaje werdykt. Trzy rowne kolumny, wyliczane - poprzednie
     # odstepy wpisane recznie widac bylo golym okiem.
     $grpFlagi          = New-Object System.Windows.Forms.GroupBox
+    Set-JezykWyglad $grpFlagi 'Okno' -Rejestruj
     $grpFlagi.Text     = ''
     $grpFlagi.Location = [System.Drawing.Point]::new($Script:Margines, 32)
     $grpFlagi.Size     = [System.Drawing.Size]::new($Script:SzerokoscPelna, 56)
@@ -1940,9 +2153,7 @@ function New-JezykForm {
     # SCCM ma wiecej niz jedno konto. Wlasny kolor nadpisany PO utworzeniu, zeby nie ruszac
     # sygnatury New-JezykPrzyciskInfo uzywanej przez pozostale, czerwone przyciski.
     $btnInfoKomputerWspoldzielony = New-JezykPrzyciskInfo 'KomputerWspoldzielony'
-    $btnInfoKomputerWspoldzielony.BackColor = $Script:Config.KolorInfoTlo
-    $btnInfoKomputerWspoldzielony.ForeColor = $Script:Config.KolorInfo
-    $btnInfoKomputerWspoldzielony.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+    Set-JezykWyglad $btnInfoKomputerWspoldzielony 'InfoNiebieski' -Rejestruj
 
     # Komputer stoi przy e-mailu, a nie przy dacie logowania: data pokazuje DWIE wartosci
     # naraz i nie miesci sie w kolumnie, a adres e-mail nigdy nie potrzebowal calej szerokosci.
@@ -1972,8 +2183,7 @@ function New-JezykForm {
     $btnPinguj.Height    = 22
     $btnPinguj.Left      = $P + $W - $szerokoscPingu
     $btnPinguj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnPinguj.BackColor = $Script:Config.KolorKontrolki
-    $btnPinguj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnPinguj 'Przycisk' -Rejestruj
     $btnPinguj.Enabled   = $false
     $btnPinguj.TabStop   = $false
 
@@ -1990,8 +2200,7 @@ function New-JezykForm {
     $btnPolacz.Width     = $szerokoscPingu
     $btnPolacz.Height    = 22
     $btnPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnPolacz.BackColor = $Script:Config.KolorKontrolki
-    $btnPolacz.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnPolacz 'Przycisk' -Rejestruj
     $btnPolacz.Visible   = $false
     $btnPolacz.TabStop   = $false
 
@@ -2008,9 +2217,7 @@ function New-JezykForm {
     $lblKomputerMac = New-JezykEtykieta 'Adres MAC:' $L (Get-JezykWiersz 2)
     $txtKomputerMac = New-JezykPole                  $L (Get-JezykWierszPole 2) $W
     $btnInfoMac     = New-JezykPrzyciskInfo 'Mac'
-    $btnInfoMac.BackColor = $Script:Config.KolorInfoTlo
-    $btnInfoMac.ForeColor = $Script:Config.KolorInfo
-    $btnInfoMac.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+    Set-JezykWyglad $btnInfoMac 'InfoNiebieski' -Rejestruj
 
     $lblKomputerIp = New-JezykEtykieta 'Adres IP:' $P (Get-JezykWiersz 2)
     $txtKomputerIp = New-JezykPole                 $P (Get-JezykWierszPole 2) $W
@@ -2060,8 +2267,7 @@ function New-JezykForm {
     $btnGrupyAd.Height    = 22
     $btnGrupyAd.Left      = $P
     $btnGrupyAd.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnGrupyAd.BackColor = $Script:Config.KolorKontrolki
-    $btnGrupyAd.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnGrupyAd 'Przycisk' -Rejestruj
     $btnGrupyAd.Enabled   = $false
     $btnGrupyAd.TabStop   = $false
 
@@ -2103,6 +2309,7 @@ function New-JezykForm {
     $kompWiersz5 = $kompWiersz4 + $Script:SkokWiersza
 
     $pnlKomputer         = New-Object System.Windows.Forms.Panel
+    Set-JezykWyglad $pnlKomputer 'Okno' -Rejestruj
     # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
@@ -2128,9 +2335,7 @@ function New-JezykForm {
     $lblKompTworca = New-JezykEtykieta 'Dodany do AD przez:' $Script:Margines $kompWiersz2
     $txtKompTworca = New-JezykPole $Script:Margines ($kompWiersz2 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoTworca = New-JezykPrzyciskInfo 'Tworca'
-    $btnInfoTworca.BackColor = $Script:Config.KolorInfoTlo
-    $btnInfoTworca.ForeColor = $Script:Config.KolorInfo
-    $btnInfoTworca.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+    Set-JezykWyglad $btnInfoTworca 'InfoNiebieski' -Rejestruj
 
     # Konto komputera wylaczone w AD widac w "Centrum administracyjnym Active Directory"
     # wyszarzonym monitorkiem z kropka - nazwa obiektu wyglada wtedy tak samo jak zawsze,
@@ -2153,9 +2358,7 @@ function New-JezykForm {
     # Przycisk NIEBIESKI jak przy blizniaczym polu: brak dopasowania karty to zwykly,
     # spodziewany wynik (inwentaryzacja bywa starsza od dzierzawy DHCP), a nie usterka.
     $btnInfoMacMaszyny = New-JezykPrzyciskInfo 'MacMaszyny'
-    $btnInfoMacMaszyny.BackColor = $Script:Config.KolorInfoTlo
-    $btnInfoMacMaszyny.ForeColor = $Script:Config.KolorInfo
-    $btnInfoMacMaszyny.FlatAppearance.BorderColor = $Script:Config.KolorInfo
+    Set-JezykWyglad $btnInfoMacMaszyny 'InfoNiebieski' -Rejestruj
 
     $lblKompIp = New-JezykEtykieta 'Adres IP:' $Script:DrugaKolumna $kompWiersz4
     $txtKompIp = New-JezykPole $Script:DrugaKolumna ($kompWiersz4 + $Script:OdstepPodEtykieta) `
@@ -2167,8 +2370,7 @@ function New-JezykForm {
     $btnKompPinguj.Height    = 22
     $btnKompPinguj.Left      = $Script:DrugaKolumna + $Script:SzerokoscKolumny - $szerokoscPingu
     $btnKompPinguj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnKompPinguj.BackColor = $Script:Config.KolorKontrolki
-    $btnKompPinguj.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnKompPinguj 'Przycisk' -Rejestruj
     $btnKompPinguj.Enabled   = $false
     $btnKompPinguj.TabStop   = $false
 
@@ -2181,8 +2383,7 @@ function New-JezykForm {
     $btnKompPolacz.Width     = $szerokoscPingu
     $btnKompPolacz.Height    = 22
     $btnKompPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $btnKompPolacz.BackColor = $Script:Config.KolorKontrolki
-    $btnKompPolacz.FlatAppearance.BorderColor = $Script:Config.KolorObramowki
+    Set-JezykWyglad $btnKompPolacz 'Przycisk' -Rejestruj
     $btnKompPolacz.Visible   = $false
     $btnKompPolacz.TabStop   = $false
 
@@ -2208,7 +2409,7 @@ function New-JezykForm {
 
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
     $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) $Script:Margines ($wysokoscOkna - 20)
-    $lblAutor.ForeColor = $Script:Config.KolorNieznany
+    Set-JezykKolorPola $lblAutor 'Nieznany'
     $lblAutor.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
 
     # Numer wersji na DRUGIM koncu tego samego pasa - prawa polowa stala pusta, wiec napis
@@ -2219,12 +2420,29 @@ function New-JezykForm {
     # pikseli na dole okna jest dokladnie tym, czego nikt nie zauwazy w kodzie.
     # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
     $lblWersja           = New-JezykEtykieta ('Wersja: ' + $Script:Config.Wersja) $Script:Margines $lblAutor.Top
-    $lblWersja.ForeColor = $lblAutor.ForeColor
+    Set-JezykKolorPola $lblWersja 'Nieznany'
     $lblWersja.Font      = $lblAutor.Font
+
+    # PRZYCISK MOTYWU - ksiezyc przy jasnym oknie, slonce przy ciemnym. Stoi w tym samym
+    # pustym pasie, co oba napisy, wiec nie kosztuje ani jednego piksela wysokosci okna.
+    # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
+    #
+    # BEZ RAMKI: ma wygladac jak ikonka wpisana w pas podpisu, a nie jak klawisz obok
+    # dwoch szarych napisow. Wyzerowane marginesy wewnetrzne z tego samego powodu, co przy
+    # przyciskach "!" - bez nich rysunek nie miesci sie w kwadracie 18 px.
+    $btnMotyw           = New-Object System.Windows.Forms.Button
+    $btnMotyw.Size      = [System.Drawing.Size]::new($Script:BokIkonyMotywu, $Script:BokIkonyMotywu)
+    $btnMotyw.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btnMotyw.FlatAppearance.BorderSize = 0
+    $btnMotyw.TabStop   = $false
+    $btnMotyw.Padding   = [System.Windows.Forms.Padding]::new(0)
+    $btnMotyw.Margin    = [System.Windows.Forms.Padding]::new(0)
+    Set-JezykWyglad $btnMotyw 'Ikona' -Rejestruj
+    $btnMotyw.Add_Paint({ Set-JezykRysunekMotywu -Grafika $_.Graphics -Bok $this.Width })
 
     $form.Controls.AddRange(@($lblDomena, $cmbDomena, $lblPodaj, $cmbTryb,
                               $txtSzukaj, $jezSzukania, $btnSzukaj, $cmbWynik,
-                              $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja))
+                              $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja, $btnMotyw))
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
     # CALE wyrownanie stoi TUTAJ, po dodaniu kontrolek do okna, i nie da sie go przeniesc
@@ -2239,6 +2457,13 @@ function New-JezykForm {
     # bylby zmierzony czcionka domyslna i napis wyladowalby obok marginesu, tym bardziej
     # przy DPI 125-150%.
     Set-JezykDoPrawej @($lblWersja) ($Script:SzerokoscOkna - $Script:Margines)
+
+    # Ikonka motywu NA LEWO OD NAPISU Z WERSJA i liczona OD NIEGO, a nie od krawedzi okna:
+    # napis ma AutoSize, wiec jego szerokosc zalezy od czcionki systemu i przy DPI 125-150%
+    # rosnie. Liczba wpisana tutaj trzymalaby sie wylacznie przy 100% i przy wiekszej
+    # czcionce ikonka wlazlaby pod napis.
+    Set-JezykDoPrawej @($btnMotyw) ($lblWersja.Left - $Script:OdstepIkonyMotywu)
+    Set-JezykSrodekPionowy @($btnMotyw) ($lblWersja.Top + [int]($lblWersja.Height / 2))
 
     # Wysokosc jeza bierze sie z listy domen, a nie z liczby: pas ma rosnac razem z nia,
     # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz
@@ -2382,6 +2607,7 @@ function New-JezykForm {
         ListaKont     = $cmbWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
+        PrzyciskMotyw = $btnMotyw
 
         WerdyktBox        = $chkWerdykt
         Werdykt           = $lblWerdykt
@@ -2530,11 +2756,23 @@ function New-JezykForm {
     $btnKompPolacz.Add_Click({ Invoke-JezykPolacz -Widok Maszyna })
     $btnGrupyAd.Add_Click({ Show-JezykGrupyAd })
 
+    $btnMotyw.Add_Click({ Invoke-JezykPrzelaczenieMotywu })
+
     $cmbTryb.Add_SelectedIndexChanged({ Set-JezykWidok })
     $cmbWynik.Add_SelectedIndexChanged({ Invoke-JezykWyborKonta })
 
-    # Focus() wywolany wczesniej nie zadziala - okna jeszcze nie widac.
-    $form.Add_Shown({ $Script:Kontrolki.PoleSzukaj.Focus() })
+    # Focus() wywolany wczesniej nie zadziala - okna jeszcze nie widac. Z tego samego
+    # powodu stoi tu druga czesc motywu: pasek tytulu i paski przewijania adresuje sie
+    # UCHWYTEM OKNA, a ten powstaje dopiero teraz.
+    $form.Add_Shown({
+        $Script:Kontrolki.PoleSzukaj.Focus()
+        Set-JezykMotywSystemowy
+    })
+
+    # MOTYW NA SAMYM KONCU, gdy wszystkie kontrolki maja juz swoje role. Wczesniej czesc
+    # z nich jeszcze nie istnieje, a nieprzemalowana kontrolka nie zglasza sie niczym -
+    # po prostu zostaje jasna w ciemnym oknie.
+    Set-JezykMotyw $Script:Motyw
 
     $form
 }

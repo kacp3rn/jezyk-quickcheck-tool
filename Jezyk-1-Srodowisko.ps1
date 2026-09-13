@@ -62,6 +62,17 @@ public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
 [DllImport("user32.dll", SetLastError = true)]
 public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+[DllImport("dwmapi.dll")]
+public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int val, int size);
+
+[DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+public static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string pszSubIdList);
+
+[DllImport("user32.dll")]
+[return: MarshalAs(UnmanagedType.Bool)]
+public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndAfter, int x, int y,
+                                       int cx, int cy, uint flags);
 '@
     }
 
@@ -116,6 +127,82 @@ function Hide-JezykOknoKonsoli {
     }
     catch {
         $Script:BladKonsoli = "Ukrywanie okna konsoli: $($_.Exception.Message)"
+    }
+}
+
+<#
+.SYNOPSIS
+    Przelacza pasek tytulu okna na ciemny albo jasny.
+
+.DESCRIPTION
+    JEDYNA CZESC MOTYWU, KTOREJ WINFORMS NIE UMIE. Pasek tytulu lezy poza obszarem klienta
+    i rysuje go menedzer okien, wiec nie ma kontrolki, ktorej mozna by ustawic BackColor -
+    bez tego wywolania nad ciemnym oknem zostaje biala belka.
+
+    ATRYBUT MA DWA NUMERY. W Windows 11 i w nowszych kompilacjach Windows 10 to 20
+    (DWMWA_USE_IMMERSIVE_DARK_MODE); w kompilacjach 1809-1909 ten sam atrybut mial numer 19
+    i pod dwudziestka nie dziala. Probujemy obu - DWM nie zna atrybutu po cichu, oddajac
+    niezerowy HRESULT, a nie rzucajac wyjatkiem.
+
+    NIEPOWODZENIE JEST DOPUSZCZALNE: zostaje jasny pasek nad ciemnym oknem. To brzydkie,
+    ale dziala, wiec funkcja nie ma prawa zatrzymac programu. Blok catch lapie w praktyce
+    jeden przypadek - zablokowana na stacji kompilacje C#, przez ktora nie powstal caly typ
+    Jezyk.Native. Ten sam powod jest juz zapisany do $Script:BladKonsoli przy Add-Type
+    i stamtad trafia do pliku diagnostycznego, wiec nie zakladamy tu drugiego kanalu.
+#>
+function Set-JezykCiemnyPasekTytulu {
+    param([IntPtr]$Uchwyt, [switch]$Ciemny)
+
+    if ($Uchwyt -eq [IntPtr]::Zero)      { return }
+    if (-not ('Jezyk.Native' -as [type])) { return }
+
+    try {
+        $wartosc = if ($Ciemny) { 1 } else { 0 }
+
+        $wynik = [Jezyk.Native]::DwmSetWindowAttribute($Uchwyt, 20, [ref]$wartosc, 4)
+        if ($wynik -ne 0) {
+            $wynik = [Jezyk.Native]::DwmSetWindowAttribute($Uchwyt, 19, [ref]$wartosc, 4)
+        }
+        if ($wynik -ne 0) { return }
+
+        # Belka tytulu nie nalezy do obszaru klienta, wiec Invalidate jej nie dotyczy.
+        # Bez ponizszego okno przemalowuje ja dopiero przy pierwszym przesunieciu - czyli
+        # klikniecie ikonki wygladaloby na wykonane do polowy.
+        # SWP_NOSIZE 0x1 | SWP_NOMOVE 0x2 | SWP_NOZORDER 0x4 | SWP_FRAMECHANGED 0x20
+        [void][Jezyk.Native]::SetWindowPos($Uchwyt, [IntPtr]::Zero, 0, 0, 0, 0, 0x27)
+    }
+    catch {
+        $Script:BladKonsoli = "Ciemny pasek tytulu: $($_.Exception.Message)"
+    }
+}
+
+<#
+.SYNOPSIS
+    Przelacza paski przewijania kontrolki na ciemne albo jasne.
+
+.DESCRIPTION
+    Paski przewijania rysuje motyw systemu, nie WinForms - lista grup w ciemnym oknie
+    zostalaby z jasnym paskiem po prawej. SetWindowTheme nadaje kontrolce klase wygladu:
+    "DarkMode_Explorer" istnieje w Windows 10 od kompilacji 1809 i w Windows 11, a na
+    starszych po prostu nie zostaje rozpoznana - i wtedy pasek zostaje jasny.
+
+    Powrot to "Explorer", a nie pusta nazwa: pusta zdejmuje klase razem z wygladem
+    systemowym i kontrolka przestaje wygladac jak reszta okna.
+#>
+function Set-JezykCiemnyPasekPrzewijania {
+    param([IntPtr]$Uchwyt, [switch]$Ciemny)
+
+    if ($Uchwyt -eq [IntPtr]::Zero)      { return }
+    if (-not ('Jezyk.Native' -as [type])) { return }
+
+    try {
+        $klasa = if ($Ciemny) { 'DarkMode_Explorer' } else { 'Explorer' }
+        # [NullString]::Value, a nie $null: pusty napis znaczylby "pusta lista
+        # identyfikatorow", a chodzi o "uzyj domyslnych".
+        [void][Jezyk.Native]::SetWindowTheme($Uchwyt, $klasa, [NullString]::Value)
+    }
+    catch {
+        $Script:BladKonsoli = "Ciemne paski przewijania: $($_.Exception.Message)"
     }
 }
 
@@ -310,6 +397,19 @@ $Script:Config = @{
 
     TrybNazwa     = 'dane AD użytkownika'
     TrybKomputer  = 'nazwę komputera'
+
+    # --- PALETA ----------------------------------------------------------------------
+    # WSZYSTKIE KLUCZE Kolor* PONIZEJ SA ZMIENNE, nie stale: przelaczenie motywu
+    # przepisuje je z $Script:MotywJasny albo $Script:MotywCiemny (zaraz pod tym blokiem).
+    # Dzieki temu kazde miejsce czytajace $Script:Config.Kolor* dostaje wlasciwy odcien
+    # samo z siebie i dolozenie pola nie wymaga drugiej listy do poprawienia.
+    #
+    # WARTOSCI TUTAJ TO MOTYW JASNY. SystemColors zostaja tam, gdzie byly od poczatku:
+    # jasny motyw ma isc za ustawieniami Windows, a nie za liczbami wpisanymi w kodzie.
+    KolorOkna     = [System.Drawing.SystemColors]::Control
+    KolorTla      = [System.Drawing.SystemColors]::Window
+    KolorTekstu   = [System.Drawing.SystemColors]::WindowText
+
     KolorProblem  = [System.Drawing.Color]::Red
     KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
     KolorNieznany = [System.Drawing.Color]::DimGray
@@ -337,7 +437,51 @@ $Script:Config = @{
     # to napis w oknie, nie adres polaczenia, wiec Confirm-JezykUstawienia nie ma go czego
     # sprawdzac. Zaslepka do wpisania przed wdrozeniem, tak samo jak Autor wyzej.
     Wersja        = 'X'
+
+    # OD KTOREGO MOTYWU ZACZYNA OKNO. Podbijane recznie, tak samo jak Wersja i Autor:
+    # Jezyk niczego nie wykrywa sam na maszynie operatora, wiec ani nie zaglada do
+    # rejestru Windows po ustawienie motywu systemu, ani nie zapisuje wyboru operatora
+    # nigdzie poza pamiecia procesu. Klikniecie ksiezyca dziala do zamkniecia okna.
+    MotywStartowy = 'Jasny'
 }
+
+# --- MOTYWY ---------------------------------------------------------------------------
+# DWA KOMPLETY TYCH SAMYCH KLUCZY. Set-JezykMotyw przepisuje jeden z nich do
+# $Script:Config, a reszta programu czyta juz tylko $Script:Config.
+#
+# JASNEGO NIE PRZEPISUJEMY RECZNIE - jest zdjeciem tego, z czym $Script:Config sie rodzi.
+# Druga kopia tych samych jedenastu wartosci rozjechalaby sie przy pierwszej zmianie
+# odcienia, a rozjazd widac dopiero po powrocie z ciemnego motywu.
+$Script:MotywJasny = @{}
+foreach ($klucz in @($Script:Config.Keys | Where-Object { $_ -like 'Kolor*' })) {
+    $Script:MotywJasny[$klucz] = $Script:Config[$klucz]
+}
+
+# Odcienie z palety Fluent, ktora Windows 11 sam naklada na okna w motywie ciemnym:
+# tlo okna #202020, tlo kontrolek #2D2D2D, tekst bialy.
+#
+# KOLORY ZNACZACE MAJA WLASNE ODCIENIE, a nie te same, co w jasnym. Zielen 0,128,0 jest
+# dobrana pod biale tlo i na #202020 przestaje byc czytelna - a to ona niesie werdykt
+# "konto sprawne". Tak samo DimGray (105,105,105) na ciemnym tle prawie znika.
+$Script:MotywCiemny = @{
+    KolorOkna       = [System.Drawing.Color]::FromArgb(32, 32, 32)
+    KolorTla        = [System.Drawing.Color]::FromArgb(45, 45, 45)
+    KolorTekstu     = [System.Drawing.Color]::FromArgb(255, 255, 255)
+
+    KolorProblem    = [System.Drawing.Color]::FromArgb(255, 120, 120)
+    KolorOk         = [System.Drawing.Color]::FromArgb(108, 203, 95)
+    KolorNieznany   = [System.Drawing.Color]::FromArgb(160, 160, 160)
+
+    KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
+    KolorObramowki  = [System.Drawing.Color]::FromArgb(72, 72, 72)
+
+    KolorProblemTlo = [System.Drawing.Color]::FromArgb(62, 32, 32)
+    KolorInfo       = [System.Drawing.Color]::FromArgb(100, 170, 255)
+    KolorInfoTlo    = [System.Drawing.Color]::FromArgb(28, 44, 66)
+}
+
+# Motyw pokazywany w tej chwili. Zmienia go wylacznie Set-JezykMotyw.
+$Script:Motyw = $Script:Config.MotywStartowy
 
 # Rejestr kontrolek GUI: wypelniany w SEKCJI 4, odczytywany w SEKCJI 3.
 # To warunek dzialania, nie porzadek. Procedury obslugi zdarzen uruchamiaja sie dlugo po
@@ -345,6 +489,20 @@ $Script:Config = @{
 # domknieciami - szukaja zmiennych dopiero przy wywolaniu. Kontrolki musza wiec trafic
 # do zmiennej o zasiegu skryptu i tylko stamtad sa odczytywane.
 $Script:Kontrolki = @{}
+
+# Role WYGLADU kontrolek: klucz to sama kontrolka, wartosc - nazwa roli ("Okno", "Pole",
+# "Przycisk"...). Zaklada je Set-JezykWyglad -Rejestruj przy budowie okna, czyta
+# Set-JezykMotyw przy przelaczaniu palety. Tablica, a nie lista na role: rejestracja tej
+# samej kontrolki drugi raz ma ZASTAPIC role, a nie dopisac ja obok. Cztery przyciski "!"
+# rodza sie czerwone i zaraz potem staja sie niebieskie - w liscie zostalyby w obu.
+$Script:KontrolkiMotywu = @{}
+
+# Role kolorow pol: klucz to sama kontrolka, wartosc - CO jej kolor znaczy ("Ok",
+# "Problem", "Nieznany", "Tekstu"). Zaklada je Set-JezykKolorPola, czyta Set-JezykMotyw
+# przy przelaczaniu palety. Bez tego rejestru przelaczenie motywu musialoby albo zostawic
+# na polu odcien z poprzedniej palety, albo pomalowac wszystko neutralnie - czyli zdjac
+# czerwien z werdyktu i sklamac o stanie konta.
+$Script:RoleKolorow = @{}
 
 # Tresci pod przyciskami "!" - klucz pola, wartosc do pokazania. Trzymane OSOBNO od
 # kontrolek, bo przycisk niesie tylko widocznosc; caly tekst siedzi tutaj i przezywa

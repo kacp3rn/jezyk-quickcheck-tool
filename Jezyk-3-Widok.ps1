@@ -82,12 +82,40 @@ function Get-JezykTelefony {
     return ((@($Glowny, $Komorkowy) | Where-Object { $_ }) -join ', ')
 }
 
+<#
+.SYNOPSIS
+    Nadaje polu kolor wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
+
+.DESCRIPTION
+    JEDYNE MIEJSCE, KTORE USTAWIA ForeColor NA POLU. Paleta zmienia sie w trakcie dzialania
+    okna (przycisk motywu w prawym dolnym rogu), wiec odcien zapisany na kontrolce przestaje
+    po przelaczeniu cokolwiek znaczyc: zielen dobrana pod biale tlo na ciemnym tle jest
+    nieczytelna, a nieczytelny werdykt to werdykt, ktorego nie ma. Przemalowac da sie tylko
+    to, o czym wiadomo, CO mialo znaczyc - stad rola zamiast koloru.
+
+    Rola trafia do $Script:RoleKolorow, skad czyta ja Set-JezykMotyw. Kluczem jest SAMA
+    KONTROLKA, a nie jej nazwa z rejestru: pola sondy przychodza z Get-JezykPolaSondy juz
+    jako obiekty i nazwy przy sobie nie maja.
+
+    "Tekstu" to stan neutralny - nie "brak koloru", tylko kolor tekstu z biezacej palety.
+    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: kolor zostaje na kontrolce
+    po zdjeciu tresci, wiec zerowanie NIE JEST kosmetyka.
+#>
+function Set-JezykKolorPola {
+    param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem', 'Nieznany')][string]$Rola)
+
+    if (-not $Pole) { return }
+
+    $Script:RoleKolorow[$Pole] = $Rola
+    $Pole.ForeColor = $Script:Config['Kolor' + $Rola]
+}
+
 function Clear-JezykKonto {
     $k = $Script:Kontrolki
 
     $k.WerdyktBox.Checked   = $false
     $k.Werdykt.Text         = 'Konto zablokowane'
-    $k.Werdykt.ForeColor    = $Script:Config.KolorNieznany
+    Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
     $k.ChkAktywne.Checked     = $false
     $k.ChkZablokowane.Checked = $false
@@ -153,8 +181,8 @@ function Clear-JezykKonto {
     # DWOCH pol. "Haslo wygasa" bywa czerwone, a "Ostatnio uzywany komputer" czerwony albo
     # zielony; bez zerowania pierwsza taka wartosc zabarwialaby pole na stale i KAZDE
     # nastepne konto wygladaloby tak samo, niezaleznie od tego, co o nim wiadomo.
-    $k.TxtHasloWygasa.ForeColor = [System.Drawing.SystemColors]::WindowText
-    $k.TxtKomputerUzytkownika.ForeColor = [System.Drawing.SystemColors]::WindowText
+    Set-JezykKolorPola $k.TxtHasloWygasa 'Tekstu'
+    Set-JezykKolorPola $k.TxtKomputerUzytkownika 'Tekstu'
 }
 
 <#
@@ -196,8 +224,8 @@ function Set-JezykResult {
 
             $k.WerdyktBox.Checked = $problem
             $k.Werdykt.Text       = $napis
-            if ($problem) { $k.Werdykt.ForeColor = $Script:Config.KolorProblem }
-            else          { $k.Werdykt.ForeColor = $Script:Config.KolorOk }
+            if ($problem) { Set-JezykKolorPola $k.Werdykt 'Problem' }
+            else          { Set-JezykKolorPola $k.Werdykt 'Ok' }
 
             $k.ChkAktywne.Checked     = (-not $wylaczone)
             $k.ChkZablokowane.Checked = $zablokowane
@@ -237,7 +265,7 @@ function Set-JezykResult {
             # Barwimy wylacznie wtedy, gdy termin FAKTYCZNIE minal. Przy wymuszonej zmianie
             # pole zawiera tekst, a nie date, wiec czerwony termin nie mialby czego dotyczyc.
             if ($Result.HasloWygasa -and $Result.HasloWygasa -lt (Get-Date)) {
-                $k.TxtHasloWygasa.ForeColor = $Script:Config.KolorProblem
+                Set-JezykKolorPola $k.TxtHasloWygasa 'Problem'
             }
 
             $k.TxtKontoWygasa.Text    = Format-JezykData $Result.KontoWygasa 'nigdy'
@@ -272,7 +300,7 @@ function Set-JezykResult {
             # ani problemu, ani jego braku.
             $k.WerdyktBox.Checked = $false
             $k.Werdykt.Text       = 'Pozycja typu Kontakt - to nie jest konto'
-            $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
+            Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
             $k.TxtImieNazwisko.Text = Get-JezykOsoba ([string]$Result.DisplayName) `
                                                      ([string]$Result.Imie) ([string]$Result.Nazwisko)
@@ -353,7 +381,7 @@ function Clear-JezykKomputer {
     # i kazda nastepna maszyna wygladalaby na wylaczona. Dotyczy to takze pola adresu IP,
     # ktore po tej stronie okna niesie kolor sondy.
     foreach ($pole in @($k.TxtKomputerWlaczone, $k.TxtKomputerIpMaszyny)) {
-        if ($pole) { $pole.ForeColor = [System.Drawing.SystemColors]::WindowText }
+        Set-JezykKolorPola $pole 'Tekstu'
     }
 
     # Maszyna zapomniana RAZEM z polami: to ona jest zrodlem prawdy dla obu przyciskow,
@@ -437,10 +465,10 @@ function Set-JezykComputerResult {
                                           elseif ($Result.Wlaczone)      { 'Włączone' }
                                           else                           { 'Wyłączone - ta maszyna nie zaloguje się do domeny' }
 
-            $k.TxtKomputerWlaczone.ForeColor =
-                if ($null -eq $Result.Wlaczone) { [System.Drawing.SystemColors]::WindowText }
-                elseif ($Result.Wlaczone)       { $Script:Config.KolorOk }
-                else                            { $Script:Config.KolorProblem }
+            $rolaWlaczone = if ($null -eq $Result.Wlaczone) { 'Tekstu' }
+                            elseif ($Result.Wlaczone)      { 'Ok' }
+                            else                           { 'Problem' }
+            Set-JezykKolorPola $k.TxtKomputerWlaczone $rolaWlaczone
         }
 
         # "!" zapala sie WYLACZNIE wtedy, gdy pole nie nazywa osoby - inaczej bylby stalym
@@ -851,9 +879,10 @@ function Set-JezykDostepnoscKomputera {
     $pola = Get-JezykPolaSondy -Widok $Widok
     if (-not $pola.Kolor) { return }
 
-    $pola.Kolor.ForeColor = if ($null -eq $Odpowiada) { [System.Drawing.SystemColors]::WindowText }
-                            elseif ($Odpowiada)       { $Script:Config.KolorOk }
-                            else                      { $Script:Config.KolorProblem }
+    $rolaSondy = if ($null -eq $Odpowiada) { 'Tekstu' }
+                 elseif ($Odpowiada)       { 'Ok' }
+                 else                      { 'Problem' }
+    Set-JezykKolorPola $pola.Kolor $rolaSondy
 
     if (-not $pola.Ip) { return }
 
@@ -997,7 +1026,7 @@ function Invoke-JezykPing {
     # NAPIS STATYCZNY, nie animowany. Ta praca trwa do poltorej sekundy - nie ma czym migac,
     # a zapalenie markera kropek gasiloby odpowiedzi zadania SCCM, ktore o tym nie wie.
     if ($pola.Ip)    { $pola.Ip.Text = 'sprawdzanie...' }
-    if ($pola.Kolor) { $pola.Kolor.ForeColor = [System.Drawing.SystemColors]::WindowText }
+    Set-JezykKolorPola $pola.Kolor 'Tekstu'
 
     # W TLE, NIE TUTAJ. Rozwiazanie nazwy i sonda ICMP to do poltorej sekundy, a policzone
     # na watku interfejsu byloby tyle samo zamrozonego okna.
@@ -1271,7 +1300,7 @@ function Update-JezykNumerWTle {
                 # doklejamy - razem z werdyktem.
                 $k.TxtStatus.Text     = $zaWielu
                 $k.Werdykt.Text       = 'Numer należy do wielu osób'
-                $k.Werdykt.ForeColor  = $Script:Config.KolorNieznany
+                Set-JezykKolorPola $k.Werdykt 'Nieznany'
             }
             else {
                 # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
@@ -1466,6 +1495,101 @@ function Set-JezykPrzyciskGrupy {
     # wiec licznik bez odsiania pustych zapalalby przycisk przy koncie bez grup - czyli
     # dokladnie tam, gdzie ma byc wyszarzony, i bez zadnego komunikatu o pomylce.
     $przycisk.Enabled = (@($Grupy | Where-Object { $_ }).Count -gt 0)
+}
+
+<#
+.SYNOPSIS
+    Naklada motyw na cale okno - palete, kontrolki i kolory niosace znaczenie.
+
+.DESCRIPTION
+    JEDNA FUNKCJA USTAWIA WSZYSTKO NARAZ, tak samo jak Set-JezykStanJeza ustawia kontrolke,
+    licznik i zegar. Rozpisana po miejscach wywolania rozjedzie sie przy pierwszej zmianie,
+    a pominiety krok nie zglasza sie niczym: kontrolka po prostu zostaje w starym kolorze.
+
+    KOLEJNOSC NIE JEST DOWOLNA:
+      1. paleta - zanim cokolwiek ja przeczyta,
+      2. bufor pedzla ikonki na $null - inaczej ikonka narysuje sie starym kolorem,
+      3. role wygladu - maluja tla i domyslny kolor tekstu,
+      4. role kolorow - i dopiero one maja ostatnie slowo. Odwrotna kolejnosc zdjelaby
+         czerwien z werdyktu i okno przez chwile twierdziloby, ze z kontem wszystko
+         w porzadku. Zdanie nieprawdziwe przez chwile kosztuje tyle samo, co nieprawdziwe
+         na stale - operator czyta werdykt raz.
+
+    Jeza prosimy o przerysowanie osobno: jego tlo dziedziczy sie po oknie, ale poza zostaje
+    ta sama, wiec nic innego by o to nie poprosilo.
+#>
+function Set-JezykMotyw {
+    param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw)
+
+    $Script:Motyw = $Motyw
+
+    $paleta = if ($Motyw -eq 'Ciemny') { $Script:MotywCiemny } else { $Script:MotywJasny }
+    foreach ($klucz in @($paleta.Keys)) { $Script:Config[$klucz] = $paleta[$klucz] }
+
+    $Script:PedzelMotywu = $null
+
+    # Kopia kluczy, bo obie funkcje ponizej pisza do tych samych tablic.
+    foreach ($kontrolka in @($Script:KontrolkiMotywu.Keys)) {
+        Set-JezykWyglad $kontrolka $Script:KontrolkiMotywu[$kontrolka]
+    }
+    foreach ($pole in @($Script:RoleKolorow.Keys)) {
+        Set-JezykKolorPola $pole $Script:RoleKolorow[$pole]
+    }
+
+    if ($Script:Kontrolki.JezSzukania) { $Script:Kontrolki.JezSzukania.Invalidate() }
+
+    Set-JezykMotywSystemowy
+}
+
+<#
+.SYNOPSIS
+    Uchwyt okna kontrolki albo zero, gdy go jeszcze nie ma.
+
+.DESCRIPTION
+    PYTAMY PRZEZ PSObject.Properties, A NIE PO TYPIE. Zestaw weryfikacyjny podstawia
+    [pscustomobject], wiec warunek na [System.Windows.Forms.Control] nie bylby w nim nigdy
+    prawdziwy i cala sciezka systemowa nie wykonalaby sie ani razu.
+
+    IsHandleCreated sprawdzamy PRZED Handle, bo samo siegniecie po Handle TWORZY uchwyt.
+    Motyw nakladamy na koniec budowy okna, zanim cokolwiek zostalo pokazane - wymuszenie
+    uchwytow w tamtym miejscu zmienialoby kolejnosc powstawania kontrolek. Zamiast tego
+    sciezka systemowa wykonuje sie powtornie z Add_Shown, gdy uchwyty juz sa.
+#>
+function Get-JezykUchwyt {
+    param($Kontrolka)
+
+    if (-not $Kontrolka) { return [IntPtr]::Zero }
+
+    $wlasciwosci = $Kontrolka.PSObject.Properties
+    if (-not $wlasciwosci['IsHandleCreated'] -or -not $Kontrolka.IsHandleCreated) {
+        return [IntPtr]::Zero
+    }
+    if (-not $wlasciwosci['Handle']) { return [IntPtr]::Zero }
+
+    return $Kontrolka.Handle
+}
+
+# Ciemny pasek tytulu i ciemne paski przewijania - dwie rzeczy, ktorych WinForms nie umie,
+# bo rysuje je system, a nie kontrolka. Osobna funkcja, zeby Set-JezykMotyw dalo sie
+# przeczytac: tamta mowi, CO sie zmienia, ta - czego nie da sie zmienic zwyklym kolorem.
+function Set-JezykMotywSystemowy {
+    $ciemny = ($Script:Motyw -eq 'Ciemny')
+    $k      = $Script:Kontrolki
+
+    Set-JezykCiemnyPasekTytulu (Get-JezykUchwyt $k.Okno) -Ciemny:$ciemny
+
+    # Tylko kontrolki, ktore naprawde maja pasek przewijania. Pola "Status:" sa
+    # wielolinijkowe, ale bez paska - dopisanie ich tutaj niczego by nie zmienilo.
+    foreach ($kontrolka in @($k.ListaKont, $k.Domena, $k.Tryb)) {
+        Set-JezykCiemnyPasekPrzewijania (Get-JezykUchwyt $kontrolka) -Ciemny:$ciemny
+    }
+}
+
+# Klikniecie ikonki. Przelacza na drugi motyw - innych stanow nie ma, wiec nie ma tu czego
+# wybierac ani o co pytac.
+function Invoke-JezykPrzelaczenieMotywu {
+    if ($Script:Motyw -eq 'Ciemny') { Set-JezykMotyw 'Jasny' }
+    else                            { Set-JezykMotyw 'Ciemny' }
 }
 
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
