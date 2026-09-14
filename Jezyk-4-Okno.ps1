@@ -163,52 +163,65 @@ $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 #
 # BOK NIEPARZYSTY (15), zeby obie figury mialy srodkowy wiersz i srodkowa kolumne. Przy
 # parzystym osi symetrii wypadaja miedzy pikselami i kazda figura jest o piksel krzywa.
-$Script:BokIkonyMotywu    = 18   # tyle samo, co bok przycisku "!"
+$Script:BokIkonyMotywu    = 18   # MINIMALNY bok ikonki - rosnie do wysokosci linii pisma
 $Script:OdstepIkonyMotywu = 8    # przerwa miedzy ikonka a napisem z wersja
 
 # KSIEZYC pokazuje sie w motywie JASNYM - niesie to, co klikniecie WLACZY.
 $Script:MapaKsiezyca = @(
-    '.......#.......'
-    '....####.......'
-    '...###.........'
-    '..###..........'
-    '.####..........'
-    '.###...........'
-    '.###...........'
-    '####...........'
-    '.###...........'
-    '.###...........'
-    '.####..........'
-    '..###..........'
-    '...###.........'
-    '....####.......'
-    '.......#.......'
+    '.......k.......'
+    '....kkkk.......'
+    '...kkk.........'
+    '..kkk..........'
+    '.kkkk..........'
+    '.kkk...........'
+    '.kkk...........'
+    'kkkk...........'
+    '.kkk...........'
+    '.kkk...........'
+    '.kkkk..........'
+    '..kkk..........'
+    '...kkk.........'
+    '....kkkk.......'
+    '.......k.......'
 )
 
 # SLONCE pokazuje sie w motywie CIEMNYM - tak samo, niesie powrot do jasnego.
 $Script:MapaSlonca = @(
-    '.......#.......'
-    '.......#.......'
-    '..#.........#..'
-    '...#...#...#...'
-    '.....#####.....'
-    '....#######....'
-    '....#######....'
-    '##.#########.##'
-    '....#######....'
-    '....#######....'
-    '.....#####.....'
-    '...#...#...#...'
-    '..#.........#..'
-    '.......#.......'
-    '.......#.......'
+    '.......p.......'
+    '.......p.......'
+    '..p.........p..'
+    '...p...s...p...'
+    '.....sssss.....'
+    '....sssssss....'
+    '....sssssss....'
+    'pp.sssssssss.pp'
+    '....sssssss....'
+    '....sssssss....'
+    '.....sssss.....'
+    '...p...s...p...'
+    '..p.........p..'
+    '.......p.......'
+    '.......p.......'
 )
 
-# Bufor pedzla ikonki. ZEROWANY PRZY KAZDEJ ZMIANIE MOTYWU (patrz Set-JezykMotyw) - inaczej
-# ikonka rysowalaby sie kolorem poprzedniej palety, czyli po przejsciu na ciemny motyw
-# malowalaby czarne slonce na czarnym tle. To ta sama pulapka, ktora omija bufor jeza:
-# tamten trzyma stale kolory zwierzecia i uniewazniac go nie ma po co.
-$Script:PedzelMotywu = $null
+# KOLORY IKONEK NIE ZALEZA OD MOTYWU, i to nie jest niedopatrzenie: kazda ikonka pokazuje
+# sie WYLACZNIE w swoim oknie - ksiezyc w jasnym, slonce w ciemnym - wiec kazda ma dobrany
+# odcien pod SWOJE tlo i nigdy nie trafi na to drugie. Ksiezyc jest indygo, bo zolty na
+# jasnoszarym tle wyplukuje sie do niewidocznosci; slonce zlote, bo na #202020 swieci.
+#
+# Klucze sa POJEDYNCZYMI LITERAMI i musza sie roznic takze bez wielkosci liter - tablica
+# mieszajaca ich nie rozroznia i @{} z 'k' oraz 'K' rzuca "Duplicate keys", wywracajac cala
+# czwarta czesc przy starcie. Zglasza to parser, wiec awaria wyglada na blad skladni
+# w miejscu niezwiazanym z przyczyna.
+$Script:PaletaIkonyMotywu = @{
+    'k' = [System.Drawing.Color]::FromArgb(95, 110, 200)   # ksiezyc - indygo
+    's' = [System.Drawing.Color]::FromArgb(255, 195, 55)   # slonce - tarcza
+    'p' = [System.Drawing.Color]::FromArgb(255, 150, 40)   # slonce - promienie
+}
+
+# Bufor pedzli, zakladany przy pierwszym rysowaniu - tak samo jak $Script:PedzleJeza
+# i z tego samego powodu: kolory sa stale, wiec nie ma go po co uniewazniac.
+$Script:PedzleIkonyMotywu = $null
 
 # Pedzel GDI. Wydzielony, bo to JEDYNE miejsce rysowania ikonki, ktore wychodzi poza
 # proces - zestaw weryfikacyjny podstawia tutaj wlasna atrape i cala petla rysujaca
@@ -251,8 +264,11 @@ function Set-JezykRysunekMotywu {
     $komorka    = [int][Math]::Max(1, [Math]::Floor($Bok / $sprite.Count))
     $odsuniecie = [int][Math]::Floor(($Bok - $komorka * $sprite.Count) / 2)
 
-    if (-not $Script:PedzelMotywu) {
-        $Script:PedzelMotywu = New-JezykPedzel $Script:Config.KolorTekstu
+    if (-not $Script:PedzleIkonyMotywu) {
+        $Script:PedzleIkonyMotywu = @{}
+        foreach ($znak in $Script:PaletaIkonyMotywu.Keys) {
+            $Script:PedzleIkonyMotywu[$znak] = New-JezykPedzel $Script:PaletaIkonyMotywu[$znak]
+        }
     }
 
     # Piksel-art ma byc ostry - wygladzanie rozmylo by krawedzie komorek.
@@ -261,8 +277,9 @@ function Set-JezykRysunekMotywu {
     for ($w = 0; $w -lt $sprite.Count; $w++) {
         $linia = $sprite[$w]
         for ($k = 0; $k -lt $linia.Length; $k++) {
-            if ([string]$linia[$k] -ne '#') { continue }
-            $Grafika.FillRectangle($Script:PedzelMotywu,
+            $pedzel = $Script:PedzleIkonyMotywu[[string]$linia[$k]]
+            if (-not $pedzel) { continue }   # '.' - w tym miejscu ma byc widac tlo przycisku
+            $Grafika.FillRectangle($pedzel,
                                    $odsuniecie + $k * $komorka,
                                    $odsuniecie + $w * $komorka,
                                    $komorka, $komorka)
@@ -540,6 +557,32 @@ $Script:BlokadaZdarzen = $false
 
 <#
 .SYNOPSIS
+    Nadaje kontrolce styl ramki z biezacej palety - jesli kontrolka ramke w ogole ma.
+
+.DESCRIPTION
+    RAMKI NIE DA SIE POMALOWAC, da sie tylko wybrac jej styl. Domyslny Fixed3D rysuje motyw
+    systemu i nie wie nic o ciemnym tle - w ciemnym oknie kazde pole dostawalo przez to
+    jasna obwodke. FixedSingle jest jednopikselowa i ciemniejsza od pola, a przy tym
+    zostawia tekstowi wciecie od krawedzi, czego calkowity brak ramki juz nie robi.
+
+    STRAZ NA ISTNIENIE WLASCIWOSCI, A NIE NA TYP KONTROLKI. Role "Lista" nosi i ListBox,
+    ktory BorderStyle ma, i trzy ComboBoxy, ktore nie maja go WCALE - to nie jest
+    wlasciwosc klasy Control. Pytanie o typ zamknelo by te funkcje przed zestawem
+    weryfikacyjnym, ktory podstawia [pscustomobject].
+
+    ComboBox z FlatStyle = Flat maluje swoja ramke sam i tedy sie do niej nie dosiegnie.
+#>
+function Set-JezykRamkeKontrolki {
+    param($Kontrolka)
+
+    if (-not $Kontrolka) { return }
+    if (-not $Kontrolka.PSObject.Properties['BorderStyle']) { return }
+
+    $Kontrolka.BorderStyle = $Script:Config.RamkaPola
+}
+
+<#
+.SYNOPSIS
     Maluje kontrolke wedlug jej ROLI w oknie, kolorami z biezacej palety.
 
 .DESCRIPTION
@@ -586,10 +629,12 @@ function Set-JezykWyglad {
             # ze stanu kolorowanego przez Set-JezykKolorPola.
             $Kontrolka.BackColor = $Script:Config.KolorTla
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+            Set-JezykRamkeKontrolki $Kontrolka
         }
         'Lista' {
             $Kontrolka.BackColor = $Script:Config.KolorKontrolki
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+            Set-JezykRamkeKontrolki $Kontrolka
         }
         'Przycisk' {
             $Kontrolka.BackColor = $Script:Config.KolorKontrolki
@@ -2407,10 +2452,25 @@ function New-JezykForm {
                                      $lblKompIp, $txtKompIp, $btnKompPinguj, $btnKompPolacz,
                                      $lblKompStatus, $txtKompStatus, $btnInfoStatusMaszyny))
 
+    # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA.
+    #
+    # WYSOKOSC PASA LICZYMY Z CZCIONKI, a nie z AutoSize etykiety - potrzebuje jej juz
+    # wspolrzedna Top, a etykieta zna swoj rozmiar dopiero po dodaniu do okna. Bierzemy
+    # wieksze z dwojga: kwadrat ikonki albo linie pisma. Dzieki temu ani ikonka nie jest
+    # przyciasna, ani napis nie zostaje obciety od dolu przy DPI 125-150%, gdzie pismo
+    # rosnie, a wpisana na sztywno liczba by nie urosla.
+    #
+    # Przy 100% DPI wychodzi z tego 18 + 2, czyli DOKLADNIE te same 20 pikseli, ktore byly
+    # tu wpisane wprost - jasny motyw wyglada wiec tak samo, jak przed ta zmiana.
+    $czcionkaPasa        = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
+    $wysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
+                                       [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
+
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
-    $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) $Script:Margines ($wysokoscOkna - 20)
+    $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) `
+                                            $Script:Margines ($wysokoscOkna - $wysokoscPasaPodpisu - 2)
     Set-JezykKolorPola $lblAutor 'Nieznany'
-    $lblAutor.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
+    $lblAutor.Font      = $czcionkaPasa
 
     # Numer wersji na DRUGIM koncu tego samego pasa - prawa polowa stala pusta, wiec napis
     # nie kosztuje ani jednego piksela wysokosci okna i widac go w obu trybach.
@@ -2429,9 +2489,12 @@ function New-JezykForm {
     #
     # BEZ RAMKI: ma wygladac jak ikonka wpisana w pas podpisu, a nie jak klawisz obok
     # dwoch szarych napisow. Wyzerowane marginesy wewnetrzne z tego samego powodu, co przy
-    # przyciskach "!" - bez nich rysunek nie miesci sie w kwadracie 18 px.
+    # przyciskach "!" - bez nich rysunek nie miesci sie w kwadracie.
+    #
+    # BOK Z WYSOKOSCI PASA, nie ze stalej: pudelko ikonki ma byc takie samo, jak pudelko
+    # obu napisow - inaczej nie da sie ich postawic na jednej linii pisma.
     $btnMotyw           = New-Object System.Windows.Forms.Button
-    $btnMotyw.Size      = [System.Drawing.Size]::new($Script:BokIkonyMotywu, $Script:BokIkonyMotywu)
+    $btnMotyw.Size      = [System.Drawing.Size]::new($wysokoscPasaPodpisu, $wysokoscPasaPodpisu)
     $btnMotyw.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $btnMotyw.FlatAppearance.BorderSize = 0
     $btnMotyw.TabStop   = $false
@@ -2451,6 +2514,17 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
 
+    # OBA NAPISY PASA DOSTAJA PUDELKO O WYSOKOSCI IKONKI, a ich tekst srodkuje sie w nim.
+    # Bez tego napis ma wysokosc SAMEGO TEKSTU (AutoSize), ikonka - swoja wlasna, a
+    # srodkowanie jednego prostokata na drugim ustawia w jednej linii PROSTOKATY, a nie
+    # linie pisma: ikonka wychodzila przez to nizej niz napis. To ten sam powod, dla
+    # ktorego Set-JezykSrodekTekstu w ogole istnieje - patrz komentarz przy niej.
+    #
+    # Musi padac PRZED dosuwaniem do prawej: zdejmuje AutoSize i nadaje rozmiar, a
+    # dosuwanie czyta juz Width.
+    Set-JezykSrodekTekstu $lblAutor  $wysokoscPasaPodpisu
+    Set-JezykSrodekTekstu $lblWersja $wysokoscPasaPodpisu
+
     # Napis z wersja dosuwamy do prawego marginesu DOPIERO TUTAJ i z tego samego powodu,
     # ktory opisuje komentarz nad ta sekcja: New-JezykEtykieta wlacza AutoSize, a etykieta
     # dziedziczy czcionke okna dopiero w momencie dodania - Width odczytany wczesniej
@@ -2462,8 +2536,11 @@ function New-JezykForm {
     # napis ma AutoSize, wiec jego szerokosc zalezy od czcionki systemu i przy DPI 125-150%
     # rosnie. Liczba wpisana tutaj trzymalaby sie wylacznie przy 100% i przy wiekszej
     # czcionce ikonka wlazlaby pod napis.
+    #
+    # GORNA KRAWEDZ WPROST Z NAPISU: oba pudelka maja juz te sama wysokosc, wiec wspolna
+    # gora znaczy wspolna linie pisma - i nie zalezy od tego, co policzyl AutoSize.
+    $btnMotyw.Top = $lblWersja.Top
     Set-JezykDoPrawej @($btnMotyw) ($lblWersja.Left - $Script:OdstepIkonyMotywu)
-    Set-JezykSrodekPionowy @($btnMotyw) ($lblWersja.Top + [int]($lblWersja.Height / 2))
 
     # Wysokosc jeza bierze sie z listy domen, a nie z liczby: pas ma rosnac razem z nia,
     # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz

@@ -1508,9 +1508,8 @@ function Set-JezykPrzyciskGrupy {
 
     KOLEJNOSC NIE JEST DOWOLNA:
       1. paleta - zanim cokolwiek ja przeczyta,
-      2. bufor pedzla ikonki na $null - inaczej ikonka narysuje sie starym kolorem,
-      3. role wygladu - maluja tla i domyslny kolor tekstu,
-      4. role kolorow - i dopiero one maja ostatnie slowo. Odwrotna kolejnosc zdjelaby
+      2. role wygladu - maluja tla, ramki i domyslny kolor tekstu,
+      3. role kolorow - i dopiero one maja ostatnie slowo. Odwrotna kolejnosc zdjelaby
          czerwien z werdyktu i okno przez chwile twierdziloby, ze z kontem wszystko
          w porzadku. Zdanie nieprawdziwe przez chwile kosztuje tyle samo, co nieprawdziwe
          na stale - operator czyta werdykt raz.
@@ -1525,8 +1524,6 @@ function Set-JezykMotyw {
 
     $paleta = if ($Motyw -eq 'Ciemny') { $Script:MotywCiemny } else { $Script:MotywJasny }
     foreach ($klucz in @($paleta.Keys)) { $Script:Config[$klucz] = $paleta[$klucz] }
-
-    $Script:PedzelMotywu = $null
 
     # Kopia kluczy, bo obie funkcje ponizej pisza do tych samych tablic.
     foreach ($kontrolka in @($Script:KontrolkiMotywu.Keys)) {

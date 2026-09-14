@@ -410,6 +410,12 @@ $Script:Config = @{
     KolorTla      = [System.Drawing.SystemColors]::Window
     KolorTekstu   = [System.Drawing.SystemColors]::WindowText
 
+    # NIE KOLOR, ale zmienia sie razem z motywem, wiec nalezy do palety. Ramki pola
+    # tekstowego nie da sie pomalowac: Fixed3D rysuje motyw systemu i w ciemnym oknie
+    # wypada jasna obwodka. FixedSingle to ramka jednopikselowa, ciemniejsza od pola,
+    # i zostawia tekstowi wciecie od krawedzi - inaczej niz calkowity brak ramki.
+    RamkaPola     = [System.Windows.Forms.BorderStyle]::Fixed3D
+
     KolorProblem  = [System.Drawing.Color]::Red
     KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
     KolorNieznany = [System.Drawing.Color]::DimGray
@@ -449,14 +455,12 @@ $Script:Config = @{
 # DWA KOMPLETY TYCH SAMYCH KLUCZY. Set-JezykMotyw przepisuje jeden z nich do
 # $Script:Config, a reszta programu czyta juz tylko $Script:Config.
 #
-# JASNEGO NIE PRZEPISUJEMY RECZNIE - jest zdjeciem tego, z czym $Script:Config sie rodzi.
-# Druga kopia tych samych jedenastu wartosci rozjechalaby sie przy pierwszej zmianie
-# odcienia, a rozjazd widac dopiero po powrocie z ciemnego motywu.
-$Script:MotywJasny = @{}
-foreach ($klucz in @($Script:Config.Keys | Where-Object { $_ -like 'Kolor*' })) {
-    $Script:MotywJasny[$klucz] = $Script:Config[$klucz]
-}
-
+# CIEMNA STOI PIERWSZA, bo to ONA wyznacza komplet kluczy motywu - jasna powstaje nizej
+# jako zdjecie tych samych kluczy ze startowego $Script:Config. Dzieki temu nie da sie
+# dolozyc wartosci ciemnej bez jasnego odpowiednika, a jedenastu wartosci nie ma
+# przepisanych dwa razy: druga kopia rozjechalaby sie przy pierwszej zmianie odcienia,
+# a rozjazd widac dopiero po powrocie z ciemnego motywu do jasnego.
+#
 # Odcienie z palety Fluent, ktora Windows 11 sam naklada na okna w motywie ciemnym:
 # tlo okna #202020, tlo kontrolek #2D2D2D, tekst bialy.
 #
@@ -478,6 +482,13 @@ $Script:MotywCiemny = @{
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(62, 32, 32)
     KolorInfo       = [System.Drawing.Color]::FromArgb(100, 170, 255)
     KolorInfoTlo    = [System.Drawing.Color]::FromArgb(28, 44, 66)
+
+    RamkaPola       = [System.Windows.Forms.BorderStyle]::FixedSingle
+}
+
+$Script:MotywJasny = @{}
+foreach ($klucz in @($Script:MotywCiemny.Keys)) {
+    $Script:MotywJasny[$klucz] = $Script:Config[$klucz]
 }
 
 # Motyw pokazywany w tej chwili. Zmienia go wylacznie Set-JezykMotyw.
