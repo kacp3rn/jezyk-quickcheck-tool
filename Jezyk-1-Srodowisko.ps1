@@ -420,6 +420,13 @@ $Script:Config = @{
     KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
     KolorNieznany = [System.Drawing.Color]::DimGray
 
+    # Napis WYLACZONEGO przycisku. WinForms nie pozwala go ustawic: przy FlatStyle = Flat
+    # maluje go kolorem ControlPaint.Dark(BackColor), czyli odcieniem o trzecia ciemniejszym
+    # od tla samego przycisku. Na jasnym tle wychodzi z tego czytelna szarosc, na ciemnym -
+    # niemal czern, i przycisk wyglada jak pusty prostokat: nie wiadomo, czy jest wylaczony,
+    # czy zepsuty. Dlatego napis wylaczonego przycisku domalowujemy sami, tym kolorem.
+    KolorNieczynny = [System.Drawing.SystemColors]::GrayText
+
     # Odcien ciemniejszy od domyslnego tla okna (SystemColors.Control to okolo 240,240,240).
     KolorKontrolki = [System.Drawing.Color]::FromArgb(224, 224, 224)
     KolorObramowki = [System.Drawing.Color]::FromArgb(180, 180, 180)
@@ -475,6 +482,7 @@ $Script:MotywCiemny = @{
     KolorProblem    = [System.Drawing.Color]::FromArgb(255, 120, 120)
     KolorOk         = [System.Drawing.Color]::FromArgb(108, 203, 95)
     KolorNieznany   = [System.Drawing.Color]::FromArgb(160, 160, 160)
+    KolorNieczynny  = [System.Drawing.Color]::FromArgb(130, 130, 130)
 
     KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
     KolorObramowki  = [System.Drawing.Color]::FromArgb(72, 72, 72)

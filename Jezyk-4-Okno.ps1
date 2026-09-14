@@ -231,6 +231,67 @@ function New-JezykPedzel {
     [System.Drawing.SolidBrush]::new($Kolor)
 }
 
+# Bufor pedzli wylaczonego przycisku. W ODROZNIENIU od pedzli ikonki TE kolory ida z palety
+# motywu, wiec bufor trzeba zerowac przy kazdym przelaczeniu - patrz Set-JezykMotyw.
+$Script:PedzleNieczynne = $null
+
+<#
+.SYNOPSIS
+    Domalowuje napis wylaczonego przycisku - jedyny kolor w oknie, ktorego nie da sie ustawic.
+
+.DESCRIPTION
+    WinForms przy FlatStyle = Flat maluje napis wylaczonego przycisku kolorem
+    ControlPaint.Dark(BackColor) i nie ma wlasciwosci, ktora by to zmienila. Przy tle
+    #2D2D2D wychodzi z tego niemal czern na ciemnym tle: przycisk wyglada jak pusty
+    prostokat, a operator nie wie, czy jest wylaczony, czy to usterka narzedzia.
+
+    Malujemy PO WinForms, nie zamiast niego: procedura Paint przycisku wykonuje sie po jego
+    wlasnym rysowaniu - to ta sama droga, ktora rysuje ikonke motywu na jej przycisku.
+    Tlo trzeba pokryc, zeby zetrzec napis narysowany pod spodem; ramke odtwarzamy dwoma
+    prostokatami (zewnetrzny w kolorze ramki, wewnetrzny w kolorze tla), zeby nie
+    powolywac drugiego rodzaju obiektu GDI obok pedzla.
+
+    DZIALA W OBU MOTYWACH, a nie tylko w ciemnym: jedna sciezka rysowania zamiast dwoch,
+    ktore rozjechalyby sie przy pierwszej zmianie. W jasnym motywie KolorNieczynny to
+    systemowy GrayText, czyli dokladnie to, czego uzytkownik Windows sie spodziewa.
+#>
+function Set-JezykRysunekWylaczonegoPrzycisku {
+    param($Przycisk, $Grafika)
+
+    if (-not $Przycisk -or $Przycisk.Enabled) { return }
+
+    if (-not $Script:PedzleNieczynne) {
+        $Script:PedzleNieczynne = @{
+            Tlo   = New-JezykPedzel $Script:Config.KolorKontrolki
+            Ramka = New-JezykPedzel $Script:Config.KolorObramowki
+        }
+    }
+
+    $szer = $Przycisk.Width
+    $wys  = $Przycisk.Height
+
+    $Grafika.FillRectangle($Script:PedzleNieczynne.Ramka, 0, 0, $szer, $wys)
+    $Grafika.FillRectangle($Script:PedzleNieczynne.Tlo,   1, 1, $szer - 2, $wys - 2)
+
+    Set-JezykNapisNaSrodku -Grafika $Grafika -Tekst ([string]$Przycisk.Text) `
+                           -Czcionka $Przycisk.Font -Szerokosc $szer -Wysokosc $wys `
+                           -Kolor $Script:Config.KolorNieczynny
+}
+
+# Napis wysrodkowany w prostokacie. Wydzielony, bo TextRenderer to - obok pedzla - drugi
+# styk z systemem w rysowaniu przycisku; zestaw weryfikacyjny podstawia tu wlasna atrape
+# i cala reszta funkcji wyzej wykonuje sie naprawde, zamiast byc sprawdzana regeksem.
+function Set-JezykNapisNaSrodku {
+    param($Grafika, [string]$Tekst, $Czcionka, [int]$Szerokosc, [int]$Wysokosc, $Kolor)
+
+    [System.Windows.Forms.TextRenderer]::DrawText(
+        $Grafika, $Tekst, $Czcionka,
+        [System.Drawing.Rectangle]::new(0, 0, $Szerokosc, $Wysokosc),
+        $Kolor,
+        ([System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor
+         [System.Windows.Forms.TextFormatFlags]::VerticalCenter))
+}
+
 # Mapa dla podanego motywu. Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu wywolania,
 # tak samo jak przy Get-JezykSpriteJeza.
 function Get-JezykSpriteMotywu {
@@ -2569,10 +2630,19 @@ function New-JezykForm {
     Set-JezykSrodekWSlupkach @($chkAktywne, $chkZablokowane, $chkFlagaHasla) `
                              $obszarFlag.Left $obszarFlag.Width
 
-    # Pion tez z wnetrza ramki, a nie ze stalej: wysokosc znacznika liczy sie z czcionki,
-    # wiec wpisana na sztywno wspolrzedna rozjezdzala sie przy skalowaniu DPI.
-    Set-JezykSrodekPionowy @($chkAktywne, $chkZablokowane, $chkFlagaHasla) `
-                           ($obszarFlag.Top + [int]($obszarFlag.Height / 2))
+    # PION LICZONY OD LINII RAMKI, A NIE OD DisplayRectangle. GroupBox rezerwuje u gory pasek
+    # na tytul nawet wtedy, gdy tytul jest pusty - a DisplayRectangle zaczyna sie DOPIERO POD
+    # tym paskiem. Srodkowanie w nim spychalo wiec cala trojke o pol paska w dol i napisy
+    # siedzialy nizej niz srodek ramki, ktora widac na ekranie.
+    #
+    # Linia ramki biegnie przez SRODEK paska tytulu, wiec widoczne wnetrze zaczyna sie
+    # w polowie jego wysokosci - stad dzielenie przez dwa, a nie pominiecie paska w calosci.
+    # Floor, nie [int]: [int] w PowerShellu zaokragla i przy nieparzystym pasku dawalby
+    # piksel roznicy miedzy jedna a druga stacja.
+    $goraRamkiFlag = [int][Math]::Floor($obszarFlag.Top / 2)
+    $srodekFlag    = $goraRamkiFlag +
+                     [int][Math]::Floor(($grpFlagi.ClientSize.Height - $goraRamkiFlag) / 2)
+    Set-JezykSrodekPionowy @($chkAktywne, $chkZablokowane, $chkFlagaHasla) $srodekFlag
 
     # Przy werdykcie rownanie idzie w druga strone: napis jest wiekszy od reszty okna, wiec
     # to KWADRAT dostaje jego wysokosc.
@@ -2589,6 +2659,29 @@ function New-JezykForm {
     $drugaLinia = [int][math]::Ceiling($form.Font.GetHeight())
     foreach ($pole in @($txtStatus, $txtKompStatus)) {
         $pole.Height = $pole.PreferredHeight + $drugaLinia
+    }
+
+    # --- ETYKIETY NIE MOGA SIEGNAC SWOJEGO POLA --------------------------------------
+    # Etykieta ma AutoSize, czyli wysokosc SAMEGO TEKSTU - a ta rosnie razem z czcionka
+    # systemu. Pole lezy stale $Script:OdstepPodEtykieta ponizej etykiety, wiec gdy linia
+    # pisma przekroczy ten odstep, prostokat etykiety nachodzi na gorna krawedz pola
+    # i ZAKRYWA JEGO RAMKE - dokladnie na szerokosc napisu, bo tyle ma sama etykieta.
+    # Widac to jako ramke urwana pod "Login:" czy "E-mail:" i wracajaca za koncem napisu.
+    #
+    # Czcionke okna bierzemy z ustawien systemu (SystemFonts.MessageBoxFont), a Windows
+    # potrafi ja powiekszyc NIEZALEZNIE od skalowania ekranu - stad usterka takze przy
+    # skalowaniu 100%.
+    #
+    # Etykiety, ktore juz przeszly przez Set-JezykSrodekTekstu (werdykt), maja AutoSize
+    # zdjete i wlasna, celowo dobrana wysokosc - tych nie ruszamy.
+    $wysokoscEtykiety = $Script:OdstepPodEtykieta - 2
+    foreach ($panel in @($pnlKonto, $pnlKomputer)) {
+        foreach ($kontrolka in $panel.Controls) {
+            if ($kontrolka -is [System.Windows.Forms.Label] -and $kontrolka.AutoSize -and
+                $kontrolka.Height -gt $wysokoscEtykiety) {
+                Set-JezykSrodekTekstu $kontrolka $wysokoscEtykiety
+            }
+        }
     }
 
     # --- PRZYCISKI "!" ---------------------------------------------------------------
@@ -2813,6 +2906,13 @@ function New-JezykForm {
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
+    }
+
+    # PIEC PRZYCISKOW, KTORE BYWAJA WYLACZONE. "Polacz" na tej liscie nie ma: ten sie chowa
+    # i pokazuje, a nie wyszarza. Jedna procedura dla wszystkich - kolor bierze sie z palety,
+    # a nie z przycisku, wiec nie ma czego rozrozniac.
+    foreach ($przycisk in @($btnSzukaj, $btnOdblokuj, $btnPinguj, $btnKompPinguj, $btnGrupyAd)) {
+        $przycisk.Add_Paint({ Set-JezykRysunekWylaczonegoPrzycisku -Przycisk $this -Grafika $_.Graphics })
     }
 
     $cmbDomena.Add_SelectedIndexChanged({
