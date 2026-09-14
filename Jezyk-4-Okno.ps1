@@ -31,6 +31,18 @@ $Script:PierwszyWiersz     = 100   # y etykiety pierwszego wiersza wewnatrz pane
 $Script:SkokWiersza        = 58    # odleglosc miedzy kolejnymi wierszami
 $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
 
+# Przerwa miedzy kwadratem znacznika a jego napisem. NAPIS JEST OSOBNA ETYKIETA, a nie
+# tekstem znacznika: WinForms rozklada wlasny napis po swojemu i odstepu od kwadratu nie
+# da sie podac zadna wlasciwoscia - wychodzil przez to za daleko i o piksel za nisko.
+# Rozdzielone daja sie postawic na jednej linii pisma i w takiej odleglosci, jaka tu stoi.
+$Script:OdstepZnacznika    = 2
+
+# O ile szerszy od systemowego przycisku listy rozwijanej ma byc kwadrat, ktorym go
+# zakrywamy. Szerokosc systemowego liczy WinForms i przy paru pikselach zapasu kryjemy
+# kawalek ciemnego pola wiecej - czego nie widac. Kwadrat WEZSZY zostawilby po bokach
+# jasne paski, czyli dokladnie to, co mial zakryc.
+$Script:ZapasStrzalkiListy = 2
+
 $Script:PasekPodpisu       = 22    # pasek na podpis autora u dolu, poza panelami
 
 # Najdluzszy napis, jaki moze pokazac etykieta werdyktu. Potrzebny do ZMIERZENIA jej
@@ -231,6 +243,14 @@ function New-JezykPedzel {
     [System.Drawing.SolidBrush]::new($Kolor)
 }
 
+# Widoczny obszar kontrolki. Wydzielony z tego samego powodu, co pedzel wyzej: Region to
+# obiekt GDI, czyli drugi styk z systemem w obcinaniu ramki listy - zestaw weryfikacyjny
+# podstawia tu wlasna atrape i cala arytmetyka obciecia wykonuje sie naprawde.
+function New-JezykObszar {
+    param([int]$X, [int]$Y, [int]$Szerokosc, [int]$Wysokosc)
+    [System.Drawing.Region]::new([System.Drawing.Rectangle]::new($X, $Y, $Szerokosc, $Wysokosc))
+}
+
 # Bufor pedzli wylaczonego przycisku. W ODROZNIENIU od pedzli ikonki TE kolory ida z palety
 # motywu, wiec bufor trzeba zerowac przy kazdym przelaczeniu - patrz Set-JezykMotyw.
 $Script:PedzleNieczynne = $null
@@ -290,6 +310,118 @@ function Set-JezykNapisNaSrodku {
         $Kolor,
         ([System.Windows.Forms.TextFormatFlags]::HorizontalCenter -bor
          [System.Windows.Forms.TextFormatFlags]::VerticalCenter))
+}
+
+# Bufor pedzli kwadratu ze strzalka. Tak samo jak przy wylaczonym przycisku kolory ida
+# z palety, wiec bufor pada przy kazdym przelaczeniu motywu - patrz Set-JezykMotyw.
+$Script:PedzleStrzalki = $null
+
+# NAJMNIEJSZA polowa podstawy trojkata. Przy 3 podstawa ma 7 px i wysokosc 4 px - tyle,
+# ile ma systemowa strzalka listy przy 100% DPI. Wyzej trojkat ROSNIE RAZEM Z KWADRATEM:
+# szerokosc przycisku listy liczy Windows i przy DPI 125-150% jest wieksza, a strzalka
+# wpisana na sztywno zostalaby przy niej znaczkiem wielkosci jednej trzeciej pola.
+$Script:MinimalnaPolowaStrzalki = 3
+
+<#
+.SYNOPSIS
+    Maluje kwadrat ze strzalka, ktory zakrywa systemowy przycisk listy rozwijanej.
+
+.DESCRIPTION
+    ComboBox przy FlatStyle = Flat maluje swoj przycisk na sztywno kolorem
+    SystemColors.Control, a strzalke - SystemColors.ControlText. Zadna wlasciwosc tego nie
+    zmienia, wiec w ciemnym oknie przy ciemnej liscie zostawal jasny kwadrat. To ta sama
+    sytuacja, co przy napisie wylaczonego przycisku: skoro systemowego rysowania nie da sie
+    poprowadzic, nie uzywa sie go - kwadrat zaslania etykieta, ktora malujemy sami.
+
+    TROJKAT ZLOZONY Z POZIOMYCH PASKOW, a nie z FillPolygon. Pasek to ten sam
+    FillRectangle, ktorym maluje sie jez i ikonka motywu, wiec rysunek da sie odtworzyc ze
+    sladu i porownac z oczekiwanym ksztaltem zamiast sprawdzac tresc funkcji regeksem.
+#>
+function Set-JezykRysunekStrzalkiListy {
+    param($Strzalka, $Grafika)
+
+    if (-not $Strzalka) { return }
+
+    if (-not $Script:PedzleStrzalki) {
+        $Script:PedzleStrzalki = @{
+            Tlo      = New-JezykPedzel $Script:Config.KolorPrzyciskuListy
+            Strzalka = New-JezykPedzel $Script:Config.KolorTekstu
+        }
+    }
+
+    $szer = $Strzalka.Width
+    $wys  = $Strzalka.Height
+
+    $Grafika.FillRectangle($Script:PedzleStrzalki.Tlo, 0, 0, $szer, $wys)
+
+    # Szostka: przy kwadracie 19 px wychodzi z tego dokladnie systemowa polowa 3, a przy
+    # kazdym szerszym trojkat zajmuje stala czesc jego szerokosci.
+    $polowa  = [Math]::Max($Script:MinimalnaPolowaStrzalki, [int][Math]::Floor($szer / 6))
+    $srodekX = [int][Math]::Floor($szer / 2)
+    # Floor, nie [int]: [int] w PowerShellu zaokragla i przy nieparzystej wysokosci
+    # kwadratu strzalka schodzilaby o piksel nizej, niz wypada srodek.
+    $gora    = [int][Math]::Floor(($wys - ($polowa + 1)) / 2)
+
+    for ($i = 0; $i -le $polowa; $i++) {
+        $Grafika.FillRectangle($Script:PedzleStrzalki.Strzalka,
+                               $srodekX - $polowa + $i, $gora + $i,
+                               2 * ($polowa - $i) + 1, 1)
+    }
+}
+
+# Grubosc pasa, ktorym zamalowujemy systemowa ramke wokol flag. Motyw rysuje ja jako linie
+# i jej rozjasnienie, wiec jeden piksel by nie wystarczyl.
+$Script:ZamalowanieRamkiFlag = 3
+
+$Script:PedzleRamkiFlag = $null
+
+<#
+.SYNOPSIS
+    Przemalowuje ramke wokol flag konta - kolorem obramowki z biezacej palety.
+
+.DESCRIPTION
+    GroupBox rysuje swoj obrys motywem systemu i nie ma wlasciwosci, ktora nadalaby mu
+    kolor: w ciemnym oknie zostawala wokol trzech flag jasna, prawie biala obwodka. Trzeci
+    przypadek tej samej reguly, po napisie wylaczonego przycisku i przycisku listy
+    rozwijanej - systemowego rysowania nie da sie poprowadzic, wiec malujemy po nim.
+
+    NAJPIERW ZETRZEC, POTEM NARYSOWAC. Sama linia w naszym kolorze zostawilaby pod soba
+    systemowa: motyw rysuje ja grubsza niz piksel, wiec pas zamalowania musi byc szerszy
+    od linii, ktora po nim idzie.
+
+    ZAMALOWUJEMY CZTERY PASY, A NIE CALY PROSTOKAT - srodek ramki zajmuja znaczniki i ich
+    napisy, a te rysuja sie WCZESNIEJ, bo sa osobnymi kontrolkami.
+
+    GORNA KRAWEDZ LEZY W POLOWIE PASKA TYTULU, tak samo jak przy srodkowaniu znacznikow:
+    GroupBox rezerwuje ten pasek nawet przy pustym tytule, a linia ramki biegnie przez
+    jego srodek.
+#>
+function Set-JezykRysunekRamkiFlag {
+    param($Ramka, $Grafika)
+
+    if (-not $Ramka) { return }
+
+    if (-not $Script:PedzleRamkiFlag) {
+        $Script:PedzleRamkiFlag = @{
+            Tlo   = New-JezykPedzel $Script:Config.KolorOkna
+            Linia = New-JezykPedzel $Script:Config.KolorObramowki
+        }
+    }
+
+    $szer = $Ramka.ClientSize.Width
+    $wys  = $Ramka.ClientSize.Height
+    $gora = [int][Math]::Floor($Ramka.DisplayRectangle.Top / 2)
+    $pas  = $Script:ZamalowanieRamkiFlag
+
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, $gora, $szer, $pas)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, ($wys - $pas), $szer, $pas)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, $gora, $pas, ($wys - $gora))
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, ($szer - $pas), $gora, $pas, ($wys - $gora))
+
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, 0, $gora, $szer, 1)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, 0, ($wys - 1), $szer, 1)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, 0, $gora, 1, ($wys - $gora))
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, ($szer - 1), $gora, 1, ($wys - $gora))
 }
 
 # Mapa dla podanego motywu. Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu wywolania,
@@ -543,6 +675,30 @@ function Set-JezykDoPrawej {
 
 <#
 .SYNOPSIS
+    Stawia kwadrat ze strzalka dokladnie na systemowym przycisku swojej listy rozwijanej.
+
+.DESCRIPTION
+    WSPOLRZEDNE BRANE OD LISTY, a nie wpisane: wysokosc listy WinForms wylicza z czcionki,
+    wiec przy DPI 125-150% rosnie, a kwadrat wpisany na sztywno przestalby zakrywac to,
+    po co powstal.
+
+    PIKSEL ZAPASU Z GORY I Z DOLU: skrajne piksele listy sa juz obciete (patrz
+    Set-JezykObciecieListy), wiec kwadrat ma stanac w jej wnetrzu, a nie na jej krawedzi.
+    W prawo idzie az do krawedzi listy, bo tam zakrywa i przycisk, i kawalek obrysu.
+#>
+function Set-JezykStrzalkaListy {
+    param($Lista, $Strzalka, [int]$Szerokosc)
+
+    if (-not $Lista -or -not $Strzalka) { return }
+
+    $Strzalka.Width  = $Szerokosc
+    $Strzalka.Height = $Lista.Height - 2
+    $Strzalka.Left   = $Lista.Left + $Lista.Width - $Szerokosc - 1
+    $Strzalka.Top    = $Lista.Top + 1
+}
+
+<#
+.SYNOPSIS
     Rozklada kontrolki po rownych slupkach i srodkuje kazda w SWOIM slupku.
 
 .DESCRIPTION
@@ -557,9 +713,18 @@ function Set-JezykDoPrawej {
 
     POMIAR MUSI BYC JUZ ZROBIONY: srodkowanie liczy sie z Width kazdej kontrolki, a ta
     jest znana dopiero po Set-JezykSrodekTekstu i po odziedziczeniu czcionki okna.
+
+.PARAMETER Napisy
+    Etykiety stojace po prawej stronie kontrolek - po jednej na kazda. Podane, srodkuja sie
+    razem ze swoja kontrolka jako JEDNA CALOSC: inaczej rzad trzech par wyszedlby krzywo,
+    bo kazdy napis ma inna dlugosc, a slupek jest wspolny.
+
+.PARAMETER Odstep
+    Przerwa miedzy kontrolka a jej napisem. Ma znaczenie wylacznie razem z -Napisy.
 #>
 function Set-JezykSrodekWSlupkach {
-    param([object[]]$Kontrolki, [int]$Lewa, [int]$Szerokosc)
+    param([object[]]$Kontrolki, [int]$Lewa, [int]$Szerokosc,
+          [object[]]$Napisy = @(), [int]$Odstep = 0)
 
     $ile = @($Kontrolki).Count
     if ($ile -eq 0 -or $Szerokosc -le 0) { return }
@@ -567,11 +732,18 @@ function Set-JezykSrodekWSlupkach {
     $slupek = $Szerokosc / $ile
 
     for ($i = 0; $i -lt $ile; $i++) {
+        # SZEROKOSC CALEJ PARY, a nie samej kontrolki - patrz opis parametru -Napisy.
+        $napis = if ($i -lt @($Napisy).Count) { $Napisy[$i] } else { $null }
+        $razem = $Kontrolki[$i].Width
+        if ($napis) { $razem += $Odstep + $napis.Width }
+
         # Srodek slupka lezy w jego polowie, stad + 0.5. Dzielenie idzie na liczbach
         # zmiennoprzecinkowych - przy calkowitym polowka slupka znikalaby i rzad
         # przesuwalby sie w lewo o kilka pikseli.
         $srodek = $Lewa + [int]($slupek * ($i + 0.5))
-        $Kontrolki[$i].Left = $srodek - [int]($Kontrolki[$i].Width / 2)
+        $Kontrolki[$i].Left = $srodek - [int]($razem / 2)
+
+        if ($napis) { $napis.Left = $Kontrolki[$i].Left + $Kontrolki[$i].Width + $Odstep }
     }
 }
 
@@ -644,6 +816,44 @@ function Set-JezykRamkeKontrolki {
 
 <#
 .SYNOPSIS
+    Zdejmuje z listy rozwijanej tyle pikseli krawedzi, ile kaze paleta.
+
+.DESCRIPTION
+    RAMKI LISTY NIE DA SIE ANI POMALOWAC, ANI WYBRAC JEJ STYLU. ComboBox nie ma
+    wlasciwosci BorderStyle wcale, a przy FlatStyle = Flat WinForms rysuje obrys na sztywno
+    kolorem SystemColors.Window - czyli bialym. W jasnym oknie bialy obrys przy bialym polu
+    jest niewidoczny, w ciemnym zostaje obwodka doklejona do ciemnej kontrolki.
+
+    Zostaje jedyne narzedzie, ktore dziala na KAZDA ramke: obciecie. Kontrolka o zwezonym
+    obszarze skrajnych pikseli nie rysuje wcale, wiec zamiast obrysu widac pod nimi tlo
+    okna. Ile ich zdjac, mowi paleta - w jasnym motywie zero, bo tam nie ma czego poprawiac.
+
+    STRAZ NA DropDownStyle, A NIE NA TYP KONTROLKI. Role "Lista" nosi takze ListBox okna
+    grup, ktory ramke ma zwyczajna i obcinac go nie ma po co. Pytamy o wlasciwosc, nie
+    o typ - z tego samego powodu, co przy Set-JezykRamkeKontrolki wyzej.
+#>
+function Set-JezykObciecieListy {
+    param($Kontrolka)
+
+    if (-not $Kontrolka) { return }
+    if (-not $Kontrolka.PSObject.Properties['DropDownStyle']) { return }
+
+    $ile = [int]$Script:Config.ObciecieListy
+
+    # POWROT DO JASNEGO MOTYWU MUSI OBCIECIE ZDJAC, a nie tylko go nie nakladac - inaczej
+    # lista zostalaby zwezona na zawsze po pierwszym pobycie w ciemnym.
+    if ($ile -le 0) {
+        $Kontrolka.Region = $null
+        return
+    }
+
+    $Kontrolka.Region = New-JezykObszar $ile $ile `
+                                        ($Kontrolka.Width  - 2 * $ile) `
+                                        ($Kontrolka.Height - 2 * $ile)
+}
+
+<#
+.SYNOPSIS
     Maluje kontrolke wedlug jej ROLI w oknie, kolorami z biezacej palety.
 
 .DESCRIPTION
@@ -672,7 +882,7 @@ function Set-JezykRamkeKontrolki {
 function Set-JezykWyglad {
     param($Kontrolka,
           [ValidateSet('Okno', 'Pole', 'Lista', 'Przycisk',
-                       'InfoProblem', 'InfoNiebieski', 'Ikona')][string]$Rola,
+                       'InfoProblem', 'InfoNiebieski', 'Ikona', 'StrzalkaListy')][string]$Rola,
           [switch]$Rejestruj)
 
     if (-not $Kontrolka) { return }
@@ -696,6 +906,7 @@ function Set-JezykWyglad {
             $Kontrolka.BackColor = $Script:Config.KolorKontrolki
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             Set-JezykRamkeKontrolki $Kontrolka
+            Set-JezykObciecieListy  $Kontrolka
         }
         'Przycisk' {
             $Kontrolka.BackColor = $Script:Config.KolorKontrolki
@@ -719,6 +930,16 @@ function Set-JezykWyglad {
             # wywoluje. BEZ FlatAppearance: te sama role dostaje takze PictureBox, ktory
             # tego pola nie ma.
             $Kontrolka.BackColor = $Script:Config.KolorOkna
+            $Kontrolka.ForeColor = $Script:Config.KolorTekstu
+            $Kontrolka.Invalidate()
+        }
+        'StrzalkaListy' {
+            # Kwadrat ze strzalka domalowany na wierzchu listy rozwijanej. Tlo ma WLASNY
+            # klucz palety, a nie KolorKontrolki: w jasnym motywie ma zostac dokladnie
+            # systemowe, bo tam przycisk listy wyglada dobrze i nie po to go zakrywamy.
+            # Invalidate z tego samego powodu, co przy ikonce motywu: rysunek bierze kolor
+            # przy kazdym przerysowaniu, a zmiana BackColor sama go nie zamawia.
+            $Kontrolka.BackColor = $Script:Config.KolorPrzyciskuListy
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             $Kontrolka.Invalidate()
         }
@@ -763,6 +984,23 @@ function New-JezykCheckbox {
     if ($Szerokosc -gt 0) { $chk.Size = [System.Drawing.Size]::new($Szerokosc, 20) }
     else                  { $chk.AutoSize = $true }
     $chk
+}
+
+<#
+.SYNOPSIS
+    Kwadrat ze strzalka, ktory zakrywa systemowy przycisk listy rozwijanej.
+
+.DESCRIPTION
+    ETYKIETA, A NIE PRZYCISK: ma wylacznie przyjac klikniecie i dac sie pomalowac, a
+    przycisk dokladalby do tego wlasna ramke i wlasny stan wcisniecia. Rysunek powstaje
+    w Set-JezykRysunekStrzalkiListy, wspolrzedne - w Set-JezykStrzalkaListy.
+#>
+function New-JezykStrzalkaListy {
+    $lbl          = New-Object System.Windows.Forms.Label
+    $lbl.AutoSize = $false
+    $lbl.Text     = ''
+    Set-JezykWyglad $lbl 'StrzalkaListy' -Rejestruj
+    $lbl
 }
 
 <#
@@ -2223,10 +2461,23 @@ function New-JezykForm {
     # jak przy werdykcie nizej. Znacznik zwiezy sie tam do szerokosci swojego napisu, a nie
     # da sie go wysrodkowac w slupku, zanim ta szerokosc bedzie znana - a znana jest dopiero
     # po odziedziczeniu czcionki okna, czyli po dodaniu kontrolki do okna.
-    $chkAktywne     = New-JezykCheckbox 'Konto aktywne'      0 0
-    $chkZablokowane = New-JezykCheckbox 'Konto zablokowane'  0 0
-    $chkFlagaHasla  = New-JezykCheckbox 'Flaga zmiany hasła' 0 0
-    $grpFlagi.Controls.AddRange(@($chkAktywne, $chkZablokowane, $chkFlagaHasla))
+    #
+    # KWADRAT I NAPIS TO DWIE KONTROLKI, a nie znacznik z wlasnym tekstem. WinForms rozklada
+    # wlasny napis znacznika po swojemu: odstepu od kwadratu nie da sie podac zadna
+    # wlasciwoscia, a linia pisma wypada nizej niz srodek kwadratu. Rozdzielone daja sie
+    # postawic na jednej linii i w takiej odleglosci, jaka mowi $Script:OdstepZnacznika.
+    # Ta sama para, co przy werdykcie nizej.
+    $chkAktywne     = New-JezykCheckbox '' 0 0 18
+    $chkZablokowane = New-JezykCheckbox '' 0 0 18
+    $chkFlagaHasla  = New-JezykCheckbox '' 0 0 18
+
+    $lblAktywne     = New-JezykEtykieta 'Konto aktywne'      0 0
+    $lblZablokowane = New-JezykEtykieta 'Konto zablokowane'  0 0
+    $lblFlagaHasla  = New-JezykEtykieta 'Flaga zmiany hasła' 0 0
+
+    $grpFlagi.Controls.AddRange(@($chkAktywne,     $lblAktywne,
+                                  $chkZablokowane, $lblZablokowane,
+                                  $chkFlagaHasla,  $lblFlagaHasla))
 
     # --- SIATKA POL ------------------------------------------------------------------
     $L = $Script:Margines           # lewa kolumna
@@ -2564,9 +2815,25 @@ function New-JezykForm {
     Set-JezykWyglad $btnMotyw 'Ikona' -Rejestruj
     $btnMotyw.Add_Paint({ Set-JezykRysunekMotywu -Grafika $_.Graphics -Bok $this.Width })
 
+    # KWADRATY ZE STRZALKA dla trzech list rozwijanych - patrz New-JezykStrzalkaListy.
+    # Wspolrzedne dostana nizej, w sekcji wyrownania: biora sie z list, a te znaja swoja
+    # wysokosc dopiero po odziedziczeniu czcionki okna.
+    $strzDomeny = New-JezykStrzalkaListy
+    $strzTryb   = New-JezykStrzalkaListy
+    $strzWynik  = New-JezykStrzalkaListy
+
     $form.Controls.AddRange(@($lblDomena, $cmbDomena, $lblPodaj, $cmbTryb,
                               $txtSzukaj, $jezSzukania, $btnSzukaj, $cmbWynik,
-                              $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja, $btnMotyw))
+                              $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja, $btnMotyw,
+                              $strzDomeny, $strzTryb, $strzWynik))
+
+    # NA SAM WIERZCH. W kolekcji Controls pozycja zero znaczy "najwyzej", a AddRange dokleja
+    # na koniec, czyli NAJNIZEJ - kwadraty wyladowalyby pod listami, ktore maja zakrywac,
+    # i nie byloby po nich sladu. WinForms nie zglasza tego niczym: kontrolka jest w oknie,
+    # ma wspolrzedne i po prostu jej nie widac.
+    foreach ($strzalka in @($strzDomeny, $strzTryb, $strzWynik)) {
+        $form.Controls.SetChildIndex($strzalka, 0)
+    }
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
     # CALE wyrownanie stoi TUTAJ, po dodaniu kontrolek do okna, i nie da sie go przeniesc
@@ -2610,10 +2877,33 @@ function New-JezykForm {
     Set-JezykSrodekPionowy @($lblDomena, $cmbDomena, $jezSzukania) $srodekDomeny
     Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
 
+    # KWADRATY ZE STRZALKA STAJA NA WIERZCHU SWOICH LIST - dopiero tutaj, bo dwie z nich
+    # dostaly gorna krawedz linijke wyzej, a wysokosc znaja od WinForms.
+    #
+    # SZEROKOSC PRZYCISKU LISTY LICZY WINDOWS, tak samo jak szerokosc paska przewijania,
+    # i przy DPI 125-150% jest inna. Liczba wpisana tutaj trzymalaby sie wylacznie
+    # przy 100% i przy wiekszej czcionce zostawilaby po bokach jasne paski.
+    $szerStrzalki = [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth +
+                    $Script:ZapasStrzalkiListy
+    Set-JezykStrzalkaListy $cmbDomena $strzDomeny $szerStrzalki
+    Set-JezykStrzalkaListy $cmbTryb   $strzTryb   $szerStrzalki
+    Set-JezykStrzalkaListy $cmbWynik  $strzWynik  $szerStrzalki
+
+    # Lista kont pokazuje sie wylacznie przy wyszukiwaniu czesciowym, a jej kwadrat nie ma
+    # po co wisiec nad pustym miejscem. Stan poczatkowy bierzemy Z LISTY, dalszy - z jej
+    # zdarzenia (patrz sekcja ZDARZENIA): miejsc przelaczajacych ta liste jest kilka
+    # i pierwsze zapomniane zostawiloby w oknie kwadrat bez listy.
+    $strzWynik.Visible = $cmbWynik.Visible
+
     # Zapas nad wysokoscia tekstu jest konieczny: kwadrat ma stale 13 px i w ciasnym
     # prostokacie nie miescil sie razem z napisem.
+    #
+    # KWADRATY I NAPISY DOSTAJA JEDNO PUDELKO. Wspolna wysokosc i wspolna gorna krawedz to
+    # jedyny sposob, zeby napis stal na linii pisma kwadratu, a nie pol piksela nizej -
+    # ta sama zasada, co przy ikonce motywu i napisie z wersja w pasie podpisu.
     $wysokoscZnacznika = [int][math]::Ceiling($form.Font.GetHeight()) + 8
-    foreach ($znacznik in @($chkAktywne, $chkZablokowane, $chkFlagaHasla)) {
+    foreach ($znacznik in @($chkAktywne, $chkZablokowane, $chkFlagaHasla,
+                            $lblAktywne, $lblZablokowane, $lblFlagaHasla)) {
         Set-JezykSrodekTekstu $znacznik $wysokoscZnacznika
     }
 
@@ -2628,7 +2918,9 @@ function New-JezykForm {
     $obszarFlag = $grpFlagi.DisplayRectangle
 
     Set-JezykSrodekWSlupkach @($chkAktywne, $chkZablokowane, $chkFlagaHasla) `
-                             $obszarFlag.Left $obszarFlag.Width
+                             $obszarFlag.Left $obszarFlag.Width `
+                             @($lblAktywne, $lblZablokowane, $lblFlagaHasla) `
+                             $Script:OdstepZnacznika
 
     # PION LICZONY OD LINII RAMKI, A NIE OD DisplayRectangle. GroupBox rezerwuje u gory pasek
     # na tytul nawet wtedy, gdy tytul jest pusty - a DisplayRectangle zaczyna sie DOPIERO POD
@@ -2642,7 +2934,8 @@ function New-JezykForm {
     $goraRamkiFlag = [int][Math]::Floor($obszarFlag.Top / 2)
     $srodekFlag    = $goraRamkiFlag +
                      [int][Math]::Floor(($grpFlagi.ClientSize.Height - $goraRamkiFlag) / 2)
-    Set-JezykSrodekPionowy @($chkAktywne, $chkZablokowane, $chkFlagaHasla) $srodekFlag
+    Set-JezykSrodekPionowy @($chkAktywne, $chkZablokowane, $chkFlagaHasla,
+                             $lblAktywne, $lblZablokowane, $lblFlagaHasla) $srodekFlag
 
     # Przy werdykcie rownanie idzie w druga strone: napis jest wiekszy od reszty okna, wiec
     # to KWADRAT dostaje jego wysokosc.
@@ -2775,6 +3068,11 @@ function New-JezykForm {
         Przycisk      = $btnSzukaj
         JezSzukania   = $jezSzukania
         ListaKont     = $cmbWynik
+        # Kwadraty ze strzalka - potrzebne procedurom zdarzen, ktore nie widza zmiennych
+        # lokalnych tej funkcji.
+        StrzalkaDomeny    = $strzDomeny
+        StrzalkaTrybu     = $strzTryb
+        StrzalkaListyKont = $strzWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
         PrzyciskMotyw = $btnMotyw
@@ -2840,6 +3138,21 @@ function New-JezykForm {
     # W scriptblockach NIE MA odwolan do zmiennych lokalnych tej funkcji - te przestana
     # istniec, zanim zdarzenie sie wydarzy.
     $btnSzukaj.Add_Click({ Invoke-JezykSearch })
+
+    # KWADRATY ZE STRZALKA: rysunek i klikniecie. Etykieta sama z siebie listy nie otwiera,
+    # wiec klikniecie trzeba podac dalej - inaczej strzalka bylaby obrazkiem, ktory wyglada
+    # jak przycisk i nic nie robi. Klikniecie w reszte listy otwiera ja tak jak dotad.
+    foreach ($strzalka in @($strzDomeny, $strzTryb, $strzWynik)) {
+        $strzalka.Add_Paint({ Set-JezykRysunekStrzalkiListy -Strzalka $this -Grafika $_.Graphics })
+    }
+    $strzDomeny.Add_Click({ $Script:Kontrolki.Domena.DroppedDown    = $true })
+    $strzTryb.Add_Click({   $Script:Kontrolki.Tryb.DroppedDown      = $true })
+    $strzWynik.Add_Click({  $Script:Kontrolki.ListaKont.DroppedDown = $true })
+
+    $cmbWynik.Add_VisibleChanged({ $Script:Kontrolki.StrzalkaListyKont.Visible = $this.Visible })
+
+    # Ramka wokol flag konta przemalowana po WinForms - patrz Set-JezykRysunekRamkiFlag.
+    $grpFlagi.Add_Paint({ Set-JezykRysunekRamkiFlag -Ramka $this -Grafika $_.Graphics })
 
     $zegar          = New-Object System.Windows.Forms.Timer
     $zegar.Interval = 250

@@ -1526,10 +1526,12 @@ function Set-JezykMotyw {
     $paleta = if ($Motyw -eq 'Ciemny') { $Script:MotywCiemny } else { $Script:MotywJasny }
     foreach ($klucz in @($paleta.Keys)) { $Script:Config[$klucz] = $paleta[$klucz] }
 
-    # Pedzle wylaczonego przycisku ida z PALETY, wiec bufor musi padac razem z nia - inaczej
-    # przycisk przemalowalby sie odcieniem poprzedniego motywu. (Pedzle ikonki tego nie
-    # wymagaja: tamte kolory sa stale.)
-    $Script:PedzleNieczynne = $null
+    # TRZY BUFORY PEDZLI IDA Z PALETY, wiec musza padac razem z nia - inaczej wylaczony
+    # przycisk, kwadrat ze strzalka i ramka flag przemalowalyby sie odcieniem poprzedniego
+    # motywu. (Pedzle ikonki tego nie wymagaja: tamte kolory sa stale.)
+    $Script:PedzleNieczynne  = $null
+    $Script:PedzleStrzalki   = $null
+    $Script:PedzleRamkiFlag  = $null
 
     # Kopia kluczy, bo obie funkcje ponizej pisza do tych samych tablic.
     foreach ($kontrolka in @($Script:KontrolkiMotywu.Keys)) {

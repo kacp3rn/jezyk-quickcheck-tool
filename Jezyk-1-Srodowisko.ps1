@@ -431,6 +431,21 @@ $Script:Config = @{
     KolorKontrolki = [System.Drawing.Color]::FromArgb(224, 224, 224)
     KolorObramowki = [System.Drawing.Color]::FromArgb(180, 180, 180)
 
+    # Kwadrat ze strzalka po prawej stronie listy rozwijanej. WinForms maluje go na sztywno
+    # kolorem SystemColors.Control i nie ma wlasciwosci, ktora by to zmienila - w ciemnym
+    # oknie zostawal jasny prostokat przy ciemnej liscie. Domalowujemy go wiec sami i kolor
+    # nalezy do palety. W jasnym motywie zostaje dokladnie ten systemowy, zeby lista
+    # wygladala tak, jak wygladala.
+    KolorPrzyciskuListy = [System.Drawing.SystemColors]::Control
+
+    # ILE PIKSELI ZDJAC Z KRAWEDZI LISTY ROZWIJANEJ. Jej ramke WinForms maluje na sztywno
+    # kolorem SystemColors.Window, czyli bialym: w jasnym oknie to w porzadku, w ciemnym
+    # wyglada jak obwodka doklejona do kontrolki. Ramki nie da sie pomalowac, ale da sie ja
+    # OBCIAC - kontrolka o zwezonym obszarze tych pikseli po prostu nie rysuje i widac pod
+    # nimi tlo okna. NIE KOLOR, a zmienia sie razem z motywem, wiec tak samo jak RamkaPola
+    # nalezy do palety.
+    ObciecieListy = 0
+
     # Tlo przycisku "!" - jasny czerwony odcien, zeby wykrzyknik nie zlewal sie z reszta
     # szarego interfejsu. Sam wykrzyknik pokazuje sie wylacznie przy realnej usterce,
     # wiec ma sygnalizowac problem tak samo stanowczo jak KolorProblem na werdykcie.
@@ -486,6 +501,11 @@ $Script:MotywCiemny = @{
 
     KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
     KolorObramowki  = [System.Drawing.Color]::FromArgb(72, 72, 72)
+
+    # Kwadrat ze strzalka ma znikac w liscie, a nie odcinac sie od niej - tak samo jak
+    # w motywie ciemnym Windows 11, gdzie pole i jego przycisk sa jednym prostokatem.
+    KolorPrzyciskuListy = [System.Drawing.Color]::FromArgb(45, 45, 45)
+    ObciecieListy       = 1
 
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(62, 32, 32)
     KolorInfo       = [System.Drawing.Color]::FromArgb(100, 170, 255)
