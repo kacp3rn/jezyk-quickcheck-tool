@@ -416,6 +416,16 @@ $Script:Config = @{
     # i zostawia tekstowi wciecie od krawedzi - inaczej niz calkowity brak ramki.
     RamkaPola     = [System.Windows.Forms.BorderStyle]::Fixed3D
 
+    # GRUBOSC TEJ RAMKI, wyrazona liczba. To nie jest drugi zapis tego samego, tylko jedyna
+    # postac, w ktorej da sie ja policzyc: Fixed3D to WS_EX_CLIENTEDGE, czyli 2 px z kazdej
+    # strony (SystemInformation.Border3DSize), a FixedSingle to WS_BORDER, czyli 1 px
+    # (SystemInformation.BorderSize). Wysokosc kontrolki jest przy tym w obu stylach TA SAMA
+    # (TextBoxBase.PreferredHeight nie rozroznia ich wcale), wiec cienzsza ramka daje o 2 px
+    # wyzszy obszar klienta - a pole tekstowe rysuje wiersz przy jego GORNEJ krawedzi
+    # i tekst wychodzi o piksel wyzej. Wyrownuje to Set-JezykWyrownaniePol.
+    WciecieRamkiPola = 2
+
+
     KolorProblem  = [System.Drawing.Color]::Red
     KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
     KolorNieznany = [System.Drawing.Color]::DimGray
@@ -502,10 +512,14 @@ $Script:MotywCiemny = @{
     KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
     KolorObramowki  = [System.Drawing.Color]::FromArgb(72, 72, 72)
 
-    # Kwadrat ze strzalka ma znikac w liscie, a nie odcinac sie od niej - tak samo jak
-    # w motywie ciemnym Windows 11, gdzie pole i jego przycisk sa jednym prostokatem.
-    KolorPrzyciskuListy = [System.Drawing.Color]::FromArgb(45, 45, 45)
+    # Kwadrat ze strzalka ma sie ODCINAC OD POLA, tak samo jak w motywie jasnym, gdzie pole
+    # jest biale, a przycisk szary. Odcien rowny KolorKontrolki (45,45,45) sprawial, ze pole
+    # i jego przycisk byly jednym prostokatem i po strzalce nie bylo widac, gdzie kliknac.
+    KolorPrzyciskuListy = [System.Drawing.Color]::FromArgb(58, 58, 58)
     ObciecieListy       = 1
+
+    # FixedSingle - 1 px z kazdej strony. Patrz komentarz przy tym kluczu w palecie jasnej.
+    WciecieRamkiPola    = 1
 
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(62, 32, 32)
     KolorInfo       = [System.Drawing.Color]::FromArgb(100, 170, 255)
@@ -521,6 +535,12 @@ foreach ($klucz in @($Script:MotywCiemny.Keys)) {
 
 # Motyw pokazywany w tej chwili. Zmienia go wylacznie Set-JezykMotyw.
 $Script:Motyw = $Script:Config.MotywStartowy
+
+# WCIECIE RAMKI, KTORE STOI TERAZ NA POLACH. Nie to samo, co Config.WciecieRamkiPola:
+# tamto mowi, ile ma byc, to - ile juz jest. Roznica tych dwoch liczb jest poprawka, ktora
+# Set-JezykWyrownaniePol naklada na wspolrzedne pol. Licznik jest konieczny, bo inaczej
+# przelaczanie motywu tam i z powrotem SUMOWALOBY poprawke zamiast do niej wracac.
+$Script:WciecieNalozone = $Script:Config.WciecieRamkiPola
 
 # Rejestr kontrolek GUI: wypelniany w SEKCJI 4, odczytywany w SEKCJI 3.
 # To warunek dzialania, nie porzadek. Procedury obslugi zdarzen uruchamiaja sie dlugo po

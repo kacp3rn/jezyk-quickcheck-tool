@@ -392,9 +392,15 @@ $Script:PedzleRamkiFlag = $null
     ZAMALOWUJEMY CZTERY PASY, A NIE CALY PROSTOKAT - srodek ramki zajmuja znaczniki i ich
     napisy, a te rysuja sie WCZESNIEJ, bo sa osobnymi kontrolkami.
 
-    GORNA KRAWEDZ LEZY W POLOWIE PASKA TYTULU, tak samo jak przy srodkowaniu znacznikow:
-    GroupBox rezerwuje ten pasek nawet przy pustym tytule, a linia ramki biegnie przez
-    jego srodek.
+    PASY ZACZYNAJA SIE OD ZERA, A NIE OD NASZEJ LINII. Pierwsza wersja scierala dopiero od
+    wysokosci $gora i gorna krawedz zostawala biala, choc trzy pozostale wychodzily dobrze:
+    systemowa linia gorna lezy WYZEJ niz nasza i pas do niej nie siegal. Nad ramka jest
+    pusto, wiec zamalowanie tego miejsca nic nie kosztuje - a jest odporne na to, gdzie
+    dokladnie motyw systemu postawil swoja kreske.
+
+    GORNA KRAWEDZ NASZEJ LINII LEZY W POLOWIE PASKA TYTULU, tak samo jak przy srodkowaniu
+    znacznikow: GroupBox rezerwuje ten pasek nawet przy pustym tytule, a widoczna ramka
+    biegnie przez jego srodek.
 #>
 function Set-JezykRysunekRamkiFlag {
     param($Ramka, $Grafika)
@@ -413,10 +419,10 @@ function Set-JezykRysunekRamkiFlag {
     $gora = [int][Math]::Floor($Ramka.DisplayRectangle.Top / 2)
     $pas  = $Script:ZamalowanieRamkiFlag
 
-    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, $gora, $szer, $pas)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, 0, $szer, ($gora + $pas))
     $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, ($wys - $pas), $szer, $pas)
-    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, $gora, $pas, ($wys - $gora))
-    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, ($szer - $pas), $gora, $pas, ($wys - $gora))
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, 0, 0, $pas, $wys)
+    $Grafika.FillRectangle($Script:PedzleRamkiFlag.Tlo, ($szer - $pas), 0, $pas, $wys)
 
     $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, 0, $gora, $szer, 1)
     $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, 0, ($wys - 1), $szer, 1)
@@ -671,6 +677,14 @@ function Set-JezykDoPrawej {
     foreach ($kontrolka in $Kontrolki) {
         if ($kontrolka) { $kontrolka.Left = $Prawa - $kontrolka.Width }
     }
+}
+
+# Szerokosc kwadratu kryjacego przycisk listy. Wydzielona, bo SystemInformation to styk
+# z systemem - pyta Windows o rozmiar elementu interfejsu, ktory przy DPI 125-150% jest
+# inny. Zestaw weryfikacyjny podstawia tu wlasna liczbe i cala arytmetyka oprawy list
+# wykonuje sie naprawde.
+function Get-JezykSzerokoscStrzalki {
+    [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth + $Script:ZapasStrzalkiListy
 }
 
 <#
@@ -2883,8 +2897,7 @@ function New-JezykForm {
     # SZEROKOSC PRZYCISKU LISTY LICZY WINDOWS, tak samo jak szerokosc paska przewijania,
     # i przy DPI 125-150% jest inna. Liczba wpisana tutaj trzymalaby sie wylacznie
     # przy 100% i przy wiekszej czcionce zostawilaby po bokach jasne paski.
-    $szerStrzalki = [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth +
-                    $Script:ZapasStrzalkiListy
+    $szerStrzalki = Get-JezykSzerokoscStrzalki
     Set-JezykStrzalkaListy $cmbDomena $strzDomeny $szerStrzalki
     Set-JezykStrzalkaListy $cmbTryb   $strzTryb   $szerStrzalki
     Set-JezykStrzalkaListy $cmbWynik  $strzWynik  $szerStrzalki
@@ -3257,7 +3270,16 @@ function New-JezykForm {
     $form.Add_Shown({
         $Script:Kontrolki.PoleSzukaj.Focus()
         Set-JezykMotywSystemowy
+
+        # Wymiary list sa prawdziwe dopiero teraz - patrz Update-JezykOprawaList.
+        Update-JezykOprawaList
     })
+
+    # ... i jeszcze raz, gdyby ktorakolwiek z list zmienila rozmiar pozniej. Kwadrat ze
+    # strzalka ma wspolrzedne wyliczone z listy, wiec musi isc za nia.
+    foreach ($lista in @($cmbDomena, $cmbTryb, $cmbWynik)) {
+        $lista.Add_SizeChanged({ Update-JezykOprawaList })
+    }
 
     # MOTYW NA SAMYM KONCU, gdy wszystkie kontrolki maja juz swoje role. Wczesniej czesc
     # z nich jeszcze nie istnieje, a nieprzemalowana kontrolka nie zglasza sie niczym -

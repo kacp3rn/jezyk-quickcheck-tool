@@ -1541,6 +1541,14 @@ function Set-JezykMotyw {
         Set-JezykKolorPola $pole $Script:RoleKolorow[$pole]
     }
 
+    # PO ROLACH, A NIE PRZED NIMI. To rola "Pole" ustawia BorderStyle, a jego zmiana
+    # odtwarza uchwyt kontrolki - wysokosc nadana wczesniej przepadlaby po drodze.
+    Set-JezykWyrownaniePol
+
+    # Obciecie ramki listy zalezy od palety, a kwadrat ze strzalka od obciecia - wiec obie
+    # rzeczy przeliczaja sie razem, jedna funkcja, tu i po pokazaniu okna.
+    Update-JezykOprawaList
+
     if ($Script:Kontrolki.JezSzukania) { $Script:Kontrolki.JezSzukania.Invalidate() }
 
     Set-JezykMotywSystemowy
@@ -1572,6 +1580,77 @@ function Get-JezykUchwyt {
     if (-not $wlasciwosci['Handle']) { return [IntPtr]::Zero }
 
     return $Kontrolka.Handle
+}
+
+<#
+.SYNOPSIS
+    Wyrownuje obszar klienta pol tekstowych po zmianie grubosci ich ramki.
+
+.DESCRIPTION
+    DWA STYLE RAMKI TO DWIE GRUBOSCI OBSZARU NIEKLIENCKIEGO, a nie dwa rysunki tej samej
+    ramki: Fixed3D zabiera 2 px z kazdej strony, FixedSingle 1 px. Wysokosc kontrolki jest
+    przy tym w obu przypadkach TA SAMA - TextBoxBase.PreferredHeight nie rozroznia stylow
+    wcale - wiec cienzsza ramka daje o 2 px wyzsze wnetrze. Pole tekstowe rysuje wiersz
+    przy GORNEJ krawedzi tego wnetrza, wiec tekst wychodzil w ciemnym motywie o piksel
+    wyzej niz w jasnym, a pod nim zostawal piksel luzu wiecej.
+
+    Przesuwamy wiec pole o roznice grubosci w dol i o jej dwukrotnosc obnizamy - wtedy
+    PROSTOKAT WNETRZA wypada w obu motywach dokladnie w tym samym miejscu. Wyrownujemy
+    wnetrze, a nie pudelko, bo to wnetrze widzi operator: w nim stoi tekst.
+
+    LICZNIK $Script:WciecieNalozone, A NIE WARUNEK "w ciemnym odejmij". Przelaczanie tam
+    i z powrotem musi WRACAC do tych samych wspolrzednych, a nie sumowac poprawke - a tego
+    nie widac po jednym przelaczeniu, tylko po kilku, kiedy pola zaczynaja wedrowac w dol.
+
+    TYLKO ROLA "Pole". Lista i przycisk nie maja w srodku wiersza tekstu ustawianego od
+    gornej krawedzi, wiec nie ma tam czego wyrownywac.
+#>
+function Set-JezykWyrownaniePol {
+    $delta = $Script:WciecieNalozone - $Script:Config.WciecieRamkiPola
+    if ($delta -eq 0) { return }
+
+    foreach ($kontrolka in @($Script:KontrolkiMotywu.Keys)) {
+        if ($Script:KontrolkiMotywu[$kontrolka] -ne 'Pole') { continue }
+        if (-not $kontrolka) { continue }
+
+        # AutoSize WYMUSZA PreferredHeight przy kazdym odtworzeniu uchwytu, a zmiana
+        # BorderStyle uchwyt odtwarza - bez tego nasza wysokosc przepadlaby przy nastepnym
+        # przelaczeniu motywu i poprawka dzialalaby raz.
+        $kontrolka.AutoSize = $false
+
+        $kontrolka.Top    = $kontrolka.Top + $delta
+        $kontrolka.Height = $kontrolka.Height - 2 * $delta
+    }
+
+    $Script:WciecieNalozone = $Script:Config.WciecieRamkiPola
+}
+
+<#
+.SYNOPSIS
+    Przelicza oprawe trzech list rozwijanych: obciecie ramki i kwadrat ze strzalka.
+
+.DESCRIPTION
+    OBIE RZECZY BIORA SIE Z ROZMIARU LISTY, wiec licza sie razem i w jednym miejscu.
+
+    WYMIARY LISTY SA PRAWDZIWE DOPIERO PO POKAZANIU OKNA. ComboBox wylicza swoja wysokosc
+    z ItemHeight, a ten przed powstaniem uchwytu jest wartoscia zastepcza - kwadrat
+    ustawiony w New-JezykForm potrafil przez to nie siegnac dolnej krawedzi i zostawal pod
+    nim pasek systemowego przycisku. Widac to bylo na liscie wynikow, bo ta jako jedyna
+    z trzech powstaje NIEWIDOCZNA. To ta sama przyczyna, dla ktorej z Add_Shown wola sie
+    Focus() i sciezke systemowa motywu.
+#>
+function Update-JezykOprawaList {
+    $k = $Script:Kontrolki
+    if (-not $k) { return }
+
+    $szerokosc = Get-JezykSzerokoscStrzalki
+
+    foreach ($para in @(@($k.Domena,    $k.StrzalkaDomeny),
+                        @($k.Tryb,      $k.StrzalkaTrybu),
+                        @($k.ListaKont, $k.StrzalkaListyKont))) {
+        Set-JezykObciecieListy $para[0]
+        Set-JezykStrzalkaListy $para[0] $para[1] $szerokosc
+    }
 }
 
 # Ciemny pasek tytulu i ciemne paski przewijania - dwie rzeczy, ktorych WinForms nie umie,
