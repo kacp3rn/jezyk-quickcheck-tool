@@ -172,53 +172,38 @@ $Script:TaktJeza = 60        # ms miedzy klatkami, czyli okolo 16 klatek na seku
 $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 
 # --- IKONKA MOTYWU --------------------------------------------------------------------
-# Ksiezyc albo slonce na przycisku w prawym dolnym rogu. Mapa pikseli, a nie znak
-# z czcionki: glify ksiezyca i slonca nie ma Segoe UI, wiec Windows schodzi na czcionke
-# zastepcza - a ta bywa inna na kazdej stacji i inaczej wysrodkowana. Mapa wyglada
-# wszedzie tak samo i skaluje sie tak samo jak jez.
+# Ksiezyc albo slonce na przycisku w prawym dolnym rogu. FIGURY Z GEOMETRII, RYSOWANE
+# Z WYGLADZANIEM - a nie mapa pikseli, jak dotad. Przy boku 18 px na komorke mapy
+# przypadal jeden piksel, wiec luk sierpa i tarcza slonca wychodzily schodkami i ikonka
+# wygladala na poszarpana. Znak z czcionki odpada tak samo jak wczesniej: glifow ksiezyca
+# i slonca nie ma w Segoe UI, wiec Windows schodzi na czcionke zastepcza - a ta bywa inna
+# na kazdej stacji i inaczej wysrodkowana.
 #
-# BOK NIEPARZYSTY (15), zeby obie figury mialy srodkowy wiersz i srodkowa kolumne. Przy
-# parzystym osi symetrii wypadaja miedzy pikselami i kazda figura jest o piksel krzywa.
+# WYMIARY SA ULAMKAMI BOKU, a nie pikselami: figura rosnie razem z pasem podpisu przy
+# DPI 125-150%, tak samo jak dotad rosla komorka mapy.
 $Script:BokIkonyMotywu    = 18   # MINIMALNY bok ikonki - rosnie do wysokosci linii pisma
-$Script:OdstepIkonyMotywu = 8    # przerwa miedzy ikonka a napisem z wersja
+
+# Przerwa miedzy pudelkiem ikonki a pudelkiem napisu z wersja. Widac wiecej: napis zaczyna
+# sie za wlasnym marginesem etykiety, a figura konczy przed krawedzia swojego kwadratu -
+# razem wychodzi okolo pieciu-szesciu pikseli, czyli mniej wiecej szerokosc spacji.
+$Script:OdstepIkonyMotywu = 3
 
 # KSIEZYC pokazuje sie w motywie JASNYM - niesie to, co klikniecie WLACZY.
-$Script:MapaKsiezyca = @(
-    '.......k.......'
-    '....kkkk.......'
-    '...kkk.........'
-    '..kkk..........'
-    '.kkkk..........'
-    '.kkk...........'
-    '.kkk...........'
-    'kkkk...........'
-    '.kkk...........'
-    '.kkk...........'
-    '.kkkk..........'
-    '..kkk..........'
-    '...kkk.........'
-    '....kkkk.......'
-    '.......k.......'
-)
+# Sierp to tarcza minus drugie kolo, przesuniete w prawo i w gore - rogi patrza wtedy
+# w prawy gorny rog, jak w zwyklym znaku ksiezyca. Promien i przesuniecie kola
+# wycinajacego sa ulamkami PROMIENIA TARCZY, bo to one razem decyduja o grubosci sierpa.
+$Script:KsiezycPromien      = 0.42   # promien tarczy - ulamek boku
+$Script:KsiezycWyciecie     = 0.85   # promien kola wycinajacego - ulamek promienia tarczy
+$Script:KsiezycPrzesuniecie = 0.60   # odleglosc srodkow obu kol - ulamek promienia tarczy
+$Script:KsiezycKat          = -45    # kierunek wyciecia w stopniach; os Y rosnie W DOL
+$Script:KsiezycPunktyLuku   = 24     # odcinki na kazdym z dwoch lukow sierpa
 
 # SLONCE pokazuje sie w motywie CIEMNYM - tak samo, niesie powrot do jasnego.
-$Script:MapaSlonca = @(
-    '.......p.......'
-    '.......p.......'
-    '..p.........p..'
-    '...p...s...p...'
-    '.....sssss.....'
-    '....sssssss....'
-    '....sssssss....'
-    'pp.sssssssss.pp'
-    '....sssssss....'
-    '....sssssss....'
-    '.....sssss.....'
-    '...p...s...p...'
-    '..p.........p..'
-    '.......p.......'
-    '.......p.......'
-)
+$Script:SlonceTarcza    = 0.21   # promien tarczy - ulamek boku
+$Script:SlonceRamieOd   = 0.33   # poczatek promienia - odleglosc od srodka, ulamek boku
+$Script:SlonceRamieDo   = 0.48   # koniec promienia
+$Script:SlonceGrubosc   = 0.11   # grubosc promienia - ulamek boku; przy 18 px to 2 px
+$Script:SlonceIleRamion = 8
 
 # KOLORY IKONEK NIE ZALEZA OD MOTYWU, i to nie jest niedopatrzenie: kazda ikonka pokazuje
 # sie WYLACZNIE w swoim oknie - ksiezyc w jasnym, slonce w ciemnym - wiec kazda ma dobrany
@@ -434,38 +419,118 @@ function Set-JezykRysunekRamkiFlag {
     $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, ($szer - 1), $gora, 1, ($wys - $gora))
 }
 
-# Mapa dla podanego motywu. Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu wywolania,
-# tak samo jak przy Get-JezykSpriteJeza.
-function Get-JezykSpriteMotywu {
-    param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw)
+<#
+.SYNOPSIS
+    Figury ikonki motywu dla przycisku o podanym boku - sama geometria, bez GDI.
 
-    if ($Motyw -eq 'Ciemny') { return $Script:MapaSlonca }
-    return $Script:MapaKsiezyca
+.DESCRIPTION
+    Kazda figura to obiekt z Znak (klucz palety) i ALBO Punkty (wielokat), ALBO Kolo
+    (prostokat opisany na kole). Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu
+    wywolania, tak samo jak przy Get-JezykSpriteJeza.
+
+    SIERP TO WIELOKAT Z DWOCH LUKOW. Zewnetrzny biegnie po tarczy od rogu do rogu przez
+    strone oswietlona, wewnetrzny wraca po brzegu kola wycinajacego. Rogi to punkty
+    przeciecia obu okregow. Liczone w ukladzie, w ktorym wyciecie lezy na osi X - wzor na
+    przeciecie ma wtedy jeden wiersz - i dopiero na koncu obracane o $Script:KsiezycKat.
+    Wielokat, a nie tarcza zamalowana kolorem tla: tlo przycisku zmienia sie pod kursorem,
+    wiec zamalowane wyciecie pokazaloby sie wtedy jako drugie kolo.
+
+    SRODEK W POLOWIE BOKU, bez zaokraglania. Set-JezykRysunekMotywu rysuje z przesunieciem
+    pikseli o pol, wiec polowa boku wypada na granicy pikseli i figura ma po obu stronach
+    tyle samo miejsca.
+#>
+function Get-JezykFiguryMotywu {
+    param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw, [int]$Bok)
+
+    $srodek = $Bok / 2
+
+    if ($Motyw -eq 'Jasny') {
+        $R = $Script:KsiezycPromien * $Bok
+        $r = $Script:KsiezycWyciecie * $R
+        $d = $Script:KsiezycPrzesuniecie * $R
+
+        # Przeciecie okregow: x0 - odleglosc cieciwy od srodka tarczy wzdluz osi wyciecia,
+        # h - polowa cieciwy. t0 i s0 to katy rogu widziane ze srodka tarczy i ze srodka
+        # kola wycinajacego.
+        $x0 = ($R * $R - $r * $r + $d * $d) / (2 * $d)
+        $h  = [Math]::Sqrt($R * $R - $x0 * $x0)
+        $t0 = [Math]::Atan2($h, $x0)
+        $s0 = [Math]::Atan2($h, $x0 - $d)
+
+        $kat = $Script:KsiezycKat * [Math]::PI / 180
+        $cos = [Math]::Cos($kat)
+        $sin = [Math]::Sin($kat)
+        $n   = $Script:KsiezycPunktyLuku
+
+        $punkty = [System.Collections.Generic.List[System.Drawing.PointF]]::new()
+        $dodaj  = {
+            param([double]$X, [double]$Y)
+            $punkty.Add([System.Drawing.PointF]::new($srodek + $X * $cos - $Y * $sin,
+                                                     $srodek + $X * $sin + $Y * $cos))
+        }
+
+        # Luk zewnetrzny: od rogu (t0) przez strone oswietlona (pi) do drugiego rogu.
+        for ($i = 0; $i -le $n; $i++) {
+            $t = $t0 + (2 * [Math]::PI - 2 * $t0) * $i / $n
+            & $dodaj ($R * [Math]::Cos($t)) ($R * [Math]::Sin($t))
+        }
+        # Luk wewnetrzny: z powrotem, po tej czesci kola wycinajacego, ktora lezy w tarczy.
+        for ($i = 0; $i -le $n; $i++) {
+            $s = (2 * [Math]::PI - $s0) - (2 * [Math]::PI - 2 * $s0) * $i / $n
+            & $dodaj ($d + $r * [Math]::Cos($s)) ($r * [Math]::Sin($s))
+        }
+
+        return [pscustomobject]@{ Znak = 'k'; Punkty = $punkty.ToArray(); Kolo = $null }
+    }
+
+    $tarcza = $Script:SlonceTarcza * $Bok
+    [pscustomobject]@{
+        Znak   = 's'
+        Punkty = $null
+        Kolo   = [System.Drawing.RectangleF]::new($srodek - $tarcza, $srodek - $tarcza,
+                                                  2 * $tarcza, 2 * $tarcza)
+    }
+
+    # Ramiona to waskie czworokaty wzdluz promienia kola - u = kierunek ramienia,
+    # (-uy, ux) = kierunek w poprzek niego.
+    $od    = $Script:SlonceRamieOd * $Bok
+    $do    = $Script:SlonceRamieDo * $Bok
+    $pol   = $Script:SlonceGrubosc * $Bok / 2
+    $ile   = $Script:SlonceIleRamion
+    for ($i = 0; $i -lt $ile; $i++) {
+        $a  = 2 * [Math]::PI * $i / $ile
+        $ux = [Math]::Cos($a)
+        $uy = [Math]::Sin($a)
+        $punkty = foreach ($para in @(@($od, -1), @($do, -1), @($do, 1), @($od, 1))) {
+            [System.Drawing.PointF]::new($srodek + $ux * $para[0] - $uy * $pol * $para[1],
+                                         $srodek + $uy * $para[0] + $ux * $pol * $para[1])
+        }
+        [pscustomobject]@{ Znak = 'p'; Punkty = [System.Drawing.PointF[]]$punkty; Kolo = $null }
+    }
 }
 
 <#
 .SYNOPSIS
-    Rysuje ikonke motywu na przycisku - kolorem tekstu z biezacej palety.
+    Rysuje ikonke motywu na przycisku - kolorami z palety ikonki.
 
 .DESCRIPTION
-    ROZMIAR KOMORKI NIE MOZE WYJSC ZEROWY. Przy przycisku wezszym niz mapa dzielenie
-    calkowite dalo by zero, petla narysowalaby pietnascie prostokatow o boku 0 i przycisk
-    zostalby PUSTY - bez wyjatku, bez sladu, bez niczego, co by to zglosilo. Stad Max(1).
-    Ta sama pulapka co jablko jeza, ktore przy komorce 1 px bylo za male, zeby je zobaczyc.
+    WYGLADZANIE WLACZONE. Przy boku 18 px luk bez wygladzania wychodzi schodkami - to
+    wlasnie wygladalo na poszarpane. Krawedzie mieszaja sie z tlem przycisku, ktore
+    WinForms maluje przed zdarzeniem Paint, wiec wygladaja dobrze na kazdym tle, takze
+    na podswietleniu pod kursorem.
 
-    Figura jest srodkowana w przycisku, a nie dosuwana do rogu: bok przycisku jest stala,
-    a bok mapy - nieparzysty, wiec resztka po podzieleniu prawie nigdy nie jest zerem.
+    PRZESUNIECIE PIKSELI O POL (PixelOffsetMode HighQuality). Bez niego srodek piksela
+    lezy na liczbie calkowitej i figura wysrodkowana w polowie parzystego boku jest
+    o pol piksela krzywa - rozmyta z jednej strony, ostra z drugiej.
+
+    Jeden rodzaj obiektu GDI - pedzel - tak jak dotad: tarcza slonca to FillEllipse,
+    reszta to FillPolygon.
 #>
 function Set-JezykRysunekMotywu {
     param($Grafika, [int]$Bok)
 
-    $sprite = @(Get-JezykSpriteMotywu -Motyw $Script:Motyw)
-    if ($sprite.Count -eq 0) { return }
-
-    # Floor PRZED rzutowaniem: [int] w PowerShellu ZAOKRAGLA (bankiersko), wiec [int]1.6
-    # dalby komorke o piksel za duza i sprite wyszedlby poza przycisk.
-    $komorka    = [int][Math]::Max(1, [Math]::Floor($Bok / $sprite.Count))
-    $odsuniecie = [int][Math]::Floor(($Bok - $komorka * $sprite.Count) / 2)
+    $figury = @(Get-JezykFiguryMotywu -Motyw $Script:Motyw -Bok $Bok)
+    if ($figury.Count -eq 0) { return }
 
     if (-not $Script:PedzleIkonyMotywu) {
         $Script:PedzleIkonyMotywu = @{}
@@ -474,18 +539,16 @@ function Set-JezykRysunekMotywu {
         }
     }
 
-    # Piksel-art ma byc ostry - wygladzanie rozmylo by krawedzie komorek.
-    $Grafika.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+    $Grafika.SmoothingMode   = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $Grafika.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 
-    for ($w = 0; $w -lt $sprite.Count; $w++) {
-        $linia = $sprite[$w]
-        for ($k = 0; $k -lt $linia.Length; $k++) {
-            $pedzel = $Script:PedzleIkonyMotywu[[string]$linia[$k]]
-            if (-not $pedzel) { continue }   # '.' - w tym miejscu ma byc widac tlo przycisku
-            $Grafika.FillRectangle($pedzel,
-                                   $odsuniecie + $k * $komorka,
-                                   $odsuniecie + $w * $komorka,
-                                   $komorka, $komorka)
+    foreach ($figura in $figury) {
+        $pedzel = $Script:PedzleIkonyMotywu[$figura.Znak]
+        if ($figura.Kolo) {
+            $Grafika.FillEllipse($pedzel, $figura.Kolo)
+        }
+        else {
+            $Grafika.FillPolygon($pedzel, $figura.Punkty)
         }
     }
 }
@@ -732,11 +795,24 @@ function Get-JezykWysokoscNapisu {
     a z nimi caly uklad wiersza.
 
     POMIAR PO DODANIU PRZYCISKU DO OKNA - wczesniej przycisk ma jeszcze czcionke domyslna.
+
+    NAPIS RYSOWANY PRZEZ GDI (TextRenderer), i to przelaczamy TUTAJ. Bez wywolania
+    Application.SetCompatibleTextRenderingDefault($false) .NET Framework rysuje napis
+    przycisku przez GDI+, a ta droga ma na niego o kolejne 2 px z kazdej strony mniej
+    i przycina do tego prostokata i pomiar, i rysunek - napis 16 px w przycisku 22 px
+    tracil gore i ogonki liter (g, j, y, p, a z ogonkiem). Wylaczony przycisk wygladal
+    przy tym dobrze, bo jego napis domalowuje Set-JezykRysunekWylaczonegoPrzycisku przez
+    TextRenderer. Arytmetyka ponizej i pomiar w Get-JezykWysokoscNapisu opisuja
+    WYLACZNIE droge GDI, wiec przelacznik stoi w tej samej funkcji - kazdy przycisk, ktory
+    rosnie z napisem, dostaje go razem z nia. Globalnego przelacznika nie ruszamy: zmienilby
+    miare wszystkich etykiet, a pod nia jest wywazony caly uklad okna.
 #>
 function Set-JezykWysokoscPrzycisku {
     param($Przycisk, [switch]$Domyslny)
 
     if (-not $Przycisk) { return }
+
+    $Przycisk.UseCompatibleTextRendering = $false
 
     $marginesNapisu = 2
     $ramka = [int]$Przycisk.FlatAppearance.BorderSize
@@ -1164,13 +1240,18 @@ function New-JezykPrzyciskInfo {
 
 <#
 .SYNOPSIS
-    Stawia przycisk "!" tuz za etykieta pola i srodkuje go z nia w pionie.
+    Stawia przycisk "!" w linii etykiety pola - prawa krawedzia DOKLADNIE NA KONCU POLA.
 
 .DESCRIPTION
-    POMIAR SZEROKOSCI MUSI SIE ODBYC PO DODANIU KONTROLEK DO OKNA - z tego samego powodu
-    co przy Set-JezykSrodekTekstu: etykieta ma AutoSize, wiec jej szerokosc zalezy od
-    czcionki, a czcionke okna dziedziczy dopiero w momencie dodania. Zmierzona wczesniej
-    dalaby szerokosc czcionki domyslnej i przycisk wchodzilby na napis.
+    POZIOM Z POLA, NIE Z ETYKIETY. Przycisk stal dawniej tuz za napisem, wiec kazdy
+    wykrzyknik w oknie konczyl sie gdzie indziej - tam, gdzie akurat konczyl sie tekst
+    jego etykiety, a ten rosnie z czcionka systemu. Koniec pola jest staly i wspolny dla
+    etykiety i pola, wiec wykrzyknik wyglada na czesc wiersza, a nie na dopisek do napisu.
+
+    Cena jest swiadoma: przy duzym tekscie wykrzyknik wchodzi na koniec dlugiej etykiety
+    ("Ostatnio uzywany komputer:" od okolo 125% DPI). Dlatego przyciski "!" leza w oknie
+    NAD etykietami (SetChildIndex w New-JezykForm) - przyciety ogon slowa da sie
+    przeczytac, zakryty przycisk przestaje istniec.
 
     PION LICZONY Z CZCIONKI, NIE Z $Etykieta.Height. Etykiety, przy ktorych stoi ten
     przycisk, MAJA WLACZONE AutoSize (nie przeszly przez Set-JezykSrodekTekstu - to wciaz
@@ -1181,13 +1262,13 @@ function New-JezykPrzyciskInfo {
     liczeniu wysokosci checkboxow (patrz $wysokoscZnacznika nizej w tym pliku).
 #>
 function Set-JezykPrzyciskPrzyEtykiecie {
-    param($Przycisk, $Etykieta, [int]$Odstep = 6)
+    param($Przycisk, $Etykieta, $Pole)
 
-    if (-not $Przycisk -or -not $Etykieta) { return }
+    if (-not $Przycisk -or -not $Etykieta -or -not $Pole) { return }
 
     $wysokoscLinii = [int][math]::Ceiling($Etykieta.Font.GetHeight())
 
-    $Przycisk.Left = $Etykieta.Left + $Etykieta.Width + $Odstep
+    $Przycisk.Left = $Pole.Left + $Pole.Width - $Przycisk.Width
     $Przycisk.Top  = $Etykieta.Top + [int](($wysokoscLinii - $Przycisk.Height) / 2)
 }
 
@@ -2560,7 +2641,9 @@ function New-JezykForm {
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
     Set-JezykKolorPola $lblWerdykt 'Nieznany'
 
-    # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu.
+    # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu. Widoczny
+    # wylacznie w domenie z odblokowaniem - widocznosc i dostepnosc ustawia jedno miejsce,
+    # Set-JezykPrzyciskOdblokuj w Jezyk-3-Widok.ps1.
     $btnOdblokuj           = New-Object System.Windows.Forms.Button
     $btnOdblokuj.Text      = 'Odblokuj konto'
     $btnOdblokuj.Width     = 130
@@ -2666,8 +2749,8 @@ function New-JezykForm {
     $btnPinguj.TabStop   = $false
 
     # "Polacz" - zdalna konsola do tej samej maszyny. STOI NAD "PINGUJ", w linii etykiety,
-    # za przyciskami "!". Ta czesc wiersza stoi pusta: etykieta z dwoma wykrzyknikami konczy
-    # sie grubo przed prawa krawedzia kolumny, wiec przycisk nie zabral miejsca ZADNEMU polu
+    # za przyciskami "!". Ta czesc wiersza stoi pusta: etykieta i wykrzykniki koncza sie
+    # razem z polem, przed prawa krawedzia kolumny, wiec przycisk nie zabral miejsca ZADNEMU polu
     # w oknie - ani nazwisku wyzej, ani nazwie maszyny obok, ani adresowi IP nizej. Panel
     # konta zostaje dziewieciowierszowy i okno nie uroslo ani o piksel.
     #
@@ -2853,9 +2936,10 @@ function New-JezykForm {
     $btnKompPinguj.TabStop   = $false
 
     # "Polacz" stoi NAD "Pinguj", w linii etykiety - tak samo jak w widoku konta. Tam
-    # wykrzykniki musialy przed nim ustepowac, bo dzielily wiersz z dluga etykieta;
-    # tutaj etykieta 'Adres IP:' jest krotka, a reszta wiersza pusta az do prawego brzegu
-    # kolumny, wiec cofac nie ma czego. Wspolrzedne i tak biora sie Z SASIADA, nie z siatki.
+    # dzieli wiersz z wykrzyknikami, ktore koncza sie razem z polem, czyli przed nim;
+    # tutaj etykieta 'Adres IP:' jest krotka i nie ma przy niej wykrzyknika, a reszta
+    # wiersza stoi pusta az do prawego brzegu kolumny. Wspolrzedne i tak biora sie
+    # Z SASIADA, nie z siatki.
     $btnKompPolacz           = New-Object System.Windows.Forms.Button
     $btnKompPolacz.Text      = 'Połącz'
     $btnKompPolacz.Width     = $szerokoscPingu
@@ -3115,15 +3199,20 @@ function New-JezykForm {
     }
 
     # --- PRZYCISKI "!" ---------------------------------------------------------------
-    # Stawiane NA SAMYM KONCU wyrownania, bo licza sie z rzeczywistej szerokosci etykiet,
-    # a te znaja swoja szerokosc dopiero po odziedziczeniu czcionki okna - i po tym, jak
-    # wyrownanie wyzej poprzestawialo im wspolrzedne pionowe.
+    # Stawiane NA SAMYM KONCU wyrownania, bo pion licza z czcionki etykiet, a te dziedzicza
+    # ja dopiero po dodaniu do okna - i po tym, jak wyrownanie wyzej poprzestawialo im
+    # wspolrzedne pionowe.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
         # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
+
+        # NA WIERZCH PANELU. Wykrzyknik stoi na koncu pola, a dluga etykieta przy duzym
+        # tekscie siega tam swoim pudelkiem - AddRange dodal ja wczesniej, czyli WYZEJ,
+        # i zakrylaby przycisk. Ta sama pulapka, co przy kwadratach list rozwijanych.
+        $info.Parent.Controls.SetChildIndex($info, 0)
     }
 
     # Przycisk "Pinguj" srodkuje sie w pionie na polu, ktore opisuje. Wysokosc pola liczy
@@ -3153,13 +3242,22 @@ function New-JezykForm {
     # nastepnego wiersza, bo etykieta nad nim ("Adres IP:") stoi po lewej stronie kolumny.
     Set-JezykPonizejPola @($btnPolacz, $btnPinguj) $txtImieNazwisko $odstepPionowyPolacz
 
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer   $lblKomputerUzytkownika
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca     $lblKompTworca
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac       $lblKomputerMac
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoMacMaszyny    $lblKompMac
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatusMaszyny $lblKompStatus
+    # KAZDY WYKRZYKNIK KONCZY SIE RAZEM ZE SWOIM POLEM - powod przy
+    # Set-JezykPrzyciskPrzyEtykiecie.
+    #
+    # CZERWONY I NIEBIESKI PRZY NAZWIE MASZYNY STOJA W TYM SAMYM MIEJSCU. Nie swieca nigdy
+    # razem: blad SCCM konczy zapytanie, zanim wiadomo, czy maszyna jest wspoldzielona,
+    # a Update-JezykKomputerWTle gasi niebieski przy kazdym bledzie. Dawniej para stala
+    # obok siebie, wiec samotny czerwony - czyli zwykly przypadek - konczyl sie o caly
+    # przycisk przed polem.
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer              $lblKomputerUzytkownika $txtKomputerUzytkownika
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWspoldzielony $lblKomputerUzytkownika $txtKomputerUzytkownika
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac                   $lblKomputerMac         $txtKomputerMac
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus                $lblStatus              $txtStatus
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik            $lblKompUzytkownik      $txtKompUzytkownik
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca                $lblKompTworca          $txtKompTworca
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoMacMaszyny            $lblKompMac             $txtKompMac
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatusMaszyny         $lblKompStatus          $txtKompStatus
 
     # Ta sama para przyciskow w widoku komputera i ta sama arytmetyka: "Pinguj" srodkuje
     # sie w pionie na polu, ktore opisuje, a "Polacz" odejmuje sie od jego gotowego Top.
@@ -3175,25 +3273,6 @@ function New-JezykForm {
     # komputera w AD", a pod "Pinguj" jest wolne az do pola "Status:" - etykieta nad nim
     # stoi po lewej.
     Set-JezykPonizejPola @($btnKompPolacz, $btnKompPinguj) $txtKompWlaczone $odstepPionowyPolacz
-
-    # PARA WYKRZYKNIKOW KONCZY SIE DOKLADNIE TAM, GDZIE POLE NAZWY MASZYNY. Niebieski
-    # dosuwa sie prawa krawedzia do konca pola, czerwony staje tuz przed nim. Wczesniej para
-    # stala za etykieta i cofala sie dopiero przed "Polacz" - ale "Polacz" stoi o
-    # $przerwaPingu dalej niz koniec pola, wiec niebieski wystawal za pole: o kilka pikseli
-    # przy zwyklej czcionce i zawsze przy wiekszej, bo etykieta rosnie z tekstem.
-    #
-    # Kotwica przy polu zalatwia przy okazji "Polacz": pole konczy sie przed nim, wiec
-    # wykrzyknik nie ma jak go zaslonic przy zadnej czcionce.
-    #
-    # Cena jest ta sama, co przy dawnym cofaniu: przy duzym tekscie para wchodzi na koniec
-    # napisu etykiety. Przyciety ogon slowa da sie przeczytac, zakryty przycisk - nie.
-    # Pion obu bierze sie z etykiety (Set-JezykPrzyciskPrzyEtykiecie wyzej).
-    $odstepMiedzyWykrzyknikami = 4
-    $btnInfoKomputerWspoldzielony.Top = $btnInfoKomputer.Top
-    Set-JezykDoPrawej @($btnInfoKomputerWspoldzielony) `
-        ($txtKomputerUzytkownika.Left + $txtKomputerUzytkownika.Width)
-    Set-JezykDoPrawej @($btnInfoKomputer) `
-        ($btnInfoKomputerWspoldzielony.Left - $odstepMiedzyWykrzyknikami)
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
@@ -3372,8 +3451,8 @@ function New-JezykForm {
         $Script:Config.Domena = [string]$Script:Kontrolki.Domena.SelectedItem
         # Kontrolery innej domeny to inne maszyny - zapamietana lista przestaje obowiazywac.
         $Script:KontroleryCache = @{}
-        # Set-JezykWidok czysci widok, a czyszczenie gasi przycisk odblokowania - nie ma
-        # wiec powodu przeliczac go tu osobno.
+        # Set-JezykWidok czysci widok, a czyszczenie gasi przycisk odblokowania i ustawia
+        # jego widocznosc dla NOWEJ domeny - nie ma wiec powodu przeliczac go tu osobno.
         Set-JezykWidok
     })
 

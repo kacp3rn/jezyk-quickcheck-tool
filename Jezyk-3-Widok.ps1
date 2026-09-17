@@ -658,18 +658,27 @@ function Invoke-JezykSearch {
 
 <#
 .SYNOPSIS
-    Dostepnosc przycisku "Odblokuj konto": domena dozwolona, konto znalezione i FAKTYCZNIE
-    zablokowane.
+    Przycisk "Odblokuj konto": widoczny tylko w domenie z odblokowaniem, czynny tylko przy
+    znalezionym i FAKTYCZNIE zablokowanym koncie.
 
 .DESCRIPTION
-    Przycisk jest widoczny zawsze, a nie chowany - znikajaca kontrolka jest gorsza niz
-    wyszarzona, bo nie da sie przewidziec, czy w ogole istnieje.
+    DWA WARUNKI, DWIE WLASCIWOSCI - i to celowo.
 
-    BEZ ZADNEGO WYKRZYKNIKA. Zadna z czterech przyczyn wylaczenia nie jest bledem: domena
-    tylko do odczytu, kontakt zamiast konta, brak wyszukanego konta i konto niezablokowane
-    to wszystko NORMALNE, SPODZIEWANE stany. Wykrzyknik przy takim stanie zapalal sie
-    zaraz po starcie okna i przestawal cokolwiek znaczyc - a ma znaczyc dokladnie jedno:
-    "cos nie dziala". Samo wyszarzenie przycisku wystarczy za komunikat "jest, ale nie teraz".
+    DOMENA DECYDUJE O WIDOCZNOSCI. W domenie spoza listy DomenyZOdblokowaniem przycisk
+    nie zadziala NIGDY, dopoki ktos nie zmieni konfiguracji - to fakt o wdrozeniu, a nie
+    stan, ktory minie. Wyszarzony na stale bylby obietnica, ktorej nikt tam nie spelni;
+    ten sam powod, dla ktorego znika "Polacz" bez sciezki do konsoli ConfigMgr.
+
+    KONTO DECYDUJE O DOSTEPNOSCI. Kontakt zamiast konta, brak wyszukanego konta i konto
+    niezablokowane to stany przejsciowe - przycisk jest, ale nie teraz, i to mowi samo
+    wyszarzenie.
+
+    BEZ ZADNEGO WYKRZYKNIKA. Zadna z tych przyczyn nie jest bledem - to NORMALNE,
+    SPODZIEWANE stany. Wykrzyknik przy takim stanie zapalal sie zaraz po starcie okna
+    i przestawal cokolwiek znaczyc - a ma znaczyc dokladnie jedno: "cos nie dziala".
+
+    Wolana z Clear-JezykKonto, czyli takze przy starcie okna i przy KAZDEJ zmianie domeny
+    (Set-JezykWidok czysci widok) - widocznosc nie potrzebuje wiec osobnego miejsca.
 #>
 function Set-JezykPrzyciskOdblokuj {
     param($Result)
@@ -677,10 +686,11 @@ function Set-JezykPrzyciskOdblokuj {
     $przycisk = $Script:Kontrolki.PrzyciskOdblokuj
     if (-not $przycisk) { return }
 
-    $domena = $Script:Config.Domena
+    $wolno = Test-JezykWolnoOdblokowac $Script:Config.Domena
 
+    $przycisk.Visible = $wolno
     $przycisk.Enabled = (
-        (Test-JezykWolnoOdblokowac $domena) -and
+        $wolno -and
         $Result -and $Result.Status -eq 'Ok' -and [bool]$Result.LockedOut
     )
 }
@@ -1417,11 +1427,12 @@ function Set-JezykStanJeza {
     Pokazuje albo chowa przycisk "Polacz" - jedyne miejsce z warunkiem jego widocznosci.
 
 .DESCRIPTION
-    Przycisk ZNIKA I POJAWIA SIE, a nie wyszarza sie jak "Pinguj" i "Odblokuj konto".
-    Roznica jest zamierzona: tamte dwa maja stany, ktore warto pokazac ("jest, ale nie
-    teraz"), a ten ma tylko jeden powod istnienia - jest maszyna i jest czym sie z nia
-    polaczyc. Przycisk wyszarzony na stale w kazdym wdrozeniu bez konsoli ConfigMgr bylby
-    obietnica, ktorej nikt tam nigdy nie spelni.
+    Przycisk ZNIKA I POJAWIA SIE, a nie wyszarza sie jak "Pinguj". Roznica jest
+    zamierzona: tamten ma stan, ktory warto pokazac ("jest, ale nie teraz"), a ten ma
+    tylko jeden powod istnienia - jest maszyna i jest czym sie z nia polaczyc. Przycisk
+    wyszarzony na stale w kazdym wdrozeniu bez konsoli ConfigMgr bylby obietnica, ktorej
+    nikt tam nigdy nie spelni. Z tego samego powodu "Odblokuj konto" znika w domenie
+    spoza listy DomenyZOdblokowaniem (patrz Set-JezykPrzyciskOdblokuj).
 
     Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan - rozpisany
     rozjechalby sie przy pierwszej zmianie i przycisk zostawalby widoczny po przelaczeniu
@@ -1479,7 +1490,7 @@ function Invoke-JezykPolacz {
     Przycisk SIE WYSZARZA, a nie znika jak "Polacz". Roznica jest zamierzona: "Polacz"
     ma jeden powod istnienia i we wdrozeniu bez konsoli ConfigMgr nie zadziala NIGDY,
     a ten ma normalny stan przejsciowy - "jest, ale najpierw znajdz konto" - dokladnie
-    taki, jaki pokazuja "Pinguj" i "Odblokuj konto".
+    taki, jaki pokazuja "Pinguj" i - w domenie z odblokowaniem - "Odblokuj konto".
 
     Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan. Rozpisany
     rozjechalby sie przy pierwszej zmianie i przycisk zostawalby czynny po przelaczeniu
@@ -1731,9 +1742,14 @@ function Update-JezykKomputerWTle {
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })
 
-    # Niebieski "!" - nie usterka, wiec klucz jest niezalezny od Blad powyzej. Gaszony na
-    # kazdej innej sciezce, inaczej zostalby stan po POPRZEDNIM, wspoldzielonym komputerze.
-    Set-JezykInfo 'KomputerWspoldzielony' $(if ($Komputer.Wspoldzielony) { [string]$Komputer.SzczegolyWspoldzielenia } else { '' })
+    # Niebieski "!" - nie usterka, wiec klucz jest osobny od czerwonego. Gaszony na kazdej
+    # innej sciezce, inaczej zostalby stan po POPRZEDNIM, wspoldzielonym komputerze.
+    #
+    # NIGDY RAZEM Z CZERWONYM: oba stoja w oknie w TYM SAMYM MIEJSCU, na koncu pola nazwy
+    # maszyny. Logika i tak konczy zapytanie na bledzie, zanim ustali wspoldzielenie - ale
+    # to jest fakt o tamtej funkcji, a warunek tutaj pilnuje tego w miejscu, w ktorym
+    # decyduje sie, co widac.
+    Set-JezykInfo 'KomputerWspoldzielony' $(if ($Komputer.Wspoldzielony -and -not $Komputer.Blad) { [string]$Komputer.SzczegolyWspoldzielenia } else { '' })
 }
 
 #endregion
