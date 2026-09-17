@@ -31,20 +31,15 @@ $Script:PierwszyWiersz     = 100   # y etykiety pierwszego wiersza wewnatrz pane
 $Script:SkokWiersza        = 58    # odleglosc miedzy kolejnymi wierszami
 $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
 
-# Przerwa miedzy kwadratem znacznika a jego napisem. NAPIS JEST OSOBNA ETYKIETA, a nie
-# tekstem znacznika: WinForms rozklada wlasny napis po swojemu i odstepu od kwadratu nie
-# da sie podac zadna wlasciwoscia - wychodzil przez to za daleko i o piksel za nisko.
-# Rozdzielone daja sie postawic na jednej linii pisma i w takiej odleglosci, jaka tu stoi.
+# Pusty pas, ktory pudelko znacznika BEZ TEKSTU ma za kwadratem - WinForms dokleja za nim
+# piksel odstepu i piksel zapasu. Napis znacznika liczy sie od KONCA KWADRATU (patrz
+# Get-JezykOdstepZnacznika), wiec ten pas trzeba odjac - inaczej kazdy napis stalby o dwa
+# piksele dalej, niz mowi jego odstep.
 #
-# LICZBA UJEMNA CELOWO - odstep liczy sie od PUDELEK, a nie od tego, co widac. Pudelko
-# znacznika bez tekstu jest o 2 px szersze od kwadratu (WinForms dokleja za nim piksel
-# odstepu i piksel zapasu), a etykieta zaczyna tekst dopiero za wlasnym marginesem
-# (~1/6 wysokosci linii, przy zwyklej czcionce 3 px). Przy +2 widoczna przerwa wynosila
-# przez to okolo 7 px, dokladnie tyle, co we wlasnym napisie znacznika. -2 stawia etykiete
-# na koncu kwadratu i przerwe robi juz sam jej margines. Nakladka jest bezpieczna: pas
-# pod nia jest pusty, znacznik lezy wyzej (AddRange dodaje go przed etykieta), a margines
-# etykiety jest szerszy niz te 2 px, wiec nic nie zaslania ani kwadratu, ani liter.
-$Script:OdstepZnacznika    = -2
+# Pudelka moga przez to na siebie zachodzic, gdy spacja jest wezsza od pasa. To bezpieczne:
+# pas jest pusty, znacznik lezy wyzej (AddRange dodaje go przed etykieta), a etykieta
+# zaczyna tekst dopiero za wlasnym marginesem, szerszym niz te 2 px.
+$Script:PasZaZnacznikiem   = 2
 
 # O ile szerszy od systemowego przycisku listy rozwijanej ma byc kwadrat, ktorym go
 # zakrywamy. Szerokosc systemowego liczy WinForms i przy paru pikselach zapasu kryjemy
@@ -750,6 +745,40 @@ function Set-JezykWysokoscPrzycisku {
     $potrzebna = (Get-JezykWysokoscNapisu $Przycisk) + 2 * ($ramka + $marginesNapisu) +
                  $Przycisk.Padding.Vertical
     if ($potrzebna -gt $Przycisk.Height) { $Przycisk.Height = $potrzebna }
+}
+
+# Szerokosc spacji w podanej czcionce. Styk z systemem, tak jak Get-JezykWysokoscNapisu.
+# ROZNICA DWOCH POMIAROW, a nie pomiar samej spacji: GDI dokleja do kazdego mierzonego
+# napisu marginesy, wiec " " zmierzona osobno bylaby szersza od spacji miedzy slowami.
+# NoPadding zdejmuje te marginesy z obu pomiarow.
+function Get-JezykSzerokoscSpacji {
+    param($Czcionka)
+
+    $bezMarginesow = [System.Windows.Forms.TextFormatFlags]::NoPadding
+    $zSpacja = [System.Windows.Forms.TextRenderer]::MeasureText('x x', $Czcionka, [System.Drawing.Size]::Empty, $bezMarginesow)
+    $bezSpacji = [System.Windows.Forms.TextRenderer]::MeasureText('xx', $Czcionka, [System.Drawing.Size]::Empty, $bezMarginesow)
+    $zSpacja.Width - $bezSpacji.Width
+}
+
+<#
+.SYNOPSIS
+    Odstep miedzy pudelkiem znacznika a pudelkiem jego napisu: jedna spacja od konca kwadratu.
+
+.DESCRIPTION
+    NAPIS JEST OSOBNA ETYKIETA, a nie tekstem znacznika: WinForms rozklada wlasny napis
+    znacznika po swojemu i odstepu od kwadratu nie da sie podac zadna wlasciwoscia - napis
+    stal przez to za daleko i o piksel za nisko.
+
+    JEDNA SPACJA, bo tak wyglada przerwa miedzy dwoma slowami - i taka przerwe operator
+    zamowil. Stala -2 (napis na samym koncu kwadratu) wygladala jak przyklejona, a stala
+    dodatnia zgadzalaby sie tylko przy 100%: spacja rosnie razem z rozmiarem tekstu.
+
+    CZCIONKA NAPISU, nie okna: werdykt ma wlasna, wieksza i pogrubiona, wiec i jego spacja
+    jest szersza.
+#>
+function Get-JezykOdstepZnacznika {
+    param($Czcionka)
+    (Get-JezykSzerokoscSpacji $Czcionka) - $Script:PasZaZnacznikiem
 }
 
 # Szerokosc kwadratu kryjacego przycisk listy. Wydzielona, bo SystemInformation to styk
@@ -2557,7 +2586,7 @@ function New-JezykForm {
     # KWADRAT I NAPIS TO DWIE KONTROLKI, a nie znacznik z wlasnym tekstem. WinForms rozklada
     # wlasny napis znacznika po swojemu: odstepu od kwadratu nie da sie podac zadna
     # wlasciwoscia, a linia pisma wypada nizej niz srodek kwadratu. Rozdzielone daja sie
-    # postawic na jednej linii i w takiej odleglosci, jaka mowi $Script:OdstepZnacznika.
+    # postawic na jednej linii i o jedna spacje od kwadratu (Get-JezykOdstepZnacznika).
     # Ta sama para, co przy werdykcie nizej.
     $chkAktywne     = New-JezykCheckbox '' 0 0 18
     $chkZablokowane = New-JezykCheckbox '' 0 0 18
@@ -3021,7 +3050,7 @@ function New-JezykForm {
     Set-JezykSrodekWSlupkach @($chkAktywne, $chkZablokowane, $chkFlagaHasla) `
                              $obszarFlag.Left $obszarFlag.Width `
                              @($lblAktywne, $lblZablokowane, $lblFlagaHasla) `
-                             $Script:OdstepZnacznika
+                             (Get-JezykOdstepZnacznika $lblAktywne.Font)
 
     # PION LICZONY OD LINII RAMKI, A NIE OD DisplayRectangle. GroupBox rezerwuje u gory pasek
     # na tytul nawet wtedy, gdy tytul jest pusty - a DisplayRectangle zaczyna sie DOPIERO POD
@@ -3044,10 +3073,12 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $lblWerdykt $wysokoscWerdyktu $Script:NajdluzszyWerdykt
     Set-JezykSrodekTekstu $chkWerdykt $wysokoscWerdyktu
 
-    # NAPIS OD KWADRATU, TYM SAMYM ODSTEPEM, CO WE FLAGACH. Dotad stal na wpisanym
-    # "Margines + 24", czyli kilkanascie pikseli za kwadratem - dwa razy dalej niz flagi pod
-    # nim. Szerokosc kwadratu jest znana dopiero po Set-JezykSrodekTekstu, stad to miejsce.
-    $lblWerdykt.Left = $chkWerdykt.Left + $chkWerdykt.Width + $Script:OdstepZnacznika
+    # NAPIS OD KWADRATU, TA SAMA REGULA, CO WE FLAGACH: jedna spacja - tyle ze spacja
+    # czcionki werdyktu. Dotad stal na wpisanym "Margines + 24", czyli kilkanascie pikseli
+    # za kwadratem. Szerokosc kwadratu jest znana dopiero po Set-JezykSrodekTekstu, stad
+    # to miejsce.
+    $lblWerdykt.Left = $chkWerdykt.Left + $chkWerdykt.Width +
+                       (Get-JezykOdstepZnacznika $lblWerdykt.Font)
 
     Set-JezykSrodekPionowy @($chkWerdykt, $lblWerdykt, $btnOdblokuj) $Script:SrodekWerdyktu
 
