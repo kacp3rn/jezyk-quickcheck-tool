@@ -35,7 +35,16 @@ $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
 # tekstem znacznika: WinForms rozklada wlasny napis po swojemu i odstepu od kwadratu nie
 # da sie podac zadna wlasciwoscia - wychodzil przez to za daleko i o piksel za nisko.
 # Rozdzielone daja sie postawic na jednej linii pisma i w takiej odleglosci, jaka tu stoi.
-$Script:OdstepZnacznika    = 2
+#
+# LICZBA UJEMNA CELOWO - odstep liczy sie od PUDELEK, a nie od tego, co widac. Pudelko
+# znacznika bez tekstu jest o 2 px szersze od kwadratu (WinForms dokleja za nim piksel
+# odstepu i piksel zapasu), a etykieta zaczyna tekst dopiero za wlasnym marginesem
+# (~1/6 wysokosci linii, przy zwyklej czcionce 3 px). Przy +2 widoczna przerwa wynosila
+# przez to okolo 7 px, dokladnie tyle, co we wlasnym napisie znacznika. -2 stawia etykiete
+# na koncu kwadratu i przerwe robi juz sam jej margines. Nakladka jest bezpieczna: pas
+# pod nia jest pusty, znacznik lezy wyzej (AddRange dodaje go przed etykieta), a margines
+# etykiety jest szerszy niz te 2 px, wiec nic nie zaslania ani kwadratu, ani liter.
+$Script:OdstepZnacznika    = -2
 
 # O ile szerszy od systemowego przycisku listy rozwijanej ma byc kwadrat, ktorym go
 # zakrywamy. Szerokosc systemowego liczy WinForms i przy paru pikselach zapasu kryjemy
@@ -677,6 +686,70 @@ function Set-JezykDoPrawej {
     foreach ($kontrolka in $Kontrolki) {
         if ($kontrolka) { $kontrolka.Left = $Prawa - $kontrolka.Width }
     }
+}
+
+# Zsuwa kontrolki w dol tak, zeby najwyzsza z nich nie weszla na pole wiersz wyzej.
+# Wszystkie o te sama liczbe, bo stoja jedna nad druga i odstep miedzy nimi ma zostac.
+# Osobna funkcja z tego samego powodu, co Set-JezykDoPrawej: arytmetyke da sie wtedy
+# sprawdzic na atrapie, bez budowania okna.
+function Set-JezykPonizejPola {
+    param([object[]]$Kontrolki, $Pole, [int]$Odstep)
+
+    $gora = [int]::MaxValue
+    foreach ($kontrolka in $Kontrolki) {
+        if ($kontrolka -and $kontrolka.Top -lt $gora) { $gora = $kontrolka.Top }
+    }
+
+    $nadmiar = ($Pole.Top + $Pole.Height + $Odstep) - $gora
+    if ($nadmiar -le 0) { return }
+
+    foreach ($kontrolka in $Kontrolki) {
+        if ($kontrolka) { $kontrolka.Top = $kontrolka.Top + $nadmiar }
+    }
+}
+
+# Wysokosc napisu kontrolki w pikselach. Wydzielona, bo TextRenderer to styk z systemem:
+# mierzy tekst przez GDI, czyli TA SAMA miara, z ktora WinForms porownuje miejsce na napis
+# przycisku. Zestaw weryfikacyjny podstawia tu wlasna liczbe - jak przy
+# Get-JezykSzerokoscStrzalki.
+function Get-JezykWysokoscNapisu {
+    param($Kontrolka)
+    [System.Windows.Forms.TextRenderer]::MeasureText([string]$Kontrolka.Text, $Kontrolka.Font).Height
+}
+
+<#
+.SYNOPSIS
+    Podnosi przycisk do wysokosci, przy ktorej jego napis nie jest uciety od dolu.
+
+.DESCRIPTION
+    MIEJSCE NA NAPIS PRZYCISKU Flat TO WYSOKOSC MINUS RAMKA I STALY MARGINES. WinForms
+    odejmuje z kazdej strony grubosc ramki i jeszcze 2 px, a napis wyzszy od tego, co
+    zostalo, rysuje OD GORY i przycina od dolu. Przy 22 px zostaje 16 px - ledwie tyle, ile
+    ma napis przy 100% i zwyklym rozmiarze tekstu. Czcionka okna rosnie jednak ze
+    skalowaniem ekranu i z ustawieniem "Rozmiar tekstu" w Windows, a wysokosc wpisana na
+    sztywno nie - stad uciete od dolu "Pinguj" i "Polacz".
+
+    PRZYCISK DOMYSLNY (AcceptButton) ma ramke grubsza o piksel, wiec potrzebuje dwoch
+    pikseli wiecej. Przelacznik jest jawny: w chwili pomiaru okno nie ma jeszcze
+    ustawionego AcceptButton i IsDefault nie mowi prawdy.
+
+    TYLKO W GORE. Przy zwyklej czcionce przyciski zostaja dokladnie tak wysokie, jak byly,
+    a z nimi caly uklad wiersza.
+
+    POMIAR PO DODANIU PRZYCISKU DO OKNA - wczesniej przycisk ma jeszcze czcionke domyslna.
+#>
+function Set-JezykWysokoscPrzycisku {
+    param($Przycisk, [switch]$Domyslny)
+
+    if (-not $Przycisk) { return }
+
+    $marginesNapisu = 2
+    $ramka = [int]$Przycisk.FlatAppearance.BorderSize
+    if ($Domyslny) { $ramka++ }
+
+    $potrzebna = (Get-JezykWysokoscNapisu $Przycisk) + 2 * ($ramka + $marginesNapisu) +
+                 $Przycisk.Padding.Vertical
+    if ($potrzebna -gt $Przycisk.Height) { $Przycisk.Height = $potrzebna }
 }
 
 # Szerokosc kwadratu kryjacego przycisk listy. Wydzielona, bo SystemInformation to styk
@@ -2226,6 +2299,10 @@ function Show-JezykGrupyAd {
         # bez osobnej procedury na Shown.
         $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista, $btnZamknij))
 
+        # Wysokosc przycisku z napisu - powod przy Set-JezykWysokoscPrzycisku. Przycisk jest
+        # domyslny tego okna (AcceptButton nizej), wiec ma grubsza ramke.
+        Set-JezykWysokoscPrzycisku $btnZamknij -Domyslny
+
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
         Set-JezykSrodekPionowy -Kontrolki @($lblFiltr, $txtFiltr) `
@@ -2447,7 +2524,8 @@ function New-JezykForm {
     # Werdykt: jedyna kontrolka, ktora zmienia kolor, i jedyna, ktorej tresc zalezy od stanu
     # konta. Wspolrzedna pionowa ustawiana jest przez wyrownanie na koncu tej funkcji.
     $chkWerdykt           = New-JezykCheckbox '' $Script:Margines 0 18
-    $lblWerdykt           = New-JezykEtykieta 'Konto zablokowane' ($Script:Margines + 24) 0
+    # Lewa wspolrzedna napisu tez z wyrownania - liczy sie od kwadratu, jak we flagach.
+    $lblWerdykt           = New-JezykEtykieta 'Konto zablokowane' 0 0
     # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
     # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
@@ -2853,6 +2931,16 @@ function New-JezykForm {
     # CALE wyrownanie stoi TUTAJ, po dodaniu kontrolek do okna, i nie da sie go przeniesc
     # wyzej: kontrolka dziedziczy czcionke okna dopiero w momencie dodania, wiec kazdy pomiar
     # tekstu zrobiony wczesniej mierzylby czcionke domyslna.
+    #
+    # PRZYCISKI ROSNA Z NAPISEM, i to jako PIERWSZE: kazde srodkowanie ponizej czyta ich
+    # Height. Wysokosci nadane przy budowie zostaja jako minimum. "Szukaj" jest przyciskiem
+    # domyslnym okna (AcceptButton ustawiany nizej), wiec ma grubsza ramke.
+    foreach ($przycisk in @($btnPinguj, $btnPolacz, $btnGrupyAd, $btnOdblokuj,
+                            $btnKompPinguj, $btnKompPolacz)) {
+        Set-JezykWysokoscPrzycisku $przycisk
+    }
+    Set-JezykWysokoscPrzycisku $btnSzukaj -Domyslny
+
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
 
@@ -2956,6 +3044,11 @@ function New-JezykForm {
     Set-JezykSrodekTekstu $lblWerdykt $wysokoscWerdyktu $Script:NajdluzszyWerdykt
     Set-JezykSrodekTekstu $chkWerdykt $wysokoscWerdyktu
 
+    # NAPIS OD KWADRATU, TYM SAMYM ODSTEPEM, CO WE FLAGACH. Dotad stal na wpisanym
+    # "Margines + 24", czyli kilkanascie pikseli za kwadratem - dwa razy dalej niz flagi pod
+    # nim. Szerokosc kwadratu jest znana dopiero po Set-JezykSrodekTekstu, stad to miejsce.
+    $lblWerdykt.Left = $chkWerdykt.Left + $chkWerdykt.Width + $Script:OdstepZnacznika
+
     Set-JezykSrodekPionowy @($chkWerdykt, $lblWerdykt, $btnOdblokuj) $Script:SrodekWerdyktu
 
     # OBA POLA "Status:" DOSTAJA DRUGA LINIJKE. Wysokosc liczona z czcionki, a nie wpisana:
@@ -3009,8 +3102,8 @@ function New-JezykForm {
 
     # Przycisk grup srodkuje sie na polu KATALOGU, czyli na swoim sasiedzie z tego
     # samego wiersza - nie na wspolrzednej siatki. Wysokosc pola rosnie z czcionka,
-    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI, a przycisk
-    # ma staly bok 22 px i uciec nie ma gdzie.
+    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI - a przycisk
+    # ma wlasna wysokosc, liczona z napisu.
     Set-JezykSrodekPionowy @($btnGrupyAd) `
         ($txtKatalog.Top + [int]($txtKatalog.Height / 2))
 
@@ -3023,6 +3116,12 @@ function New-JezykForm {
     $btnPolacz.Left = $btnPinguj.Left
     $btnPolacz.Top  = $btnPinguj.Top - $btnPolacz.Height - $odstepPionowyPolacz
 
+    # WYZSZE PRZYCISKI ZJADAJA ZAPAS WIERSZA. Para ma na siebie stale 58 px skoku wiersza,
+    # a przy duzym tekscie oba przyciski rosna z napisem - "Polacz" wszedlby wtedy od dolu
+    # na pole "Imie i nazwisko". Zsuwamy wtedy OBA: pod "Pinguj" jest wolne az do pola
+    # nastepnego wiersza, bo etykieta nad nim ("Adres IP:") stoi po lewej stronie kolumny.
+    Set-JezykPonizejPola @($btnPolacz, $btnPinguj) $txtImieNazwisko $odstepPionowyPolacz
+
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer   $lblKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus     $lblStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik $lblKompUzytkownik
@@ -3033,40 +3132,37 @@ function New-JezykForm {
 
     # Ta sama para przyciskow w widoku komputera i ta sama arytmetyka: "Pinguj" srodkuje
     # sie w pionie na polu, ktore opisuje, a "Polacz" odejmuje sie od jego gotowego Top.
-    # Wspolrzedne z SASIADA, nie z siatki - pion pola rosnie z czcionka, a przyciski maja
-    # staly bok 22 px i uciec nie maja gdzie.
+    # Wspolrzedne z SASIADA, nie z siatki - pion pola rosnie z czcionka, a przyciski
+    # z napisem.
     Set-JezykSrodekPionowy @($btnKompPinguj) `
         ($txtKompIp.Top + [int]($txtKompIp.Height / 2))
 
     $btnKompPolacz.Left = $btnKompPinguj.Left
     $btnKompPolacz.Top  = $btnKompPinguj.Top - $btnKompPolacz.Height - $odstepPionowyPolacz
 
-    # Drugi przycisk stoi TUZ ZA pierwszym, nie za etykieta - Top dziedziczy z niego (obaj
-    # centruja sie wzgledem tej samej etykiety), Left dosuwa sie o wlasna szerokosc + odstep.
-    $btnInfoKomputerWspoldzielony.Top  = $btnInfoKomputer.Top
-    $btnInfoKomputerWspoldzielony.Left = $btnInfoKomputer.Left + $btnInfoKomputer.Width + 4
+    # To samo zsuniecie, co po drugiej stronie okna. Tu pole wiersz wyzej to "Konto
+    # komputera w AD", a pod "Pinguj" jest wolne az do pola "Status:" - etykieta nad nim
+    # stoi po lewej.
+    Set-JezykPonizejPola @($btnKompPolacz, $btnKompPinguj) $txtKompWlaczone $odstepPionowyPolacz
 
-    # WYKRZYKNIKI USTEPUJA PRZYCISKOWI "POLACZ", bo tylko one maja dokad sie cofnac.
-    # Etykieta "Ostatnio uzywany komputer:" ma AutoSize i rosnie z czcionka systemu, wiec
-    # przy 125-150% DPI wypycha oba wykrzykniki o kilkadziesiat pikseli w prawo - a "Polacz"
-    # stoi na wspolrzednej liczonej ze stalych i uciec nie ma gdzie. Bez tego cofniecia
-    # wykrzyknik zaslonilby przycisk, i to WYLACZNIE przy usterce i WYLACZNIE na cudzym
-    # pulpicie: dokladnie ten rodzaj wady, ktorej u siebie sie nie zobaczy.
+    # PARA WYKRZYKNIKOW KONCZY SIE DOKLADNIE TAM, GDZIE POLE NAZWY MASZYNY. Niebieski
+    # dosuwa sie prawa krawedzia do konca pola, czerwony staje tuz przed nim. Wczesniej para
+    # stala za etykieta i cofala sie dopiero przed "Polacz" - ale "Polacz" stoi o
+    # $przerwaPingu dalej niz koniec pola, wiec niebieski wystawal za pole: o kilka pikseli
+    # przy zwyklej czcionce i zawsze przy wiekszej, bo etykieta rosnie z tekstem.
     #
-    # Cena jest swiadoma: przy takim DPI para wykrzyknikow wchodzi na koniec napisu
-    # etykiety. Przyciety ogon slowa da sie przeczytac, zakryty przycisk przestaje istniec.
+    # Kotwica przy polu zalatwia przy okazji "Polacz": pole konczy sie przed nim, wiec
+    # wykrzyknik nie ma jak go zaslonic przy zadnej czcionce.
     #
-    # ODSTEP 4 PX, TAKI SAM JAK MIEDZY WYKRZYKNIKAMI - i to nie jest kosmetyka. Ten wiersz
-    # jest pelny: etykieta, dwa wykrzykniki i przycisk zajmuja przy zwyklej czcionce niemal
-    # cala kolumne. Szerszy odstep kazalby sie parze cofac JUZ PRZY 100% DPI, czyli u kazdego.
-    $odstepPrzedPolaczem      = 4
-    $prawaGranicaWykrzyknikow = $btnPolacz.Left - $odstepPrzedPolaczem
-    $nadmiarWykrzyknikow = ($btnInfoKomputerWspoldzielony.Left + $btnInfoKomputerWspoldzielony.Width) -
-                           $prawaGranicaWykrzyknikow
-    if ($nadmiarWykrzyknikow -gt 0) {
-        $btnInfoKomputer.Left              = $btnInfoKomputer.Left - $nadmiarWykrzyknikow
-        $btnInfoKomputerWspoldzielony.Left = $btnInfoKomputerWspoldzielony.Left - $nadmiarWykrzyknikow
-    }
+    # Cena jest ta sama, co przy dawnym cofaniu: przy duzym tekscie para wchodzi na koniec
+    # napisu etykiety. Przyciety ogon slowa da sie przeczytac, zakryty przycisk - nie.
+    # Pion obu bierze sie z etykiety (Set-JezykPrzyciskPrzyEtykiecie wyzej).
+    $odstepMiedzyWykrzyknikami = 4
+    $btnInfoKomputerWspoldzielony.Top = $btnInfoKomputer.Top
+    Set-JezykDoPrawej @($btnInfoKomputerWspoldzielony) `
+        ($txtKomputerUzytkownika.Left + $txtKomputerUzytkownika.Width)
+    Set-JezykDoPrawej @($btnInfoKomputer) `
+        ($btnInfoKomputerWspoldzielony.Left - $odstepMiedzyWykrzyknikami)
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj

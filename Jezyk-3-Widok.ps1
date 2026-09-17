@@ -1602,6 +1602,15 @@ function Get-JezykUchwyt {
     i z powrotem musi WRACAC do tych samych wspolrzednych, a nie sumowac poprawke - a tego
     nie widac po jednym przelaczeniu, tylko po kilku, kiedy pola zaczynaja wedrowac w dol.
 
+    WYSOKOSC ODCZYTANA PRZED ZDJECIEM AutoSize, a potem przypisana wprost. TextBox
+    zapamietuje "zadana" wysokosc juz w konstruktorze - czyli zmierzona czcionka DOMYSLNA -
+    i trzyma ja takze po odziedziczeniu czcionki okna. Wylaczenie AutoSize przywraca
+    wlasnie ja, wiec pole 23-pikselowe spadalo do 20, a poprawka odjeta od tego dawala 18
+    zamiast 21. Przy takiej wysokosci kontrolka nie robi juz wciecia nad tekstem i tekst
+    wychodzil w ciemnym motywie o DWA piksele wyzej, a po powrocie do jasnego pole zostawalo
+    nizsze niz na starcie. Jawne przypisanie Height nadpisuje przy okazji wysokosc zadana,
+    wiec odtworzenie uchwytu przy kolejnej zmianie ramki trzyma juz wlasciwa liczbe.
+
     TYLKO ROLA "Pole". Lista i przycisk nie maja w srodku wiersza tekstu ustawianego od
     gornej krawedzi, wiec nie ma tam czego wyrownywac.
 #>
@@ -1616,10 +1625,12 @@ function Set-JezykWyrownaniePol {
         # AutoSize WYMUSZA PreferredHeight przy kazdym odtworzeniu uchwytu, a zmiana
         # BorderStyle uchwyt odtwarza - bez tego nasza wysokosc przepadlaby przy nastepnym
         # przelaczeniu motywu i poprawka dzialalaby raz.
+        # Wysokosc PRZED zdjeciem AutoSize - powod w opisie funkcji.
+        $wysokosc = $kontrolka.Height
         $kontrolka.AutoSize = $false
 
         $kontrolka.Top    = $kontrolka.Top + $delta
-        $kontrolka.Height = $kontrolka.Height - 2 * $delta
+        $kontrolka.Height = $wysokosc - 2 * $delta
     }
 
     $Script:WciecieNalozone = $Script:Config.WciecieRamkiPola
