@@ -25,8 +25,12 @@ trap { Register-JezykBladCzesci $_; continue }
 # wiersza: wiersz srodkuje sie wokol stalej wspolrzednej, a wysokosc listy rosnie z czcionka
 # systemu, wiec margines wychodzacy jako "srodek minus polowa kontrolki" zwezal sie sam -
 # przy 100% DPI zostawalo z niego osiem pikseli, przy "Rozmiarze tekstu" 150% trzy. Srodek
-# wiersza liczy dzis Get-JezykSrodekWiersza WLASNIE Z TEGO MARGINESU i z pomiaru pola.
-$Script:MarginesGorny = 4
+# wiersza liczy dzis Get-JezykSrodekWiersza WLASNIE Z TEGO MARGINESU i z pomiaru kontrolki,
+# ktora w tym wierszu stoi.
+#
+# Reszty bialego miejsca nad napisem "Domena" nie da sie zabrac: to jeszcze okolo czterech
+# pikseli wewnetrznego marginesu listy i etykiety, ktory rysuje Windows.
+$Script:MarginesGorny = 2
 
 # Odstep od DOLU pola do etykiety nastepnego wiersza - jedyna liczba opisujaca gestosc
 # siatki. Cala reszta skoku to miejsce, ktore zajmuja sama etykieta i samo pole. Stoi tak
@@ -220,7 +224,7 @@ $Script:BokIkonyMotywu    = 18   # MINIMALNY bok ikonki - rosnie do wysokosci li
 # Przerwa miedzy pudelkiem ikonki a pudelkiem napisu z wersja. Widac wiecej: napis zaczyna
 # sie za wlasnym marginesem etykiety, a figura konczy przed krawedzia swojego kwadratu -
 # razem wychodzi okolo pieciu-szesciu pikseli, czyli mniej wiecej szerokosc spacji.
-$Script:OdstepIkonyMotywu = 3
+$Script:OdstepIkonyMotywu = 5
 
 # KSIEZYC pokazuje sie w motywie JASNYM - niesie to, co klikniecie WLACZY.
 # Sierp to tarcza minus drugie kolo, przesuniete w prawo i w gore - rogi patrza wtedy
@@ -231,7 +235,11 @@ $Script:OdstepIkonyMotywu = 3
 $Script:KsiezycPromien      = 0.47   # promien tarczy - ulamek boku
 $Script:KsiezycWyciecie     = 0.85   # promien kola wycinajacego - ulamek promienia tarczy
 $Script:KsiezycPrzesuniecie = 0.60   # odleglosc srodkow obu kol - ulamek promienia tarczy
-$Script:KsiezycKat          = -45    # kierunek wyciecia w stopniach; os Y rosnie W DOL
+# Kierunek wyciecia w stopniach; os Y rosnie W DOL, wiec kat ujemny kieruje rogi w gore.
+# NIE -45: przy pelnej przekatnej ciezar sierpa wypadal dwa piksele pod srodkiem pudelka
+# i ikonka czytala sie jako postawiona nizej niz napis obok niej. Przy -20 ksiezyc zostaje
+# pochylony, a srodek masy wraca pod srodek kwadratu (patrz Get-JezykPrzesuniecieNaSrodek).
+$Script:KsiezycKat          = -20
 $Script:KsiezycPunktyLuku   = 24     # odcinki na kazdym z dwoch lukow sierpa
 
 # SLONCE pokazuje sie w motywie CIEMNYM - tak samo, niesie powrot do jasnego.
@@ -276,51 +284,52 @@ function New-JezykObszar {
     [System.Drawing.Region]::new([System.Drawing.Rectangle]::new($X, $Y, $Szerokosc, $Wysokosc))
 }
 
-# Bufor pedzli wylaczonego przycisku. W ODROZNIENIU od pedzli ikonki TE kolory ida z palety
-# motywu, wiec bufor trzeba zerowac przy kazdym przelaczeniu - patrz Set-JezykMotyw.
-$Script:PedzleNieczynne = $null
-
 <#
 .SYNOPSIS
-    Domalowuje napis wylaczonego przycisku - jedyny kolor w oknie, ktorego nie da sie ustawic.
+    Rysuje napis przycisku w CALYM jego prostokacie - dlatego wysokosc przycisku jest nasza.
 
 .DESCRIPTION
-    WinForms przy FlatStyle = Flat maluje napis wylaczonego przycisku kolorem
-    ControlPaint.Dark(BackColor) i nie ma wlasciwosci, ktora by to zmienila. Przy tle
-    #2D2D2D wychodzi z tego niemal czern na ciemnym tle: przycisk wyglada jak pusty
-    prostokat, a operator nie wie, czy jest wylaczony, czy to usterka narzedzia.
+    NAPIS RYSUJEMY SAMI I DZIEKI TEMU PRZYCISK MOZE BYC ROWNY POLU. WinForms uklada wlasny
+    napis w prostokacie POMNIEJSZONYM o ramke stylu Flat, o grubosc z FlatAppearance.BorderSize,
+    o staly margines wewnetrzny i o Padding - a gdy tego miejsca zabraknie, ucina mu ogonki
+    liter (g, j, y, a z ogonkiem). Tak zginely kiedys napisy na CZYNNYCH "Pinguj", "Polacz"
+    i "Szukaj". Pierwsza odpowiedzia byl wlasny wzor na te arytmetyke - mylil sie o piksel.
+    Druga: zapytac o wysokosc sama kontrolke (GetPreferredSize) - a ta oddaje, ile potrzebuje
+    NA SWOICH ZASADACH, czyli znacznie wiecej, niz ma pole obok, i przycisk wygladal przy
+    polach na przerosniety. Napis srodkowany w CALYM prostokacie nie ma sie gdzie uciac, wiec
+    pytanie o wysokosc przestaje istniec: przycisk dostaje tyle, ile ma pole.
 
-    Malujemy PO WinForms, nie zamiast niego: procedura Paint przycisku wykonuje sie po jego
-    wlasnym rysowaniu - to ta sama droga, ktora rysuje ikonke motywu na jej przycisku.
-    Tlo trzeba pokryc, zeby zetrzec napis narysowany pod spodem; ramke odtwarzamy dwoma
-    prostokatami (zewnetrzny w kolorze ramki, wewnetrzny w kolorze tla), zeby nie
-    powolywac drugiego rodzaju obiektu GDI obok pedzla.
+    WARUNKIEM JEST PUSTY Text PRZYCISKU - napis WinForms lezalby pod naszym, przesuniety
+    o te kilka pikseli ramki, i oba widac by bylo jako jeden rozmyty. Napis jedzie wiec
+    w Tag, tak samo jak tresc pod przyciskiem "!".
 
-    DZIALA W OBU MOTYWACH, a nie tylko w ciemnym: jedna sciezka rysowania zamiast dwoch,
-    ktore rozjechalyby sie przy pierwszej zmianie. W jasnym motywie KolorNieczynny to
+    TLA ANI RAMKI NIE MALUJEMY. Rysowal je tu tylko ten, kto musial zetrzec napis narysowany
+    pod spodem - a pod spodem nie ma teraz nic. Dzieki temu tlo, ramka, podswietlenie pod
+    kursorem, wcisniecie i prostokat fokusu zostaja systemowe i dzialaja same.
+
+    KOLOR Z PALETY, a nie z przycisku. WinForms przy FlatStyle = Flat maluje napis wylaczonego
+    przycisku kolorem ControlPaint.Dark(BackColor) i nie ma wlasciwosci, ktora by to zmienila:
+    przy tle #2D2D2D wychodzila z tego niemal czern i przycisk wygladal jak pusty prostokat,
+    a operator nie wiedzial, czy jest wylaczony, czy to usterka narzedzia. Dlatego kolor
+    wybiera stan Enabled, a jedna sciezka obsluguje oba motywy - w jasnym KolorNieczynny to
     systemowy GrayText, czyli dokladnie to, czego uzytkownik Windows sie spodziewa.
 #>
-function Set-JezykRysunekWylaczonegoPrzycisku {
+function Set-JezykRysunekNapisuPrzycisku {
     param($Przycisk, $Grafika)
 
-    if (-not $Przycisk -or $Przycisk.Enabled) { return }
+    if (-not $Przycisk) { return }
 
-    if (-not $Script:PedzleNieczynne) {
-        $Script:PedzleNieczynne = @{
-            Tlo   = New-JezykPedzel $Script:Config.KolorKontrolki
-            Ramka = New-JezykPedzel $Script:Config.KolorObramowki
-        }
-    }
+    # Przycisk bez napisu w Tag (np. przycisk motywu) nie ma tu czego rysowac.
+    $napis = [string]$Przycisk.Tag
+    if (-not $napis) { return }
 
-    $szer = $Przycisk.Width
-    $wys  = $Przycisk.Height
+    $kolor = if ($Przycisk.Enabled) { $Script:Config.KolorTekstu }
+             else                   { $Script:Config.KolorNieczynny }
 
-    $Grafika.FillRectangle($Script:PedzleNieczynne.Ramka, 0, 0, $szer, $wys)
-    $Grafika.FillRectangle($Script:PedzleNieczynne.Tlo,   1, 1, $szer - 2, $wys - 2)
-
-    Set-JezykNapisNaSrodku -Grafika $Grafika -Tekst ([string]$Przycisk.Text) `
-                           -Czcionka $Przycisk.Font -Szerokosc $szer -Wysokosc $wys `
-                           -Kolor $Script:Config.KolorNieczynny
+    Set-JezykNapisNaSrodku -Grafika $Grafika -Tekst $napis `
+                           -Czcionka $Przycisk.Font `
+                           -Szerokosc $Przycisk.Width -Wysokosc $Przycisk.Height `
+                           -Kolor $kolor
 }
 
 # Napis wysrodkowany w prostokacie. Wydzielony, bo TextRenderer to - obok pedzla - drugi
@@ -457,6 +466,69 @@ function Set-JezykRysunekRamkiFlag {
 
 <#
 .SYNOPSIS
+    Przesuniecie, ktore stawia SRODEK MASY wielokata w srodku kwadratu o podanym boku.
+
+.DESCRIPTION
+    SRODEK MASY, A NIE OBWIEDNIA. Obwiednia sierpa jest wysrodkowana sama z siebie - luk
+    zewnetrzny biegnie po okregu wokol srodka kwadratu - ale ciezar figury lezy po stronie
+    PRZECIWNEJ do wyciecia, a to ciezar czyta sie jako polozenie ikonki. Przy wycieciu
+    skierowanym w gore sierp wygladal wiec na postawiony NIZEJ niz napis, obok ktorego stoi,
+    choc arytmetyka obwiedni byla poprawna. To ta sama pomylka, co przy srodkowaniu etykiety
+    z AutoSize na sasiedniej kontrolce: rownamy prostokaty, a widac tresc.
+
+    PRZESUNIECIE PRZYCINAMY DO KWADRATU. Przy duzej tarczy pelne wyrownanie wyprowadzilo by
+    figure za krawedz przycisku, a ikonka ucieta jest gorsza od nieco przesunietej. Stad
+    Max/Min zamiast samej roznicy - i stad kat wyciecia dobrany tak, zeby reszta po
+    przycieciu byla mniejsza od piksela.
+
+    Pole liczone wzorem na powierzchnie wielokata (suma iloczynow skosnych): to samo, czym
+    zestaw weryfikacyjny mierzy pole figury, ale tam liczone NIEZALEZNIE - inaczej
+    sprawdzalby wzor samym soba.
+#>
+function Get-JezykPrzesuniecieNaSrodek {
+    param($Punkty, [int]$Bok)
+
+    $lista = @($Punkty)
+    if ($lista.Count -lt 3) { return [System.Drawing.PointF]::new(0, 0) }
+
+    $pole = 0.0
+    $sumaX = 0.0
+    $sumaY = 0.0
+    $minX = [double]::MaxValue
+    $maxX = [double]::MinValue
+    $minY = [double]::MaxValue
+    $maxY = [double]::MinValue
+
+    for ($i = 0; $i -lt $lista.Count; $i++) {
+        $a = $lista[$i]
+        $b = $lista[($i + 1) % $lista.Count]
+        $skos  = $a.X * $b.Y - $b.X * $a.Y
+        $pole  += $skos
+        $sumaX += ($a.X + $b.X) * $skos
+        $sumaY += ($a.Y + $b.Y) * $skos
+
+        if ($a.X -lt $minX) { $minX = $a.X }
+        if ($a.X -gt $maxX) { $maxX = $a.X }
+        if ($a.Y -lt $minY) { $minY = $a.Y }
+        if ($a.Y -gt $maxY) { $maxY = $a.Y }
+    }
+
+    # Figura zdegenerowana (wszystkie punkty w jednej linii) nie ma srodka masy.
+    if ($pole -eq 0.0) { return [System.Drawing.PointF]::new(0, 0) }
+
+    $pole  = $pole / 2
+    $masaX = $sumaX / (6 * $pole)
+    $masaY = $sumaY / (6 * $pole)
+    $srodek = $Bok / 2
+
+    $dx = [Math]::Max(-$minX, [Math]::Min($srodek - $masaX, $Bok - $maxX))
+    $dy = [Math]::Max(-$minY, [Math]::Min($srodek - $masaY, $Bok - $maxY))
+
+    [System.Drawing.PointF]::new($dx, $dy)
+}
+
+<#
+.SYNOPSIS
     Figury ikonki motywu dla przycisku o podanym boku - sama geometria, bez GDI.
 
 .DESCRIPTION
@@ -474,6 +546,12 @@ function Set-JezykRysunekRamkiFlag {
     SRODEK W POLOWIE BOKU, bez zaokraglania. Set-JezykRysunekMotywu rysuje z przesunieciem
     pikseli o pol, wiec polowa boku wypada na granicy pikseli i figura ma po obu stronach
     tyle samo miejsca.
+
+    SIERP DOSUWAMY SRODKIEM MASY (Get-JezykPrzesuniecieNaSrodek), bo sam w kwadracie stoi
+    krzywo: obwiednia jest wysrodkowana, ale caly ciezar lezy po stronie przeciwnej do
+    wyciecia. Slonce jest symetryczne wzgledem srodka i nie potrzebuje niczego takiego.
+    Figura sierpa oddaje przez to SRODEK TARCZY po przesunieciu - wszystko, co liczy sie
+    od tarczy, a nie od kwadratu, musi brac go stamtad.
 #>
 function Get-JezykFiguryMotywu {
     param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw, [int]$Bok)
@@ -481,17 +559,25 @@ function Get-JezykFiguryMotywu {
     $srodek = $Bok / 2
 
     if ($Motyw -eq 'Jasny') {
-        $R = $Script:KsiezycPromien * $Bok
-        $r = $Script:KsiezycWyciecie * $R
-        $d = $Script:KsiezycPrzesuniecie * $R
+        # NAZWY W PELNYCH SLOWACH, I TO NIE JEST OZDOBA. Stalo tu $R, $r i $d - a PowerShELL
+        # NIE ROZROZNIA WIELKOSCI LITER W NAZWACH ZMIENNYCH, wiec $R i $r to JEDNA zmienna:
+        # druga linijka nadpisywala promien tarczy promieniem wyciecia. Sierp nadal wychodzil
+        # sierpem, tylko o 15% mniejszym i innego kroju niz mowia stale - a zadne sprawdzenie
+        # tego nie widzialo, bo kazde bylo prawdziwe dla dowolnego sierpa. To ta sama pulapka,
+        # co przy kluczach tablicy mieszajacej 'o' i 'O' w palecie jeza, tylko cichsza: tam
+        # parser rzucil "Duplicate keys", tutaj nie stalo sie nic.
+        $promien         = $Script:KsiezycPromien * $Bok
+        $promienWyciecia = $Script:KsiezycWyciecie * $promien
+        $odstepSrodkow   = $Script:KsiezycPrzesuniecie * $promien
 
         # Przeciecie okregow: x0 - odleglosc cieciwy od srodka tarczy wzdluz osi wyciecia,
         # h - polowa cieciwy. t0 i s0 to katy rogu widziane ze srodka tarczy i ze srodka
         # kola wycinajacego.
-        $x0 = ($R * $R - $r * $r + $d * $d) / (2 * $d)
-        $h  = [Math]::Sqrt($R * $R - $x0 * $x0)
+        $x0 = ($promien * $promien - $promienWyciecia * $promienWyciecia +
+               $odstepSrodkow * $odstepSrodkow) / (2 * $odstepSrodkow)
+        $h  = [Math]::Sqrt($promien * $promien - $x0 * $x0)
         $t0 = [Math]::Atan2($h, $x0)
-        $s0 = [Math]::Atan2($h, $x0 - $d)
+        $s0 = [Math]::Atan2($h, $x0 - $odstepSrodkow)
 
         $kat = $Script:KsiezycKat * [Math]::PI / 180
         $cos = [Math]::Cos($kat)
@@ -508,15 +594,28 @@ function Get-JezykFiguryMotywu {
         # Luk zewnetrzny: od rogu (t0) przez strone oswietlona (pi) do drugiego rogu.
         for ($i = 0; $i -le $n; $i++) {
             $t = $t0 + (2 * [Math]::PI - 2 * $t0) * $i / $n
-            & $dodaj ($R * [Math]::Cos($t)) ($R * [Math]::Sin($t))
+            & $dodaj ($promien * [Math]::Cos($t)) ($promien * [Math]::Sin($t))
         }
         # Luk wewnetrzny: z powrotem, po tej czesci kola wycinajacego, ktora lezy w tarczy.
         for ($i = 0; $i -le $n; $i++) {
             $s = (2 * [Math]::PI - $s0) - (2 * [Math]::PI - 2 * $s0) * $i / $n
-            & $dodaj ($d + $r * [Math]::Cos($s)) ($r * [Math]::Sin($s))
+            & $dodaj ($odstepSrodkow + $promienWyciecia * [Math]::Cos($s)) `
+                     ($promienWyciecia * [Math]::Sin($s))
         }
 
-        return [pscustomobject]@{ Znak = 'k'; Punkty = $punkty.ToArray(); Kolo = $null }
+        $przes = Get-JezykPrzesuniecieNaSrodek $punkty $Bok
+        $dosuniete = [System.Collections.Generic.List[System.Drawing.PointF]]::new()
+        foreach ($punkt in $punkty) {
+            $dosuniete.Add([System.Drawing.PointF]::new($punkt.X + $przes.X,
+                                                        $punkt.Y + $przes.Y))
+        }
+
+        return [pscustomobject]@{
+            Znak   = 'k'
+            Punkty = $dosuniete.ToArray()
+            Kolo   = $null
+            Srodek = [System.Drawing.PointF]::new($srodek + $przes.X, $srodek + $przes.Y)
+        }
     }
 
     $tarcza = $Script:SlonceTarcza * $Bok
@@ -786,8 +885,9 @@ function Get-JezykPietroBezListy {
 }
 
 # Wysokosc pola tekstowego przy podanej czcionce. Styk z systemem, tak jak
-# Get-JezykZalecanaWysokoscPrzycisku: PreferredHeight liczy WinForms z czcionki i z grubosci
-# ramki, czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole.
+# Get-JezykSzerokoscStrzalki: PreferredHeight liczy WinForms z czcionki i z grubosci ramki,
+# czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole. Od tej jednej
+# liczby zalezy caly rytm siatki - i wysokosc kazdego przycisku w oknie.
 #
 # Pole POWOLANE NA BOKU i od razu zwolnione - nie ma go w oknie i nie ma byc. Pytamy
 # o miare, zanim powstanie pierwsza kontrolka, bo od niej zalezy caly rytm siatki.
@@ -844,68 +944,6 @@ function Set-JezykPonizejPola {
     }
 }
 
-# Wysokosc, jakiej przycisk potrzebuje na SWOJ napis - policzona przez samego WinForms.
-# Styk z systemem, tak jak Get-JezykSzerokoscStrzalki: zestaw weryfikacyjny podstawia tu
-# wlasna liczbe, a cala reszta poprawki wykonuje sie naprawde.
-function Get-JezykZalecanaWysokoscPrzycisku {
-    param($Przycisk)
-    $Przycisk.GetPreferredSize([System.Drawing.Size]::Empty).Height
-}
-
-<#
-.SYNOPSIS
-    Podnosi przycisk do wysokosci, przy ktorej jego napis nie jest uciety od dolu.
-
-.DESCRIPTION
-    O WYSOKOSC PYTAMY SAM PRZYCISK, nie liczymy jej wlasnym wzorem. Miejsca na napis nie
-    wyznacza samo pudelko: WinForms odejmuje od niego ramke stylu Flat, grubosc podana
-    w FlatAppearance.BorderSize, staly margines wewnetrzny i Padding. GetPreferredSize
-    przechodzi dokladnie ta sama arytmetyke, ktora przycisk rysuje potem napis, wiec obie
-    strony nie moga sie rozjechac.
-
-    WLASNY WZOR ROZJECHAL SIE O PIKSEL I NIC TEGO NIE ZGLOSILO. Stalo tu
-    "napis + 2 * (ramka + 2)", co przy wpisanych 22 px dawalo napisowi 14 px zamiast 15 -
-    i czynne "Pinguj", "Polacz" oraz "Szukaj" tracily ogonki liter (g, j, y, a z ogonkiem).
-    Wylaczony przycisk wygladal przy tym dobrze, bo jego napis domalowuje
-    Set-JezykRysunekWylaczonegoPrzycisku w CALYM prostokacie kontrolki - stad usterka
-    widoczna wylacznie wtedy, gdy przycisk stawal sie klikalny.
-
-    PRZYCISK DOMYSLNY (AcceptButton) ma ramke grubsza o piksel z kazdej strony, a w chwili
-    pomiaru okno nie ma jeszcze ustawionego AcceptButton i IsDefault nie mowi prawdy -
-    stad jawny przelacznik i dwa piksele doliczone recznie.
-
-    TYLKO W GORE. Wysokosci nadane przy budowie zostaja jako minimum, wiec przycisk nigdy
-    nie zrobi sie nizszy, niz przewiduje uklad wiersza.
-
-    MINIMUM TO WYSOKOSC POLA, nigdy liczba dobrana na oko. Stalo tam kiedys wpisane 26 px
-    przy "Odblokuj konto" i 24 px przy "Zamknij" - o cztery i o dwa piksele wyzej niz pola
-    w oknie, bez zadnego powodu. Dopoki siatka byla rozrzutna, nikt tego nie widzial;
-    po scisnieciu wierszy te same przyciski zaczely wygladac przy polach na przerosniete.
-
-    POMIAR PO DODANIU PRZYCISKU DO OKNA - wczesniej przycisk ma jeszcze czcionke domyslna.
-
-    NAPIS RYSOWANY PRZEZ GDI (TextRenderer), i to przelaczamy TUTAJ, PRZED pomiarem: to ta
-    wlasciwosc decyduje, ktora miara WinForms policzy napis i ktora go potem narysuje.
-    Globalnego przelacznika (Application.SetCompatibleTextRenderingDefault) nie ruszamy -
-    zmienilby miare wszystkich etykiet, a pod nia jest wywazony caly uklad okna.
-#>
-function Set-JezykWysokoscPrzycisku {
-    param($Przycisk, [switch]$Domyslny)
-
-    if (-not $Przycisk) { return }
-
-    $Przycisk.UseCompatibleTextRendering = $false
-
-    $potrzebna = Get-JezykZalecanaWysokoscPrzycisku $Przycisk
-    if ($Domyslny) { $potrzebna += 2 }
-
-    if ($potrzebna -gt $Przycisk.Height) { $Przycisk.Height = $potrzebna }
-}
-
-# Szerokosc spacji w podanej czcionce. Styk z systemem, tak jak Get-JezykSzerokoscStrzalki.
-# ROZNICA DWOCH POMIAROW, a nie pomiar samej spacji: GDI dokleja do kazdego mierzonego
-# napisu marginesy, wiec " " zmierzona osobno bylaby szersza od spacji miedzy slowami.
-# NoPadding zdejmuje te marginesy z obu pomiarow.
 function Get-JezykSzerokoscSpacji {
     param($Czcionka)
 
@@ -2263,12 +2301,13 @@ function Get-JezykTytulGrup {
 function Select-JezykGrupyDoPokazania {
     param([string[]]$Grupy, [string]$Fraza)
 
-    $fraza = ([string]$Fraza).Trim()
+    # JEDNA PISOWNIA - patrz Weryfikacja/spojnosc.ps1: $fraza i $Fraza to ta sama zmienna.
+    $Fraza = ([string]$Fraza).Trim()
     $wynik = @()
     $nr    = 0
 
     foreach ($grupa in @($Grupy | Where-Object { $_ })) {
-        if ($fraza -and ($grupa.IndexOf($fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+        if ($Fraza -and ($grupa.IndexOf($Fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
             continue
         }
         $nr++
@@ -2481,20 +2520,19 @@ function Show-JezykGrupyAd {
         # Pole filtra musi trafic do swojej listy bez pomocy zmiennych lokalnych tej funkcji.
         $txtFiltr.Tag = $lista
 
+        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
         $btnZamknij           = New-Object System.Windows.Forms.Button
-        $btnZamknij.Text      = 'Zamknij'
+        $btnZamknij.Text      = ''
+        $btnZamknij.Tag       = 'Zamknij'
         $btnZamknij.Size      = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
         $btnZamknij.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
         Set-JezykWyglad $btnZamknij 'Przycisk'
+        $btnZamknij.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
         $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
         # Pole filtra jest PIERWSZE, wiec dostaje fokus samo - pisac mozna od razu po otwarciu,
         # bez osobnej procedury na Shown.
         $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista, $btnZamknij))
-
-        # Wysokosc przycisku z napisu - powod przy Set-JezykWysokoscPrzycisku. Przycisk jest
-        # domyslny tego okna (AcceptButton nizej), wiec ma grubsza ramke.
-        Set-JezykWysokoscPrzycisku $btnZamknij -Domyslny
 
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
@@ -2656,15 +2694,9 @@ function New-JezykForm {
 
     # --- WIERSZ DOMENY I WIERSZ WYSZUKIWANIA -----------------------------------------
     # Wspolny slupek na etykiety, zeby obie listy zaczynaly sie w tej samej wspolrzednej.
-    # SRODEK PIERWSZEGO WIERSZA Z GORNEGO MARGINESU I Z POMIARU POLA. Wpisana wspolrzedna
-    # srodka znaczyla margines tym wezszy, im wieksza czcionka systemu: przy 100% DPI
-    # zostawalo osiem pikseli, przy "Rozmiarze tekstu" 150% - trzy. Dzis margines jest
-    # stala ($Script:MarginesGorny), a srodek wiersza rosnie razem z kontrolka.
+    # Srodki obu wierszy licza sie DOPIERO W SEKCJI WYROWNANIA, bo biora sie z rzeczywistej
+    # wysokosci listy domen - patrz tam.
     $slupekEtykiet = 70
-    $srodekDomeny  = Get-JezykSrodekWiersza $wysokoscPola
-    # Z PIERWSZEGO SRODKA, nie druga kopia tej samej liczby: dwie kopie rozjada sie przy
-    # pierwszej zmianie gornego marginesu.
-    $srodekPodaj   = $srodekDomeny + $Script:PasekDomeny
 
     $lblDomena = New-JezykEtykieta 'Domena' $Script:Margines 0
     $lblPodaj  = New-JezykEtykieta 'Podaj'  $Script:Margines 0
@@ -2696,12 +2728,14 @@ function New-JezykForm {
 
     $przerwa = 16
 
+    # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku w calym
+    # prostokacie przycisku, dzieki czemu przycisk moze byc dokladnie tak wysoki, jak pole.
     $btnSzukaj           = New-Object System.Windows.Forms.Button
-    $btnSzukaj.Text      = 'Szukaj'
+    $btnSzukaj.Text      = ''
+    $btnSzukaj.Tag       = 'Szukaj'
     $btnSzukaj.Width     = 96
-    # WYSOKOSC ROWNA POLU jako minimum - liczba wpisana recznie zgadzalaby sie wylacznie
-    # przy jednej czcionce, a domyslna wysokosc Buttona jest od pola o piksel wieksza bez
-    # powodu. Set-JezykWysokoscPrzycisku podniesie ja nizej, jesli napis tego wymaga.
+    # WYSOKOSC ROWNA POLU, i to ostatecznie. Nikt jej pozniej nie podnosi - napis rysuje
+    # Set-JezykRysunekNapisuPrzycisku w calym prostokacie, wiec nie ma sie gdzie uciac.
     $btnSzukaj.Height    = $wysokoscPola
     $btnSzukaj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnSzukaj.Width
     $btnSzukaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -2781,11 +2815,11 @@ function New-JezykForm {
     # wylacznie w domenie z odblokowaniem - widocznosc i dostepnosc ustawia jedno miejsce,
     # Set-JezykPrzyciskOdblokuj w Jezyk-3-Widok.ps1.
     $btnOdblokuj           = New-Object System.Windows.Forms.Button
-    $btnOdblokuj.Text      = 'Odblokuj konto'
+    $btnOdblokuj.Text      = ''
+    $btnOdblokuj.Tag       = 'Odblokuj konto'
     $btnOdblokuj.Width     = 130
     # WYSOKOSC ROWNA POLU, a nie wpisane 26 px. Tamta liczba byla o cztery piksele wyzsza
     # od pol w oknie i po scisnieciu siatki przycisk wygladal przy nich na przerosniety.
-    # O to, ile napis faktycznie potrzebuje, pyta nizej Set-JezykWysokoscPrzycisku.
     $btnOdblokuj.Height    = $wysokoscPola
     $btnOdblokuj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnOdblokuj.Width
     $btnOdblokuj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -2878,7 +2912,8 @@ function New-JezykForm {
     # TabStop wylaczony, jak przy przyciskach "!": wedrowka tabulatorem ma prowadzic przez
     # pola z danymi, a nie przez dodatki.
     $btnPinguj           = New-Object System.Windows.Forms.Button
-    $btnPinguj.Text      = 'Pinguj'
+    $btnPinguj.Text      = ''
+    $btnPinguj.Tag       = 'Pinguj'
     $btnPinguj.Width     = $szerokoscPingu
     $btnPinguj.Height    = $wysokoscPola
     $btnPinguj.Left      = $P + $W - $szerokoscPingu
@@ -2896,7 +2931,8 @@ function New-JezykForm {
     # W ODROZNIENIU OD "PINGUJ" ten przycisk ZNIKA, a nie wyszarza sie - powod przy
     # Set-JezykPrzyciskPolacz. Wspolrzedne dostaje na koncu, razem z calym wyrownaniem.
     $btnPolacz           = New-Object System.Windows.Forms.Button
-    $btnPolacz.Text      = 'Połącz'
+    $btnPolacz.Text      = ''
+    $btnPolacz.Tag       = 'Połącz'
     $btnPolacz.Width     = $szerokoscPingu
     $btnPolacz.Height    = $wysokoscPola
     $btnPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -2962,7 +2998,8 @@ function New-JezykForm {
     # otwieralby puste okno i nie mowil dlaczego. Dostepnoscia steruje JEDNO miejsce:
     # Set-JezykPrzyciskGrupy w Jezyk-3-Widok.ps1. Pion dostaje na koncu, z wyrownaniem.
     $btnGrupyAd           = New-Object System.Windows.Forms.Button
-    $btnGrupyAd.Text      = 'Wyświetl grupy'
+    $btnGrupyAd.Text      = ''
+    $btnGrupyAd.Tag       = 'Wyświetl grupy'
     $btnGrupyAd.Width     = $W
     $btnGrupyAd.Height    = $wysokoscPola
     $btnGrupyAd.Left      = $P
@@ -3067,7 +3104,8 @@ function New-JezykForm {
                                ($Script:SzerokoscKolumny - $szerokoscPingu - $przerwaPingu)
 
     $btnKompPinguj           = New-Object System.Windows.Forms.Button
-    $btnKompPinguj.Text      = 'Pinguj'
+    $btnKompPinguj.Text      = ''
+    $btnKompPinguj.Tag       = 'Pinguj'
     $btnKompPinguj.Width     = $szerokoscPingu
     $btnKompPinguj.Height    = $wysokoscPola
     $btnKompPinguj.Left      = $Script:DrugaKolumna + $Script:SzerokoscKolumny - $szerokoscPingu
@@ -3082,7 +3120,8 @@ function New-JezykForm {
     # wiersza stoi pusta az do prawego brzegu kolumny. Wspolrzedne i tak biora sie
     # Z SASIADA, nie z siatki.
     $btnKompPolacz           = New-Object System.Windows.Forms.Button
-    $btnKompPolacz.Text      = 'Połącz'
+    $btnKompPolacz.Text      = ''
+    $btnKompPolacz.Tag       = 'Połącz'
     $btnKompPolacz.Width     = $szerokoscPingu
     $btnKompPolacz.Height    = $wysokoscPola
     $btnKompPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -3176,14 +3215,9 @@ function New-JezykForm {
     # wyzej: kontrolka dziedziczy czcionke okna dopiero w momencie dodania, wiec kazdy pomiar
     # tekstu zrobiony wczesniej mierzylby czcionke domyslna.
     #
-    # PRZYCISKI ROSNA Z NAPISEM, i to jako PIERWSZE: kazde srodkowanie ponizej czyta ich
-    # Height. Wysokosci nadane przy budowie zostaja jako minimum. "Szukaj" jest przyciskiem
-    # domyslnym okna (AcceptButton ustawiany nizej), wiec ma grubsza ramke.
-    foreach ($przycisk in @($btnPinguj, $btnPolacz, $btnGrupyAd, $btnOdblokuj,
-                            $btnKompPinguj, $btnKompPolacz)) {
-        Set-JezykWysokoscPrzycisku $przycisk
-    }
-    Set-JezykWysokoscPrzycisku $btnSzukaj -Domyslny
+    # PRZYCISKI NIE ROSNA I NIE MA TU CZEGO PRZELICZAC: kazdy ma wysokosc pola, nadana przy
+    # budowie, bo napis rysuje mu Set-JezykRysunekNapisuPrzycisku w calym prostokacie i nie
+    # ma sie gdzie uciac.
 
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
@@ -3220,6 +3254,16 @@ function New-JezykForm {
     # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz
     # lista zna swoja rzeczywista wysokosc.
     $jezSzukania.Height = $cmbDomena.Height
+
+    # SRODEK PIERWSZEGO WIERSZA Z POMIARU TEJ LISTY, nie z wysokosci pola. Lista rozwijana
+    # bierze wysokosc z ItemHeight i przy zwyklej czcionce jest o piksel nizsza od pola,
+    # wiec margines liczony z pola wychodzil o piksel szerszy, niz mowi stala. Wysokosc
+    # listy jest prawdziwa dopiero tutaj - po dodaniu jej do okna.
+    $srodekDomeny = Get-JezykSrodekWiersza $cmbDomena.Height
+    # Z PIERWSZEGO SRODKA, nie druga kopia tej samej liczby: dwie kopie rozjada sie przy
+    # pierwszej zmianie gornego marginesu.
+    $srodekPodaj  = $srodekDomeny + $Script:PasekDomeny
+
     Set-JezykSrodekPionowy @($lblDomena, $cmbDomena, $jezSzukania) $srodekDomeny
     Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
 
@@ -3574,11 +3618,13 @@ function New-JezykForm {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 
-    # PIEC PRZYCISKOW, KTORE BYWAJA WYLACZONE. "Polacz" na tej liscie nie ma: ten sie chowa
-    # i pokazuje, a nie wyszarza. Jedna procedura dla wszystkich - kolor bierze sie z palety,
-    # a nie z przycisku, wiec nie ma czego rozrozniac.
-    foreach ($przycisk in @($btnSzukaj, $btnOdblokuj, $btnPinguj, $btnKompPinguj, $btnGrupyAd)) {
-        $przycisk.Add_Paint({ Set-JezykRysunekWylaczonegoPrzycisku -Przycisk $this -Grafika $_.Graphics })
+    # KAZDY PRZYCISK Z NAPISEM, a nie tylko te, ktore bywaja wylaczone: napis rysujemy sami
+    # we WSZYSTKICH stanach, bo to on pozwala przyciskowi byc rownym polu. Pominiety przycisk
+    # zostalby po prostu PUSTY - Text ma pusty, a napis siedzi w Tag. Kolor bierze sie
+    # z palety i ze stanu Enabled, wiec jedna procedura wystarcza na wszystkie.
+    foreach ($przycisk in @($btnSzukaj, $btnOdblokuj, $btnPinguj, $btnPolacz,
+                            $btnGrupyAd, $btnKompPinguj, $btnKompPolacz)) {
+        $przycisk.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
     }
 
     $cmbDomena.Add_SelectedIndexChanged({

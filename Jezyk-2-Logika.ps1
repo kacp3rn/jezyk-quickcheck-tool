@@ -174,12 +174,15 @@ function Test-JezykWygladaNaTelefon {
     param([string]$Tekst)
 
     if ($null -eq $Tekst) { return $false }
-    $tekst = $Tekst.Trim()
-    if (-not $tekst) { return $false }
+    # JEDNA PISOWNIA. $tekst i $Tekst to dla PowerShella ta sama zmienna, wiec dwie pisownie
+    # nie znacza dwoch wartosci - znacza tylko, ze czytajacy moze tak pomyslec. Zapora:
+    # Weryfikacja/spojnosc.ps1.
+    $Tekst = $Tekst.Trim()
+    if (-not $Tekst) { return $false }
 
-    if ($tekst -notmatch '^[0-9+()\s./-]+$') { return $false }
+    if ($Tekst -notmatch '^[0-9+()\s./-]+$') { return $false }
 
-    $cyfry = Get-JezykCyfry $tekst
+    $cyfry = Get-JezykCyfry $Tekst
     return ($cyfry.Length -ge 6 -and $cyfry.Length -le 15)
 }
 

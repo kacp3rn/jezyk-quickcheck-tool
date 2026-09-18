@@ -1537,10 +1537,10 @@ function Set-JezykMotyw {
     $paleta = if ($Motyw -eq 'Ciemny') { $Script:MotywCiemny } else { $Script:MotywJasny }
     foreach ($klucz in @($paleta.Keys)) { $Script:Config[$klucz] = $paleta[$klucz] }
 
-    # TRZY BUFORY PEDZLI IDA Z PALETY, wiec musza padac razem z nia - inaczej wylaczony
-    # przycisk, kwadrat ze strzalka i ramka flag przemalowalyby sie odcieniem poprzedniego
-    # motywu. (Pedzle ikonki tego nie wymagaja: tamte kolory sa stale.)
-    $Script:PedzleNieczynne  = $null
+    # DWA BUFORY PEDZLI IDA Z PALETY, wiec musza padac razem z nia - inaczej kwadrat ze
+    # strzalka i ramka flag przemalowalyby sie odcieniem poprzedniego motywu. (Pedzle ikonki
+    # tego nie wymagaja: tamte kolory sa stale. Napis przycisku nie ma pedzla wcale - idzie
+    # przez TextRenderer, ktory bierze kolor wprost z palety przy kazdym rysowaniu.)
     $Script:PedzleStrzalki   = $null
     $Script:PedzleRamkiFlag  = $null
 
