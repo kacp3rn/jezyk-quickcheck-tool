@@ -1693,9 +1693,23 @@ function Set-JezykMotywSystemowy {
 
 # Klikniecie ikonki. Przelacza na drugi motyw - innych stanow nie ma, wiec nie ma tu czego
 # wybierac ani o co pytac.
+#
+# FOKUS ODDAJEMY POLU WYSZUKIWANIA, I TO NIE JEST UPRZEJMOSC. Przycisk motywu jest poza
+# kolejnoscia tabulacji (TabStop = $false), ale MYSZ nadaje fokus mimo to, a WinForms rysuje
+# wtedy w srodku przycisku prostokat fokusu. Ikonke malujemy sami i CELOWO BEZ TLA - tlo
+# zabraloby przyciskowi systemowe podswietlenie pod kursorem, ta sama zasada, co przy
+# napisach pozostalych przyciskow - wiec prostokat zostaje pod spodem i widac go w wycieciu
+# sierpa jako szary kwadracik. Gasl dopiero wtedy, gdy fokus przejmowalo cokolwiek innego.
+#
+# Pole wyszukiwania jest miejscem, w ktorym fokus w tym oknie spoczywa - tam stawia go tez
+# Add_Shown przy starcie - wiec nie jest to przypadkowy wybor kontrolki. Po Set-JezykMotyw,
+# a nie przed: zmiana BorderStyle odtwarza uchwyty pol i fokus nadany wczesniej by przepadl.
 function Invoke-JezykPrzelaczenieMotywu {
     if ($Script:Motyw -eq 'Ciemny') { Set-JezykMotyw 'Jasny' }
     else                            { Set-JezykMotyw 'Ciemny' }
+
+    $pole = $Script:Kontrolki.PoleSzukaj
+    if ($pole) { [void]$pole.Focus() }
 }
 
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
