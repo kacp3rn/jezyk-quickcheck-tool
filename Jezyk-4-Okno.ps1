@@ -81,6 +81,13 @@ $Script:SkokWiersza        = $Script:OdstepPodEtykieta + 22 + $Script:PrzerwaWie
 # zaczyna tekst dopiero za wlasnym marginesem, szerszym niz te 2 px.
 $Script:PasZaZnacznikiem   = 2
 
+# O ILE WYKRZYKNIK COFA SIE OD PRAWEJ KRAWEDZI POLA. Prostokat pola konczy sie dalej niz
+# jego WIDOCZNA ramka: przy Fixed3D ostatnia kolumna to jasny refleks krawedzi 3D, ktory
+# na tle okna znika, a przy FixedSingle kreska jest wprawdzie widoczna, ale przycisk "!"
+# ma wlasna ramke 2 px i zlewa sie z nia w jeden gruby slupek. Kwadrat konczacy sie
+# dokladnie na Left + Width wygladal przez to w obu motywach na wysuniety poza pole.
+$Script:CofniecieWykrzyknika = 1
+
 # O ile szerszy od systemowego przycisku listy rozwijanej ma byc kwadrat, ktorym go
 # zakrywamy. Szerokosc systemowego liczy WinForms i przy paru pikselach zapasu kryjemy
 # kawalek ciemnego pola wiecej - czego nie widac. Kwadrat WEZSZY zostawilby po bokach
@@ -867,12 +874,23 @@ function Get-JezykSkokWiersza {
     $Script:OdstepPodEtykieta + $WysokoscPola + $Script:PrzerwaWierszy
 }
 
+# POLOWA WYSOKOSCI KONTROLKI, ZAOKRAGLONA W DOL. [int] w PowerShellu zaokragla BANKIERSKO,
+# a nie obcina: [int](21/2) daje 10, ale [int](23/2) daje 12. Z dwoch kontrolek stojacych
+# w jednym wierszu wyzsza dostawala przez to piksel W GORE ponad wspolny srodek - i tylko
+# przy niektorych wysokosciach, wiec przy jednej czcionce bylo widac, a przy innej nie.
+# Tak wychodzilo pole wyszukiwania i "Szukaj" nad liste trybu. Ta sama decyzja, co przy
+# $goraRamkiFlag w New-JezykForm; jedna funkcja, zeby zaokraglenie bylo wszedzie to samo.
+function Get-JezykPolowaWysokosci {
+    param([int]$Wysokosc)
+    [int][math]::Floor($Wysokosc / 2)
+}
+
 # Srodek pierwszego wiersza okna dla pola o podanej wysokosci: gorny margines i polowa
 # kontrolki. LICZONY, A NIE WPISANY - kontrolka o wysokosci $WysokoscPola zaczyna sie wtedy
 # dokladnie $Script:MarginesGorny pod paskiem tytulu, przy kazdej czcionce systemu.
 function Get-JezykSrodekWiersza {
     param([int]$WysokoscPola)
-    $Script:MarginesGorny + [int]($WysokoscPola / 2)
+    $Script:MarginesGorny + (Get-JezykPolowaWysokosci $WysokoscPola)
 }
 
 # Gorna krawedz panelu bez listy wyboru: gorny margines, dwa wiersze gornego pasa (domena
@@ -909,7 +927,7 @@ function Get-JezykWysokoscPola {
 function Set-JezykSrodekPionowy {
     param([object[]]$Kontrolki, [int]$Srodek)
     foreach ($kontrolka in $Kontrolki) {
-        $kontrolka.Top = $Srodek - [int]($kontrolka.Height / 2)
+        $kontrolka.Top = $Srodek - (Get-JezykPolowaWysokosci $kontrolka.Height)
     }
 }
 
@@ -1357,7 +1375,7 @@ function New-JezykPrzyciskInfo {
 
 <#
 .SYNOPSIS
-    Stawia przycisk "!" w linii etykiety pola - prawa krawedzia DOKLADNIE NA KONCU POLA.
+    Stawia przycisk "!" w linii etykiety pola - prawa krawedzia na jego WIDOCZNEJ krawedzi.
 
 .DESCRIPTION
     POZIOM Z POLA, NIE Z ETYKIETY. Przycisk stal dawniej tuz za napisem, wiec kazdy
@@ -1385,7 +1403,7 @@ function Set-JezykPrzyciskPrzyEtykiecie {
 
     $wysokoscLinii = [int][math]::Ceiling($Etykieta.Font.GetHeight())
 
-    $Przycisk.Left = $Pole.Left + $Pole.Width - $Przycisk.Width
+    $Przycisk.Left = $Pole.Left + $Pole.Width - $Script:CofniecieWykrzyknika - $Przycisk.Width
     $Przycisk.Top  = $Etykieta.Top + [int](($wysokoscLinii - $Przycisk.Height) / 2)
 }
 
@@ -2537,7 +2555,7 @@ function Show-JezykGrupyAd {
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
         Set-JezykSrodekPionowy -Kontrolki @($lblFiltr, $txtFiltr) `
-                               -Srodek ($margines + [int]($txtFiltr.Height / 2))
+                               -Srodek ($margines + (Get-JezykPolowaWysokosci $txtFiltr.Height))
 
         $lista.Left   = $margines
         $lista.Width  = $szerokosc - 2 * $margines
@@ -3396,14 +3414,14 @@ function New-JezykForm {
     # Przycisk "Pinguj" srodkuje sie w pionie na polu, ktore opisuje. Wysokosc pola liczy
     # sie z czcionki, wiec pomiar musi byc TUTAJ, po dodaniu kontrolek do okna.
     Set-JezykSrodekPionowy @($btnPinguj) `
-        ($txtKomputerUzytkownika.Top + [int]($txtKomputerUzytkownika.Height / 2))
+        ($txtKomputerUzytkownika.Top + (Get-JezykPolowaWysokosci $txtKomputerUzytkownika.Height))
 
     # Przycisk grup srodkuje sie na polu KATALOGU, czyli na swoim sasiedzie z tego
     # samego wiersza - nie na wspolrzednej siatki. Wysokosc pola rosnie z czcionka,
     # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI - a przycisk
     # ma wlasna wysokosc, liczona z napisu.
     Set-JezykSrodekPionowy @($btnGrupyAd) `
-        ($txtKatalog.Top + [int]($txtKatalog.Height / 2))
+        ($txtKatalog.Top + (Get-JezykPolowaWysokosci $txtKatalog.Height))
 
     # "Polacz" LICZY SIE Z SASIADA, NIE Z SIATKI - i to jest tu istotne. Wysrodkowanie go
     # na etykiecie (tak, jak stoja przyciski "!") wygladaloby poprawnie przy 100% DPI
@@ -3442,7 +3460,7 @@ function New-JezykForm {
     # Wspolrzedne z SASIADA, nie z siatki - pion pola rosnie z czcionka, a przyciski
     # z napisem.
     Set-JezykSrodekPionowy @($btnKompPinguj) `
-        ($txtKompIp.Top + [int]($txtKompIp.Height / 2))
+        ($txtKompIp.Top + (Get-JezykPolowaWysokosci $txtKompIp.Height))
 
     $btnKompPolacz.Left = $btnKompPinguj.Left
     $btnKompPolacz.Top  = $btnKompPinguj.Top - $btnKompPolacz.Height - $odstepPionowyPolacz
