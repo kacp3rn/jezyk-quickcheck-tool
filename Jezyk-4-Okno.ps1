@@ -21,6 +21,18 @@ trap { Register-JezykBladCzesci $_; continue }
 # tylko wynikiem pomiaru pola (patrz $Script:SkokWiersza nizej) - rosnie wtedy, gdy rosnie
 # czcionka, i tylko wtedy.
 
+# Odstep od paska tytulu do pierwszej kontrolki. WLASNA LICZBA, a nie polowa pierwszego
+# wiersza: wiersz srodkuje sie wokol stalej wspolrzednej, a wysokosc listy rosnie z czcionka
+# systemu, wiec margines wychodzacy jako "srodek minus polowa kontrolki" zwezal sie sam -
+# przy 100% DPI zostawalo z niego osiem pikseli, przy "Rozmiarze tekstu" 150% trzy. Srodek
+# wiersza liczy dzis Get-JezykSrodekWiersza WLASNIE Z TEGO MARGINESU i z pomiaru pola.
+$Script:MarginesGorny = 4
+
+# Odstep od DOLU pola do etykiety nastepnego wiersza - jedyna liczba opisujaca gestosc
+# siatki. Cala reszta skoku to miejsce, ktore zajmuja sama etykieta i samo pole. Stoi tak
+# wysoko, bo liczy sie z niej takze pietro panelu ponizej.
+$Script:PrzerwaWierszy     = 8
+
 # Wiersz z wyborem domeny stoi nad wszystkim, wiec reszta okna schodzi o jego wysokosc.
 $Script:PasekDomeny   = 30
 
@@ -28,17 +40,22 @@ $Script:PasekDomeny   = 30
 # pikseli pod wierszem wyszukiwania; zastapil go jez, ktory stoi w miejscu JUZ PUSTYM -
 # w prawej, niezajetej czesci wiersza domeny (patrz sekcja JEZ nizej). Dlatego panele
 # wracaja do wspolrzednych sprzed paska i okno jest o te dziesiec pikseli nizsze.
-$Script:PanelBezListy = 39 + $Script:PasekDomeny
+#
+# TA WARTOSC TO WYLACZNIE PUNKT STARTOWY, policzony dla pola o zwyklej wysokosci 22 px -
+# tak samo jak $Script:SkokWiersza nizej. New-JezykForm przelicza ja z FAKTYCZNEGO pomiaru
+# (Get-JezykPietroBezListy), zanim postawi pierwsza kontrolke: gorny margines jest stala,
+# a oba wiersze nad panelem rosna z czcionka, wiec pietro musi jechac razem z nimi.
+$Script:PanelBezListy = $Script:MarginesGorny + $Script:PasekDomeny + 22 + $Script:PrzerwaWierszy
+
+# Miejsce na sama liste wyboru kont - wiersz, ktory pokazuje sie wylacznie przy wyszukiwaniu
+# czesciowym.
+$Script:PasListyWyboru = 30
 # Pietro z lista wyboru LICZONE OD PIETRA BEZ NIEJ: roznica to miejsce na sama liste,
 # wiec zmiana jednego z tych dwoch nie moze zostawic drugiego w tyle.
-$Script:PanelZListą   = $Script:PanelBezListy + 30
+$Script:PanelZListą   = $Script:PanelBezListy + $Script:PasListyWyboru
 
 $Script:PierwszyWiersz     = 92    # y etykiety pierwszego wiersza wewnatrz panelu konta
 $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
-
-# Odstep od DOLU pola do etykiety nastepnego wiersza - jedyna liczba opisujaca gestosc
-# siatki. Cala reszta skoku to miejsce, ktore zajmuja sama etykieta i samo pole.
-$Script:PrzerwaWierszy     = 8
 
 # Odleglosc miedzy kolejnymi wierszami. LICZONA Z WYSOKOSCI POLA, a nie wpisana na sztywno:
 # wiersze stoja na stalych wspolrzednych, a pole bierze wysokosc z czcionki okna, ktora
@@ -65,8 +82,6 @@ $Script:PasZaZnacznikiem   = 2
 # kawalek ciemnego pola wiecej - czego nie widac. Kwadrat WEZSZY zostawilby po bokach
 # jasne paski, czyli dokladnie to, co mial zakryc.
 $Script:ZapasStrzalkiListy = 2
-
-$Script:PasekPodpisu       = 22    # pasek na podpis autora u dolu, poza panelami
 
 # Najdluzszy napis, jaki moze pokazac etykieta werdyktu. Potrzebny do ZMIERZENIA jej
 # szerokosci: po zdjeciu AutoSize szerokosc dobrana do biezacego napisu ucielaby dluzszy.
@@ -211,7 +226,9 @@ $Script:OdstepIkonyMotywu = 3
 # Sierp to tarcza minus drugie kolo, przesuniete w prawo i w gore - rogi patrza wtedy
 # w prawy gorny rog, jak w zwyklym znaku ksiezyca. Promien i przesuniecie kola
 # wycinajacego sa ulamkami PROMIENIA TARCZY, bo to one razem decyduja o grubosci sierpa.
-$Script:KsiezycPromien      = 0.42   # promien tarczy - ulamek boku
+# 0.42 zostawialo po poltora piksela pustki z kazdej strony kwadratu, a sierp - ktory
+# zajmuje polowe tarczy - czytal sie wtedy jako plama w jego lewym dolnym narozniku.
+$Script:KsiezycPromien      = 0.47   # promien tarczy - ulamek boku
 $Script:KsiezycWyciecie     = 0.85   # promien kola wycinajacego - ulamek promienia tarczy
 $Script:KsiezycPrzesuniecie = 0.60   # odleglosc srodkow obu kol - ulamek promienia tarczy
 $Script:KsiezycKat          = -45    # kierunek wyciecia w stopniach; os Y rosnie W DOL
@@ -751,6 +768,23 @@ function Get-JezykSkokWiersza {
     $Script:OdstepPodEtykieta + $WysokoscPola + $Script:PrzerwaWierszy
 }
 
+# Srodek pierwszego wiersza okna dla pola o podanej wysokosci: gorny margines i polowa
+# kontrolki. LICZONY, A NIE WPISANY - kontrolka o wysokosci $WysokoscPola zaczyna sie wtedy
+# dokladnie $Script:MarginesGorny pod paskiem tytulu, przy kazdej czcionce systemu.
+function Get-JezykSrodekWiersza {
+    param([int]$WysokoscPola)
+    $Script:MarginesGorny + [int]($WysokoscPola / 2)
+}
+
+# Gorna krawedz panelu bez listy wyboru: gorny margines, dwa wiersze gornego pasa (domena
+# i wyszukiwanie) i przerwa pod nimi. Liczona z pomiaru z tego samego powodu, co skok
+# wiersza: gdy wiersze jada w gore razem z marginesem, pietro panelu musi jechac z nimi -
+# inaczej przerwa nad panelem rosnie dokladnie o tyle, o ile zwezil sie margines.
+function Get-JezykPietroBezListy {
+    param([int]$WysokoscPola)
+    $Script:MarginesGorny + $Script:PasekDomeny + $WysokoscPola + $Script:PrzerwaWierszy
+}
+
 # Wysokosc pola tekstowego przy podanej czcionce. Styk z systemem, tak jak
 # Get-JezykZalecanaWysokoscPrzycisku: PreferredHeight liczy WinForms z czcionki i z grubosci
 # ramki, czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole.
@@ -842,6 +876,11 @@ function Get-JezykZalecanaWysokoscPrzycisku {
 
     TYLKO W GORE. Wysokosci nadane przy budowie zostaja jako minimum, wiec przycisk nigdy
     nie zrobi sie nizszy, niz przewiduje uklad wiersza.
+
+    MINIMUM TO WYSOKOSC POLA, nigdy liczba dobrana na oko. Stalo tam kiedys wpisane 26 px
+    przy "Odblokuj konto" i 24 px przy "Zamknij" - o cztery i o dwa piksele wyzej niz pola
+    w oknie, bez zadnego powodu. Dopoki siatka byla rozrzutna, nikt tego nie widzial;
+    po scisnieciu wierszy te same przyciski zaczely wygladac przy polach na przerosniete.
 
     POMIAR PO DODANIU PRZYCISKU DO OKNA - wczesniej przycisk ma jeszcze czcionke domyslna.
 
@@ -2393,7 +2432,6 @@ function Show-JezykGrupyAd {
     $margines           = $Script:Margines
     $szerokosc          = $Script:SzerokoscKolumny + 2 * $margines
     $wysokoscListy      = 300
-    $wysokoscPrzycisku  = 24
     $szerokoscPrzycisku = 90
     $odstepEtykiety     = 8
 
@@ -2413,6 +2451,11 @@ function Show-JezykGrupyAd {
         # BEZ -Rejestruj: to okno powstaje na zadanie i ginie w finally { Dispose() }, wiec
         # czyta paleta obowiazujaca w chwili otwarcia i nigdy nie jest przemalowywane.
         Set-JezykWyglad $okno 'Okno'
+
+        # Wysokosc przycisku ROWNA POLU, tak samo jak w oknie glownym. Pomiar wymaga czcionki
+        # okna, wiec stoi tutaj, a nie w bloku wymiarow wyzej; wpisane 24 px bylo od pola
+        # o dwa piksele wyzsze bez powodu.
+        $wysokoscPrzycisku = Get-JezykWysokoscPola $okno.Font
 
         $lblFiltr = New-JezykEtykieta 'Szukaj grupy:' $margines $margines
 
@@ -2532,6 +2575,14 @@ function New-JezykForm {
     $wysokoscPola       = Get-JezykWysokoscPola $form.Font
     $Script:SkokWiersza = Get-JezykSkokWiersza $wysokoscPola
 
+    # PIETRA PANELI RAZEM Z GORNYM PASEM, i z tego samego pomiaru. Gorny margines jest
+    # stala, a oba wiersze nad panelem rosna z czcionka - pietro wpisane liczba zostawialo
+    # nad panelem dokladnie tyle pustki, ile ubylo z gornego marginesu. Musi stac TUTAJ,
+    # przed pierwsza wspolrzedna: z tych dwoch liczb bierze sie i polozenie listy wyboru,
+    # i wysokosc okna.
+    $Script:PanelBezListy = Get-JezykPietroBezListy $wysokoscPola
+    $Script:PanelZListą   = $Script:PanelBezListy + $Script:PasListyWyboru
+
     # Pole "Status:" jest jedyne dwulinijkowe w calym oknie - niesie najdluzsze teksty.
     # TA SAMA ARYTMETYKA, ktora nadaje mu wysokosc w sekcji wyrownania: druga linijka to
     # wysokosc linii pisma, a nie liczba dobrana na oko. Liczona tutaj, bo z niej bierze
@@ -2542,8 +2593,27 @@ function New-JezykForm {
     # DZIEWIEC WIERSZY (0-8). Osmy doszedl razem z polem "Adres IP" - pol polowkowych jest
     # jedenascie, czyli nieparzyscie, a trzy dolne potrzebuja calej szerokosci, wiec jedno
     # miejsce w siatce zostaje wolne i okno uroslo o jeden skok wiersza.
-    $wysokoscPanelu = (Get-JezykWierszPole 8) + $wysokoscStatusu + $Script:PrzerwaWierszy
-    $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + 4 + $Script:PasekPodpisu
+    # PANEL KONCZY SIE NA DOLNEJ KRAWEDZI POLA "Status:", a nie przerwe nizej: panel nie ma
+    # ramki, wiec zapas pod ostatnim polem jest samym powietrzem - i doliczal sie do przerwy
+    # nad podpisem autora.
+    $wysokoscPanelu = (Get-JezykWierszPole 8) + $wysokoscStatusu
+
+    # PAS PODPISU MIERZONY TUTAJ, bo z jego wysokosci bierze sie wysokosc okna. Czcionka
+    # o punkt mniejsza niz w oknie, a z dwojga - kwadrat ikonki motywu albo linia pisma -
+    # bierzemy WIEKSZE: inaczej albo ikonka jest przyciasna, albo napis zostaje ucinany od
+    # dolu przy DPI 125-150%, gdzie pismo rosnie, a wpisana na sztywno liczba by nie urosla.
+    $czcionkaPasa        = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
+    $wysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
+                                       [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
+
+    # PAS PODPISU LEZY DOKLADNIE $Script:PrzerwaWierszy POD OSTATNIM POLEM - tym samym
+    # odstepem, co miedzy wierszami. Dotad ta przerwa byla RESZTA dwoch niezaleznych
+    # arytmetyk: panel mial pod polem przerwe zapasu, a pas byl kotwiczony od DOLU okna
+    # (stala 22 px) i wypadal jeszcze szesc pikseli nizej, wiec nad podpisem stalo 14 px
+    # pustki i zadna liczba w kodzie tego nie nazywala. Koncowe "+ 2" to dolny margines
+    # pasa - ta sama dwojka, co w $lblAutor.Top nizej.
+    $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + $Script:PrzerwaWierszy +
+                      $wysokoscPasaPodpisu + 2
     $form.ClientSize      = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscOkna)
 
     # SIATKA JEST WYZSZA O JEDEN WIERSZ NIZ PRZED DOLOZENIEM ADRESU IP, a wspolrzedne rosna
@@ -2586,12 +2656,12 @@ function New-JezykForm {
 
     # --- WIERSZ DOMENY I WIERSZ WYSZUKIWANIA -----------------------------------------
     # Wspolny slupek na etykiety, zeby obie listy zaczynaly sie w tej samej wspolrzednej.
-    # SRODEK PIERWSZEGO WIERSZA, czyli zarazem gorny margines okna: kontrolka o zwyklej
-    # wysokosci 21 px zaczyna sie osiem pikseli pod paskiem tytulu. Przy wiekszej czcionce
-    # wiersz rosnie w obie strony i margines sam sie zwezi - to swiadoma cena za to, ze
-    # wiersz zostaje na jednej wspolrzednej.
+    # SRODEK PIERWSZEGO WIERSZA Z GORNEGO MARGINESU I Z POMIARU POLA. Wpisana wspolrzedna
+    # srodka znaczyla margines tym wezszy, im wieksza czcionka systemu: przy 100% DPI
+    # zostawalo osiem pikseli, przy "Rozmiarze tekstu" 150% - trzy. Dzis margines jest
+    # stala ($Script:MarginesGorny), a srodek wiersza rosnie razem z kontrolka.
     $slupekEtykiet = 70
-    $srodekDomeny  = 18
+    $srodekDomeny  = Get-JezykSrodekWiersza $wysokoscPola
     # Z PIERWSZEGO SRODKA, nie druga kopia tej samej liczby: dwie kopie rozjada sie przy
     # pierwszej zmianie gornego marginesu.
     $srodekPodaj   = $srodekDomeny + $Script:PasekDomeny
@@ -2629,6 +2699,10 @@ function New-JezykForm {
     $btnSzukaj           = New-Object System.Windows.Forms.Button
     $btnSzukaj.Text      = 'Szukaj'
     $btnSzukaj.Width     = 96
+    # WYSOKOSC ROWNA POLU jako minimum - liczba wpisana recznie zgadzalaby sie wylacznie
+    # przy jednej czcionce, a domyslna wysokosc Buttona jest od pola o piksel wieksza bez
+    # powodu. Set-JezykWysokoscPrzycisku podniesie ja nizej, jesli napis tego wymaga.
+    $btnSzukaj.Height    = $wysokoscPola
     $btnSzukaj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnSzukaj.Width
     $btnSzukaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnSzukaj 'Przycisk' -Rejestruj
@@ -2709,7 +2783,10 @@ function New-JezykForm {
     $btnOdblokuj           = New-Object System.Windows.Forms.Button
     $btnOdblokuj.Text      = 'Odblokuj konto'
     $btnOdblokuj.Width     = 130
-    $btnOdblokuj.Height    = 26
+    # WYSOKOSC ROWNA POLU, a nie wpisane 26 px. Tamta liczba byla o cztery piksele wyzsza
+    # od pol w oknie i po scisnieciu siatki przycisk wygladal przy nich na przerosniety.
+    # O to, ile napis faktycznie potrzebuje, pyta nizej Set-JezykWysokoscPrzycisku.
+    $btnOdblokuj.Height    = $wysokoscPola
     $btnOdblokuj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnOdblokuj.Width
     $btnOdblokuj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnOdblokuj 'Przycisk' -Rejestruj
@@ -2803,7 +2880,7 @@ function New-JezykForm {
     $btnPinguj           = New-Object System.Windows.Forms.Button
     $btnPinguj.Text      = 'Pinguj'
     $btnPinguj.Width     = $szerokoscPingu
-    $btnPinguj.Height    = 22
+    $btnPinguj.Height    = $wysokoscPola
     $btnPinguj.Left      = $P + $W - $szerokoscPingu
     $btnPinguj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnPinguj 'Przycisk' -Rejestruj
@@ -2821,7 +2898,7 @@ function New-JezykForm {
     $btnPolacz           = New-Object System.Windows.Forms.Button
     $btnPolacz.Text      = 'Połącz'
     $btnPolacz.Width     = $szerokoscPingu
-    $btnPolacz.Height    = 22
+    $btnPolacz.Height    = $wysokoscPola
     $btnPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnPolacz 'Przycisk' -Rejestruj
     $btnPolacz.Visible   = $false
@@ -2887,7 +2964,7 @@ function New-JezykForm {
     $btnGrupyAd           = New-Object System.Windows.Forms.Button
     $btnGrupyAd.Text      = 'Wyświetl grupy'
     $btnGrupyAd.Width     = $W
-    $btnGrupyAd.Height    = 22
+    $btnGrupyAd.Height    = $wysokoscPola
     $btnGrupyAd.Left      = $P
     $btnGrupyAd.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnGrupyAd 'Przycisk' -Rejestruj
@@ -2936,9 +3013,10 @@ function New-JezykForm {
     # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
+    # Bez zapasu pod ostatnim polem - ta sama arytmetyka, co w panelu konta wyzej.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
                                                      ($kompWiersz5 + $Script:OdstepPodEtykieta +
-                                                      $wysokoscStatusu + $Script:PrzerwaWierszy))
+                                                      $wysokoscStatusu))
     $pnlKomputer.Visible = $false
 
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
@@ -2991,7 +3069,7 @@ function New-JezykForm {
     $btnKompPinguj           = New-Object System.Windows.Forms.Button
     $btnKompPinguj.Text      = 'Pinguj'
     $btnKompPinguj.Width     = $szerokoscPingu
-    $btnKompPinguj.Height    = 22
+    $btnKompPinguj.Height    = $wysokoscPola
     $btnKompPinguj.Left      = $Script:DrugaKolumna + $Script:SzerokoscKolumny - $szerokoscPingu
     $btnKompPinguj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnKompPinguj 'Przycisk' -Rejestruj
@@ -3006,7 +3084,7 @@ function New-JezykForm {
     $btnKompPolacz           = New-Object System.Windows.Forms.Button
     $btnKompPolacz.Text      = 'Połącz'
     $btnKompPolacz.Width     = $szerokoscPingu
-    $btnKompPolacz.Height    = 22
+    $btnKompPolacz.Height    = $wysokoscPola
     $btnKompPolacz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnKompPolacz 'Przycisk' -Rejestruj
     $btnKompPolacz.Visible   = $false
@@ -3032,20 +3110,10 @@ function New-JezykForm {
                                      $lblKompIp, $txtKompIp, $btnKompPinguj, $btnKompPolacz,
                                      $lblKompStatus, $txtKompStatus, $btnInfoStatusMaszyny))
 
-    # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA.
-    #
-    # WYSOKOSC PASA LICZYMY Z CZCIONKI, a nie z AutoSize etykiety - potrzebuje jej juz
-    # wspolrzedna Top, a etykieta zna swoj rozmiar dopiero po dodaniu do okna. Bierzemy
-    # wieksze z dwojga: kwadrat ikonki albo linie pisma. Dzieki temu ani ikonka nie jest
-    # przyciasna, ani napis nie zostaje obciety od dolu przy DPI 125-150%, gdzie pismo
-    # rosnie, a wpisana na sztywno liczba by nie urosla.
-    #
-    # Przy 100% DPI wychodzi z tego 18 + 2, czyli DOKLADNIE te same 20 pikseli, ktore byly
-    # tu wpisane wprost - jasny motyw wyglada wiec tak samo, jak przed ta zmiana.
-    $czcionkaPasa        = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
-    $wysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
-                                       [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
-
+    # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA. Wysokosc
+    # pasa ($wysokoscPasaPodpisu) i jego czcionka sa policzone NA POCZATKU tej funkcji,
+    # bo z tej samej liczby bierze sie wysokosc okna - dwie kopie rozjechalyby sie przy
+    # pierwszej zmianie i podpis wyladowalby obok dolnej krawedzi.
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
     $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) `
                                             $Script:Margines ($wysokoscOkna - $wysokoscPasaPodpisu - 2)
