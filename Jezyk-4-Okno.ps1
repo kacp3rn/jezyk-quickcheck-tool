@@ -14,22 +14,41 @@ trap { Register-JezykBladCzesci $_; continue }
 # --- RYTM SIATKI ---------------------------------------------------------------------
 # ZADNA wspolrzedna kontrolki nie jest wpisana recznie - wszystkie wyliczaja sie z ponizszych
 # stalych. Zmiana odstepow to zmiana jednej liczby zamiast przeliczania osiemnastu na piechote.
-# Odstepy sa rozrzutne celowo: pola biora wysokosc z czcionki, wiec przy skalowaniu DPI
-# 125-150% rosna, a wspolrzedne zostaja - zapas chroni wtedy przed nachodzeniem wierszy.
+# Odstepy BYLY rozrzutne celowo: pola biora wysokosc z czcionki, wiec przy skalowaniu DPI
+# 125-150% rosna, a wspolrzedne zostaja - zapas chronil wtedy przed nachodzeniem wierszy.
+# Cena byla jednak stala: przy zwyklej czcionce ten sam zapas zostawal miedzy polami jako
+# pustka, ktorej nikt nie potrzebowal. Dlatego skok wiersza NIE JEST juz wpisana liczba,
+# tylko wynikiem pomiaru pola (patrz $Script:SkokWiersza nizej) - rosnie wtedy, gdy rosnie
+# czcionka, i tylko wtedy.
 
 # Wiersz z wyborem domeny stoi nad wszystkim, wiec reszta okna schodzi o jego wysokosc.
-$Script:PasekDomeny   = 34
+$Script:PasekDomeny   = 30
 
 # ZADNEGO WLASNEGO PASA NA WSKAZNIK PRACY. Pasek postepu mial tu kiedys swoje dziesiec
 # pikseli pod wierszem wyszukiwania; zastapil go jez, ktory stoi w miejscu JUZ PUSTYM -
 # w prawej, niezajetej czesci wiersza domeny (patrz sekcja JEZ nizej). Dlatego panele
 # wracaja do wspolrzednych sprzed paska i okno jest o te dziesiec pikseli nizsze.
-$Script:PanelBezListy = 46 + $Script:PasekDomeny
-$Script:PanelZListą   = 80 + $Script:PasekDomeny
+$Script:PanelBezListy = 39 + $Script:PasekDomeny
+# Pietro z lista wyboru LICZONE OD PIETRA BEZ NIEJ: roznica to miejsce na sama liste,
+# wiec zmiana jednego z tych dwoch nie moze zostawic drugiego w tyle.
+$Script:PanelZListą   = $Script:PanelBezListy + 30
 
-$Script:PierwszyWiersz     = 100   # y etykiety pierwszego wiersza wewnatrz panelu konta
-$Script:SkokWiersza        = 58    # odleglosc miedzy kolejnymi wierszami
+$Script:PierwszyWiersz     = 92    # y etykiety pierwszego wiersza wewnatrz panelu konta
 $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
+
+# Odstep od DOLU pola do etykiety nastepnego wiersza - jedyna liczba opisujaca gestosc
+# siatki. Cala reszta skoku to miejsce, ktore zajmuja sama etykieta i samo pole.
+$Script:PrzerwaWierszy     = 8
+
+# Odleglosc miedzy kolejnymi wierszami. LICZONA Z WYSOKOSCI POLA, a nie wpisana na sztywno:
+# wiersze stoja na stalych wspolrzednych, a pole bierze wysokosc z czcionki okna, ktora
+# Windows powieksza przy skalowaniu ekranu i przy ustawieniu "Rozmiar tekstu". Liczba
+# wpisana recznie musialaby wiec obsluzyc najwieksza czcionke - i przy zwyklej zostawiala
+# miedzy wierszami dwa razy wiecej pustki, niz trzeba.
+#
+# TA WARTOSC TO WYLACZNIE PUNKT STARTOWY, policzony dla pola o zwyklej wysokosci 22 px.
+# New-JezykForm przelicza ja z FAKTYCZNEGO pomiaru, zanim postawi pierwsza kontrolke.
+$Script:SkokWiersza        = $Script:OdstepPodEtykieta + 22 + $Script:PrzerwaWierszy
 
 # Pusty pas, ktory pudelko znacznika BEZ TEKSTU ma za kwadratem - WinForms dokleja za nim
 # piksel odstepu i piksel zapasu. Napis znacznika liczy sie od KONCA KWADRATU (patrz
@@ -724,6 +743,31 @@ function Get-JezykWiersz { param([int]$Numer) $Script:PierwszyWiersz + $Script:S
 # y POLA nalezacego do wiersza o podanym numerze.
 function Get-JezykWierszPole { param([int]$Numer) (Get-JezykWiersz $Numer) + $Script:OdstepPodEtykieta }
 
+# Skok wiersza dla pola o podanej wysokosci: etykieta, jej pole i przerwa do nastepnej
+# etykiety. Wydzielona z samego pomiaru, zeby arytmetyke dalo sie sprawdzic dla calego
+# zakresu czcionek, a nie tylko dla tej, ktora akurat ma maszyna.
+function Get-JezykSkokWiersza {
+    param([int]$WysokoscPola)
+    $Script:OdstepPodEtykieta + $WysokoscPola + $Script:PrzerwaWierszy
+}
+
+# Wysokosc pola tekstowego przy podanej czcionce. Styk z systemem, tak jak
+# Get-JezykZalecanaWysokoscPrzycisku: PreferredHeight liczy WinForms z czcionki i z grubosci
+# ramki, czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole.
+#
+# Pole POWOLANE NA BOKU i od razu zwolnione - nie ma go w oknie i nie ma byc. Pytamy
+# o miare, zanim powstanie pierwsza kontrolka, bo od niej zalezy caly rytm siatki.
+function Get-JezykWysokoscPola {
+    param($Czcionka)
+
+    $pole = New-Object System.Windows.Forms.TextBox
+    try {
+        $pole.Font = $Czcionka
+        $pole.PreferredHeight
+    }
+    finally { $pole.Dispose() }
+}
+
 # Wyrownuje kontrolki w PIONIE do wspolnego srodka wiersza. WinForms wylicza wysokosc listy
 # rozwijanej i przycisku z czcionki, a nie z tego, co wpiszemy w Size - wspolrzedne wpisane
 # recznie zgadzaja sie wiec tylko przy 100% DPI. Zamiast zgadywac liczby, pytamy kontrolki
@@ -766,13 +810,12 @@ function Set-JezykPonizejPola {
     }
 }
 
-# Wysokosc napisu kontrolki w pikselach. Wydzielona, bo TextRenderer to styk z systemem:
-# mierzy tekst przez GDI, czyli TA SAMA miara, z ktora WinForms porownuje miejsce na napis
-# przycisku. Zestaw weryfikacyjny podstawia tu wlasna liczbe - jak przy
-# Get-JezykSzerokoscStrzalki.
-function Get-JezykWysokoscNapisu {
-    param($Kontrolka)
-    [System.Windows.Forms.TextRenderer]::MeasureText([string]$Kontrolka.Text, $Kontrolka.Font).Height
+# Wysokosc, jakiej przycisk potrzebuje na SWOJ napis - policzona przez samego WinForms.
+# Styk z systemem, tak jak Get-JezykSzerokoscStrzalki: zestaw weryfikacyjny podstawia tu
+# wlasna liczbe, a cala reszta poprawki wykonuje sie naprawde.
+function Get-JezykZalecanaWysokoscPrzycisku {
+    param($Przycisk)
+    $Przycisk.GetPreferredSize([System.Drawing.Size]::Empty).Height
 }
 
 <#
@@ -780,32 +823,32 @@ function Get-JezykWysokoscNapisu {
     Podnosi przycisk do wysokosci, przy ktorej jego napis nie jest uciety od dolu.
 
 .DESCRIPTION
-    MIEJSCE NA NAPIS PRZYCISKU Flat TO WYSOKOSC MINUS RAMKA I STALY MARGINES. WinForms
-    odejmuje z kazdej strony grubosc ramki i jeszcze 2 px, a napis wyzszy od tego, co
-    zostalo, rysuje OD GORY i przycina od dolu. Przy 22 px zostaje 16 px - ledwie tyle, ile
-    ma napis przy 100% i zwyklym rozmiarze tekstu. Czcionka okna rosnie jednak ze
-    skalowaniem ekranu i z ustawieniem "Rozmiar tekstu" w Windows, a wysokosc wpisana na
-    sztywno nie - stad uciete od dolu "Pinguj" i "Polacz".
+    O WYSOKOSC PYTAMY SAM PRZYCISK, nie liczymy jej wlasnym wzorem. Miejsca na napis nie
+    wyznacza samo pudelko: WinForms odejmuje od niego ramke stylu Flat, grubosc podana
+    w FlatAppearance.BorderSize, staly margines wewnetrzny i Padding. GetPreferredSize
+    przechodzi dokladnie ta sama arytmetyke, ktora przycisk rysuje potem napis, wiec obie
+    strony nie moga sie rozjechac.
 
-    PRZYCISK DOMYSLNY (AcceptButton) ma ramke grubsza o piksel, wiec potrzebuje dwoch
-    pikseli wiecej. Przelacznik jest jawny: w chwili pomiaru okno nie ma jeszcze
-    ustawionego AcceptButton i IsDefault nie mowi prawdy.
+    WLASNY WZOR ROZJECHAL SIE O PIKSEL I NIC TEGO NIE ZGLOSILO. Stalo tu
+    "napis + 2 * (ramka + 2)", co przy wpisanych 22 px dawalo napisowi 14 px zamiast 15 -
+    i czynne "Pinguj", "Polacz" oraz "Szukaj" tracily ogonki liter (g, j, y, a z ogonkiem).
+    Wylaczony przycisk wygladal przy tym dobrze, bo jego napis domalowuje
+    Set-JezykRysunekWylaczonegoPrzycisku w CALYM prostokacie kontrolki - stad usterka
+    widoczna wylacznie wtedy, gdy przycisk stawal sie klikalny.
 
-    TYLKO W GORE. Przy zwyklej czcionce przyciski zostaja dokladnie tak wysokie, jak byly,
-    a z nimi caly uklad wiersza.
+    PRZYCISK DOMYSLNY (AcceptButton) ma ramke grubsza o piksel z kazdej strony, a w chwili
+    pomiaru okno nie ma jeszcze ustawionego AcceptButton i IsDefault nie mowi prawdy -
+    stad jawny przelacznik i dwa piksele doliczone recznie.
+
+    TYLKO W GORE. Wysokosci nadane przy budowie zostaja jako minimum, wiec przycisk nigdy
+    nie zrobi sie nizszy, niz przewiduje uklad wiersza.
 
     POMIAR PO DODANIU PRZYCISKU DO OKNA - wczesniej przycisk ma jeszcze czcionke domyslna.
 
-    NAPIS RYSOWANY PRZEZ GDI (TextRenderer), i to przelaczamy TUTAJ. Bez wywolania
-    Application.SetCompatibleTextRenderingDefault($false) .NET Framework rysuje napis
-    przycisku przez GDI+, a ta droga ma na niego o kolejne 2 px z kazdej strony mniej
-    i przycina do tego prostokata i pomiar, i rysunek - napis 16 px w przycisku 22 px
-    tracil gore i ogonki liter (g, j, y, p, a z ogonkiem). Wylaczony przycisk wygladal
-    przy tym dobrze, bo jego napis domalowuje Set-JezykRysunekWylaczonegoPrzycisku przez
-    TextRenderer. Arytmetyka ponizej i pomiar w Get-JezykWysokoscNapisu opisuja
-    WYLACZNIE droge GDI, wiec przelacznik stoi w tej samej funkcji - kazdy przycisk, ktory
-    rosnie z napisem, dostaje go razem z nia. Globalnego przelacznika nie ruszamy: zmienilby
-    miare wszystkich etykiet, a pod nia jest wywazony caly uklad okna.
+    NAPIS RYSOWANY PRZEZ GDI (TextRenderer), i to przelaczamy TUTAJ, PRZED pomiarem: to ta
+    wlasciwosc decyduje, ktora miara WinForms policzy napis i ktora go potem narysuje.
+    Globalnego przelacznika (Application.SetCompatibleTextRenderingDefault) nie ruszamy -
+    zmienilby miare wszystkich etykiet, a pod nia jest wywazony caly uklad okna.
 #>
 function Set-JezykWysokoscPrzycisku {
     param($Przycisk, [switch]$Domyslny)
@@ -814,16 +857,13 @@ function Set-JezykWysokoscPrzycisku {
 
     $Przycisk.UseCompatibleTextRendering = $false
 
-    $marginesNapisu = 2
-    $ramka = [int]$Przycisk.FlatAppearance.BorderSize
-    if ($Domyslny) { $ramka++ }
+    $potrzebna = Get-JezykZalecanaWysokoscPrzycisku $Przycisk
+    if ($Domyslny) { $potrzebna += 2 }
 
-    $potrzebna = (Get-JezykWysokoscNapisu $Przycisk) + 2 * ($ramka + $marginesNapisu) +
-                 $Przycisk.Padding.Vertical
     if ($potrzebna -gt $Przycisk.Height) { $Przycisk.Height = $potrzebna }
 }
 
-# Szerokosc spacji w podanej czcionce. Styk z systemem, tak jak Get-JezykWysokoscNapisu.
+# Szerokosc spacji w podanej czcionce. Styk z systemem, tak jak Get-JezykSzerokoscStrzalki.
 # ROZNICA DWOCH POMIAROW, a nie pomiar samej spacji: GDI dokleja do kazdego mierzonego
 # napisu marginesy, wiec " " zmierzona osobno bylaby szersza od spacji miedzy slowami.
 # NoPadding zdejmuje te marginesy z obu pomiarow.
@@ -2476,13 +2516,34 @@ function New-JezykForm {
     # wiekszosc powierzchni okna w obu motywach.
     Set-JezykWyglad $form 'Okno' -Rejestruj
 
+    # CZCIONKA JAKO PIERWSZA, PRZED LICZENIEM CZEGOKOLWIEK. MessageBoxFont zamiast
+    # zaszytego 'Segoe UI 9': to czcionka, ktorej system faktycznie uzywa w oknach
+    # dialogowych - honoruje ustawienia uzytkownika i skalowanie DPI. Ustawiona na
+    # formularzu, bo dzieci dziedzicza ja automatycznie.
+    #
+    # Od niej zalezy wysokosc pola, a od wysokosci pola - caly rytm siatki ponizej, wiec
+    # nie da sie jej przypisac pozniej.
+    $form.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
+
+    # RYTM SIATKI Z FAKTYCZNEJ WYSOKOSCI POLA, a nie z liczby wpisanej w naglowku pliku.
+    # Wiersze stoja na stalych wspolrzednych, a pole rosnie z czcionka systemu: skok
+    # wpisany na sztywno musialby obsluzyc najwieksza czcionke i przy zwyklej zostawialby
+    # miedzy wierszami dwa razy wiecej pustki, niz trzeba.
+    $wysokoscPola       = Get-JezykWysokoscPola $form.Font
+    $Script:SkokWiersza = Get-JezykSkokWiersza $wysokoscPola
+
+    # Pole "Status:" jest jedyne dwulinijkowe w calym oknie - niesie najdluzsze teksty.
+    # TA SAMA ARYTMETYKA, ktora nadaje mu wysokosc w sekcji wyrownania: druga linijka to
+    # wysokosc linii pisma, a nie liczba dobrana na oko. Liczona tutaj, bo z niej bierze
+    # sie wysokosc obu paneli.
+    $drugaLinia      = [int][math]::Ceiling($form.Font.GetHeight())
+    $wysokoscStatusu = $wysokoscPola + $drugaLinia
+
     # DZIEWIEC WIERSZY (0-8). Osmy doszedl razem z polem "Adres IP" - pol polowkowych jest
     # jedenascie, czyli nieparzyscie, a trzy dolne potrzebuja calej szerokosci, wiec jedno
     # miejsce w siatce zostaje wolne i okno uroslo o jeden skok wiersza.
-    # Zapas obejmuje DWIE linijki ostatniego pola: "Status:" niesie najdluzsze teksty
-    # w calym oknie i jest jedynym polem dwulinijkowym - patrz sekcja wyrownania.
-    $wysokoscPanelu = (Get-JezykWierszPole 8) + 58    # ostatnie pole (2 linijki) + margines
-    $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + 12 + $Script:PasekPodpisu
+    $wysokoscPanelu = (Get-JezykWierszPole 8) + $wysokoscStatusu + $Script:PrzerwaWierszy
+    $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + 4 + $Script:PasekPodpisu
     $form.ClientSize      = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscOkna)
 
     # SIATKA JEST WYZSZA O JEDEN WIERSZ NIZ PRZED DOLOZENIEM ADRESU IP, a wspolrzedne rosna
@@ -2515,11 +2576,6 @@ function New-JezykForm {
     $form.MinimizeBox     = $true
     $form.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterScreen
 
-    # MessageBoxFont zamiast zaszytego 'Segoe UI 9': to czcionka, ktorej system faktycznie
-    # uzywa w oknach dialogowych - honoruje ustawienia uzytkownika i skalowanie DPI.
-    # Ustawiona na formularzu, bo dzieci dziedzicza ja automatycznie.
-    $form.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
-
     # Ikona jest opcjonalna i celowo nie przerywa startu: brakujacy plik to drobiazg
     # kosmetyczny i nie moze przeszkodzic w sprawdzeniu konta.
     $plikIkony = Join-Path $Script:KatalogSkryptu 'Ikona-Jezyk.ico'
@@ -2530,9 +2586,15 @@ function New-JezykForm {
 
     # --- WIERSZ DOMENY I WIERSZ WYSZUKIWANIA -----------------------------------------
     # Wspolny slupek na etykiety, zeby obie listy zaczynaly sie w tej samej wspolrzednej.
+    # SRODEK PIERWSZEGO WIERSZA, czyli zarazem gorny margines okna: kontrolka o zwyklej
+    # wysokosci 21 px zaczyna sie osiem pikseli pod paskiem tytulu. Przy wiekszej czcionce
+    # wiersz rosnie w obie strony i margines sam sie zwezi - to swiadoma cena za to, ze
+    # wiersz zostaje na jednej wspolrzednej.
     $slupekEtykiet = 70
-    $srodekDomeny  = 25
-    $srodekPodaj   = 25 + $Script:PasekDomeny
+    $srodekDomeny  = 18
+    # Z PIERWSZEGO SRODKA, nie druga kopia tej samej liczby: dwie kopie rozjada sie przy
+    # pierwszej zmianie gornego marginesu.
+    $srodekPodaj   = $srodekDomeny + $Script:PasekDomeny
 
     $lblDomena = New-JezykEtykieta 'Domena' $Script:Margines 0
     $lblPodaj  = New-JezykEtykieta 'Podaj'  $Script:Margines 0
@@ -2659,7 +2721,7 @@ function New-JezykForm {
     Set-JezykWyglad $grpFlagi 'Okno' -Rejestruj
     $grpFlagi.Text     = ''
     $grpFlagi.Location = [System.Drawing.Point]::new($Script:Margines, 32)
-    $grpFlagi.Size     = [System.Drawing.Size]::new($Script:SzerokoscPelna, 56)
+    $grpFlagi.Size     = [System.Drawing.Size]::new($Script:SzerokoscPelna, 52)
 
     # WSPOLRZEDNE SA TU ZEROWE CELOWO - nadaje je wyrownanie na koncu tej funkcji, tak samo
     # jak przy werdykcie nizej. Znacznik zwiezy sie tam do szerokosci swojego napisu, a nie
@@ -2875,7 +2937,8 @@ function New-JezykForm {
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
     # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
-                                                     ($kompWiersz5 + $Script:OdstepPodEtykieta + 58))
+                                                     ($kompWiersz5 + $Script:OdstepPodEtykieta +
+                                                      $wysokoscStatusu + $Script:PrzerwaWierszy))
     $pnlKomputer.Visible = $false
 
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
@@ -3170,7 +3233,10 @@ function New-JezykForm {
     # PreferredHeight to wysokosc JEDNEJ linii razem z ramka, wiec dokladamy do niej
     # wysokosc kolejnej. Liczba wpisana na sztywno zgadzalaby sie wylacznie przy 100% DPI -
     # ta sama zasada, co przy $wysokoscZnacznika i Set-JezykSrodekPionowy.
-    $drugaLinia = [int][math]::Ceiling($form.Font.GetHeight())
+    #
+    # $drugaLinia policzona JUZ NA POCZATKU tej funkcji, bo z tej samej liczby bierze sie
+    # wysokosc obu paneli ($wysokoscStatusu) - dwie kopie rozjechalyby sie przy pierwszej
+    # zmianie i pole wystawaloby poza panel.
     foreach ($pole in @($txtStatus, $txtKompStatus)) {
         $pole.Height = $pole.PreferredHeight + $drugaLinia
     }
