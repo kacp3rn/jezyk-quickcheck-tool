@@ -1659,7 +1659,7 @@ function New-JezykSkryptTla {
         # NAJLZEJSZE Z CZTERECH ZADAN: sama sonda ICMP na znanej juz nazwie maszyny.
         # Osobne, bo przycisk "Pinguj" ma sprawdzic dostepnosc PONOWNIE, nie powtarzac
         # calego zapytania do SCCM - tamto trwa sekundy i pytaloby o to samo, co juz wiadomo.
-        $funkcje = 'Test-JezykNazwaHosta', 'Get-JezykPingKomputera'
+        $funkcje = 'Test-JezykNazwaHosta', 'Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera'
 
         $naglowek  = 'param($Netbios)'
         $wywolanie = 'Get-JezykPingKomputera -Nazwa $Netbios'
@@ -1685,8 +1685,10 @@ function New-JezykSkryptTla {
         # pinguje niczego, a funkcja wstrzyknieta bez potrzeby to martwy kod w przestrzeni.
         # Get-JezykKontaMaszyny dochodzi tu z tego samego powodu, co Get-JezykPingKomputera -
         # wola ja Get-JezykOstatnioUzywanyKomputer, wiec bez niej zadanie konczy sie cisza.
-        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykKontaMaszyny',
-                                    'Get-JezykMacDlaAdresu', 'Get-JezykOstatnioUzywanyKomputer')
+        $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
+                             'Get-JezykKontaZPola', 'Get-JezykKontaMaszyny',
+                             'Select-JezykMaszyneDlaLoginu', 'Get-JezykMacDlaAdresu',
+                             'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
         $naglowek  = 'param($Login, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
@@ -1698,8 +1700,8 @@ function New-JezykSkryptTla {
         # Wejsciem jest droga ODWROTNA: OD MASZYNY DO UZYTKOWNIKA.
         # Sonda i dopasowanie karty sieciowej jada w tym samym zadaniu, tak samo jak po
         # drugiej stronie okna - Test-JezykNazwaHosta jest juz w $sccm.
-        $funkcje = $sccm + @('Get-JezykPingKomputera', 'Get-JezykMacDlaAdresu',
-                             'Get-JezykUzytkownikKomputera')
+        $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
+                             'Get-JezykMacDlaAdresu', 'Get-JezykUzytkownikKomputera')
 
         $naglowek  = 'param($Netbios, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
         $wywolanie = 'Get-JezykUzytkownikKomputera -Netbios $Netbios -Serwer $SccmSerwer' +

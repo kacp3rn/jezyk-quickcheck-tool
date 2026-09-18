@@ -1169,6 +1169,34 @@ function ConvertTo-JezykCzasLokalny {
 
 <#
 .SYNOPSIS
+    Nazwy kont zapisane w JEDNYM polu SCCM - kazda bez przedrostka domeny.
+
+.DESCRIPTION
+    Jedna regula rozbierania takiego pola, w jednym miejscu. Pola z nazwami uzytkownikow
+    bywaja zapisane raz jako "konto", raz jako "DOMENA\konto", a PrimaryUser dodatkowo bywa
+    LISTA kont oddzielonych przecinkami. Korzystaja z tej reguly dwie rzeczy: licznik
+    odrebnych kont na maszynie i dopasowanie loginu do wiersza - czyli miejsce, w ktorym
+    zapada decyzja, czyja to maszyna. Dwie kopie rozjechalyby sie przy pierwszej zmianie.
+#>
+function Get-JezykKontaZPola {
+    param([string]$Wartosc)
+
+    $konta = New-Object System.Collections.Generic.List[string]
+
+    foreach ($wpis in ([string]$Wartosc) -split ',') {
+        $czysty = $wpis.Trim()
+        if (-not $czysty) { continue }
+
+        # Ostatni czlon, a nie pierwszy: "DOMENA\konto" ma oddac "konto".
+        $konta.Add(($czysty -split '\\')[-1])
+    }
+
+    # Przecinek wymuszony - patrz Get-JezykKontaMaszyny nizej.
+    return ,$konta.ToArray()
+}
+
+<#
+.SYNOPSIS
     Odrebne konta widoczne na maszynie wg CurrentLogonUser/LastLogonUser/PrimaryUser.
 
 .DESCRIPTION
@@ -1186,15 +1214,12 @@ function Get-JezykKontaMaszyny {
 
     $konta    = New-Object System.Collections.Generic.List[string]
     $widziane = @{}
-    $surowe   = @([string]$Wiersz.CurrentLogonUser, [string]$Wiersz.LastLogonUser) +
-                @(([string]$Wiersz.PrimaryUser) -split ',')
+    $surowe   = (Get-JezykKontaZPola ([string]$Wiersz.CurrentLogonUser)) +
+                (Get-JezykKontaZPola ([string]$Wiersz.LastLogonUser)) +
+                (Get-JezykKontaZPola ([string]$Wiersz.PrimaryUser))
 
-    foreach ($wpis in $surowe) {
-        $czysty = $wpis.Trim()
-        if (-not $czysty) { continue }
-
-        $bezDomeny = ($czysty -split '\\')[-1]
-        $klucz     = $bezDomeny.ToLowerInvariant()
+    foreach ($bezDomeny in $surowe) {
+        $klucz = $bezDomeny.ToLowerInvariant()
         if ($widziane.ContainsKey($klucz)) { continue }
 
         $widziane[$klucz] = $true
@@ -1244,13 +1269,103 @@ function Get-JezykMacDlaAdresu {
 
     if (-not $Adres) { return '' }
 
+    $szukany = $Adres.Trim()
+
     foreach ($karta in @($Karty)) {
         if (-not $karta) { continue }
         if (-not $karta.MACAddress) { continue }
-        if (@($karta.IPAddress) -contains $Adres) { return [string]$karta.MACAddress }
+
+        # KSZTALTU IPAddress NIE ZAKLADAMY. Inwentaryzacja sprzetu splaszcza wlasciwosci
+        # tablicowe do jednego napisu, wiec ta sama karta potrafi przyjsc raz jako tablica
+        # adresow, a raz jako "10.0.0.5, fe80::1" w calosci - a wtedy porownanie calego
+        # napisu z pojedynczym adresem jest falszywe dla KAZDEJ karty z IPv6 i adres MAC
+        # po prostu nie wychodzi. Rozbieramy wiec kazdy element, zamiast ufac, ze jest juz
+        # rozebrany. Porownanie zostaje DOKLADNE: fragment adresu nie jest adresem.
+        $adresyKarty = New-Object System.Collections.Generic.List[string]
+        foreach ($wpis in @($karta.IPAddress)) {
+            foreach ($czesc in ([string]$wpis) -split '[,;]') {
+                $czysta = $czesc.Trim()
+                if ($czysta) { $adresyKarty.Add($czysta) }
+            }
+        }
+
+        if ($adresyKarty -contains $szukany) { return [string]$karta.MACAddress }
     }
 
     return ''
+}
+
+<#
+.SYNOPSIS
+    Wybiera z wierszy SCCM maszyne nalezaca do podanego loginu - i mowi, po czym ja poznal.
+
+.DESCRIPTION
+    TO TUTAJ ZAPADA DECYZJA, CZY TO TEN LOGIN, a nie w zapytaniu WQL. Wzorzec LIKE robi
+    wylacznie zgrubny przesiew, bo tego, jak dostawca SMS traktuje w nim odwrotny ukosnik,
+    nie da sie orzec z gory: przy jednej interpretacji "%\\jan" znaczy "cokolwiek, ukosnik,
+    jan", przy drugiej - "cokolwiek i DWA ukosniki". Zapis "DOMENA\jan" wypadal przez to raz
+    tak, raz inaczej - stad zgloszenie "czasami nie pokazuje komputera", choc uzytkownik byl
+    zalogowany. Tutaj regul nie musimy zgadywac, bo rozbieramy pole sami.
+
+    PRZESIEW JEST SZERSZY NIZ ODPOWIEDZ i tak ma byc: "%jan%" lapie tez "janine" i "bojana",
+    a podkreslenie jest w LIKE znakiem wieloznacznym, wiec "jan_k" lapie "jan1k". Dopasowanie
+    ponizej jest dokladne, wiec wszystko to odpada - i wlasnie dlatego wzorzec nie potrzebuje
+    juz zadnego uciekania znakow.
+
+    KOLEJNOSC POL NIESIE ODPOWIEDZ NA PYTANIE OPERATORA. Pyta on, przy ktorej maszynie ta
+    osoba siedzi: CurrentLogonUser znaczy "siedzi przy niej teraz", LastLogonUser - "siedziala
+    ostatnio", a PrimaryUser to przypisanie, a nie zdarzenie. Data aktywnosci rozstrzyga
+    dopiero WEWNATRZ stopnia; liczona ponad nim wysuwalaby wiecznie wlaczony komputer wspolny
+    przed laptopa, przy ktorym operator faktycznie kogos szuka.
+
+    Porownanie idzie BEZ WZGLEDU NA WIELKOSC LITER (-contains, nie -ccontains) i tak ma
+    zostac: AD nie rozroznia wielkosci w nazwie konta, a SCCM zapisuje ja tak, jak przyszla
+    od klienta. To jest odwrotnosc pulapki z nazwami zmiennych - tam wielkosc liter MUSI byc
+    brana pod uwage, tutaj brac jej pod uwage nie wolno.
+
+    Wiersz bez nazwy maszyny nie liczy sie za trafienie: nie ma go czym pokazac w polu,
+    a zajalby miejsce prawdziwej odpowiedzi z kolejnego zrodla.
+#>
+function Select-JezykMaszyneDlaLoginu {
+    param($Wiersze, [string]$Login,
+          $Pola = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser'))
+
+    $wynik = [pscustomobject]@{ Wiersz = $null; Pole = ''; Data = $null; Ile = 0 }
+    if (-not $Login) { return $wynik }
+
+    $nazwyPol = @($Pola)
+    $najlepszy = $nazwyPol.Count
+
+    foreach ($wiersz in @($Wiersze)) {
+        if (-not $wiersz) { continue }
+        if (-not ($wiersz.Name -or $wiersz.NetbiosName)) { continue }
+
+        $stopien = -1
+        for ($i = 0; $i -lt $nazwyPol.Count; $i++) {
+            $nazwaPola = $nazwyPol[$i]
+            if ((Get-JezykKontaZPola ([string]$wiersz.$nazwaPola)) -contains $Login) {
+                $stopien = $i
+                break
+            }
+        }
+        if ($stopien -lt 0) { continue }
+
+        $wynik.Ile++
+        $kiedy = ConvertTo-JezykCzasLokalny $wiersz.LastActiveTime
+
+        # Nizszy stopien bije kazda date; data rozstrzyga tylko w obrebie tego samego.
+        $lepszy = ($null -eq $wynik.Wiersz) -or ($stopien -lt $najlepszy) -or
+                  ($stopien -eq $najlepszy -and $null -ne $kiedy -and
+                   ($null -eq $wynik.Data -or $kiedy -gt $wynik.Data))
+        if (-not $lepszy) { continue }
+
+        $wynik.Wiersz = $wiersz
+        $wynik.Pole   = $nazwyPol[$stopien]
+        $wynik.Data   = $kiedy
+        $najlepszy    = $stopien
+    }
+
+    return $wynik
 }
 
 function Get-JezykOstatnioUzywanyKomputer {
@@ -1287,11 +1402,6 @@ function Get-JezykOstatnioUzywanyKomputer {
     # Apostrofy podwajamy mimo bialej listy wyzej - dwie niezalezne zapory zamiast jednej.
     $bezpieczny = $Login -replace "'", "''"
 
-    # Wzorzec LIKE ma WLASNY zestaw znakow o znaczeniu skladniowym: \ jest znakiem ucieczki,
-    # a % _ [ sa wieloznaczne. Podkreslenie PRZECHODZI biala liste nazw kont, wiec bez tego
-    # "jan_k" pasowalby takze do "jan1k" i wynik potrafilby wskazac cudza maszyne.
-    $doWzorca = $bezpieczny -replace '([\\%_\[])', '\$1'
-
     $sesja = Open-JezykSesjaSccm -Serwer   $polaczenie.Serwer `
                                  -Protokol $polaczenie.Protokol `
                                  -Zapasowy $ProtokolZapasowy `
@@ -1314,31 +1424,44 @@ function Get-JezykOstatnioUzywanyKomputer {
         # tego, co konsola pokazuje bez trudu. Ta klasa niesie od razu Name i LastActiveTime,
         # wiec przy trafieniu nie ma juz osobnego zapytania o date.
         #
-        # Nazwy uzytkownika bywaja zapisane jako "konto" albo "DOMENA\konto", stad kazde
-        # pole sprawdzane na oba sposoby. PrimaryUser potrafi byc LISTA kont oddzielonych
-        # przecinkami - tam dopasowanie musi byc fragmentem.
+        # WZORZEC JEST PRZESIEWEM, NIE ODPOWIEDZIA. Nazwy uzytkownika bywaja zapisane raz
+        # jako "konto", raz jako "DOMENA\konto", a PrimaryUser potrafi byc LISTA kont po
+        # przecinku - dotad lapal to wzorzec "%\\konto", czyli ZALOZENIE o tym, ze dostawca
+        # SMS traktuje odwrotny ukosnik jako znak ucieczki. Zalozenia nie da sie sprawdzic
+        # ani stad, ani testem, a gdy jest falszywe, zapis z domena nie trafia NIGDY.
+        # Dlatego wzorzec nie zawiera juz ukosnika ani uciekania znakow, a o tym, czy to ten
+        # login, rozstrzyga Select-JezykMaszyneDlaLoginu - patrz jego opis.
+        #
+        # Pole, po ktorym przesiewamy, musi tez byc W SELECT: bez niego dopasowanie nie ma
+        # czego czytac i odrzucaloby kazdy wiersz zrodla 2 i 3.
         $zrodla = @(
             @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
                Wql   = "SELECT ResourceID, Name, LastActiveTime, CurrentLogonUser, LastLogonUser, PrimaryUser " +
                        "FROM SMS_CombinedDeviceResources " +
-                       "WHERE CurrentLogonUser = '$bezpieczny' OR CurrentLogonUser LIKE '%\\$doWzorca' " +
-                       "OR LastLogonUser = '$bezpieczny' OR LastLogonUser LIKE '%\\$doWzorca' " +
-                       "OR PrimaryUser LIKE '%$doWzorca%'" }
+                       "WHERE CurrentLogonUser LIKE '%$bezpieczny%' " +
+                       "OR LastLogonUser LIKE '%$bezpieczny%' " +
+                       "OR PrimaryUser LIKE '%$bezpieczny%'"
+               Pola  = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser') }
 
             @{ Nazwa = 'SMS_R_System.LastLogonUserName'
-               Wql   = "SELECT ResourceId, Name, NetbiosName FROM SMS_R_System " +
-                       "WHERE LastLogonUserName = '$bezpieczny' OR LastLogonUserName LIKE '%\\$doWzorca'" }
+               Wql   = "SELECT ResourceId, Name, NetbiosName, LastLogonUserName FROM SMS_R_System " +
+                       "WHERE LastLogonUserName LIKE '%$bezpieczny%'"
+               Pola  = @('LastLogonUserName') }
 
             @{ Nazwa = 'SMS_G_System_COMPUTER_SYSTEM.UserName'
-               Wql   = "SELECT ResourceID, Name FROM SMS_G_System_COMPUTER_SYSTEM " +
-                       "WHERE UserName LIKE '%\\$doWzorca'" }
+               Wql   = "SELECT ResourceID, Name, UserName FROM SMS_G_System_COMPUTER_SYSTEM " +
+                       "WHERE UserName LIKE '%$bezpieczny%'"
+               Pola  = @('UserName') }
         )
 
-        $maszyny   = @()
-        $zrodlo    = ''
-        $stos      = 'CIM'
-        $odmowa    = $null
-        $niedostepne = @()
+        $najlepsza     = $null
+        $najData       = $null
+        $poleTrafienia = ''
+        $ileMaszyn     = 0
+        $zrodlo        = ''
+        $stos          = 'CIM'
+        $odmowa        = $null
+        $niedostepne   = @()
 
         foreach ($z in $zrodla) {
             $odp = Invoke-JezykZapytanieSccm -Sesja $sesja.Sesja -Serwer $polaczenie.Serwer `
@@ -1363,15 +1486,20 @@ function Get-JezykOstatnioUzywanyKomputer {
                 break
             }
 
-            # Zrodlo liczy sie za trafione dopiero wtedy, gdy oddalo wiersz Z NAZWA maszyny.
-            # Sam niepusty wynik nie wystarcza: klasa, ktora zwrocila rekordy bez Name
-            # i bez NetbiosName, nie ma czego pokazac w polu, a przerwalaby przeszukiwanie
-            # pozostalych zrodel i zostawila puste pole zamiast odpowiedzi.
-            $zNazwa = @($odp.Wiersze | Where-Object { $_.NetbiosName -or $_.Name })
-            if ($zNazwa.Count -gt 0) {
-                $maszyny = $zNazwa
-                $zrodlo  = $z.Nazwa
-                $stos    = $odp.Stos
+            # Zrodlo liczy sie za trafione dopiero wtedy, gdy DOPASOWANIE oddalo wiersz.
+            # Sam niepusty wynik nie wystarcza z dwoch powodow naraz: przesiew LIKE jest
+            # szerszy od odpowiedzi (przy "janie" lapie takze "janine"), a klasa, ktora
+            # zwrocila rekordy bez Name i bez NetbiosName, nie ma czego pokazac w polu.
+            # Odrzucenie wszystkich wierszy NIE konczy przeszukiwania - kolejne zrodla ida
+            # normalnie; dawniej falszywe trafienie ucinalo je i pokazywalo cudza maszyne.
+            $trafienie = Select-JezykMaszyneDlaLoginu -Wiersze $odp.Wiersze -Login $Login -Pola $z.Pola
+            if ($trafienie.Wiersz) {
+                $najlepsza     = $trafienie.Wiersz
+                $najData       = $trafienie.Data
+                $poleTrafienia = $trafienie.Pole
+                $ileMaszyn     = $trafienie.Ile
+                $zrodlo        = $z.Nazwa
+                $stos          = $odp.Stos
                 break
             }
         }
@@ -1382,13 +1510,13 @@ function Get-JezykOstatnioUzywanyKomputer {
             return $wynik
         }
 
-        if ($maszyny.Count -eq 0) {
+        if (-not $najlepsza) {
             $wynik.Blad      = 'brak w inwentaryzacji SCCM'
             $szczegolyBraku  = @(
                 ('Połączenie z {0} działa (protokół {1}), przestrzeń {2} odpowiedziała - żadna maszyna nie raportuje loginu "{3}".' -f
                     $polaczenie.Serwer, $sesja.Protokol, $przestrzen, $Login),
                 '',
-                'Sprawdzone zostały: CurrentLogonUser, LastLogonUser i PrimaryUser w SMS_CombinedDeviceResources (to ta sama klasa, którą pokazuje węzeł "Devices" w konsoli), LastLogonUserName w SMS_R_System oraz UserName w SMS_G_System_COMPUTER_SYSTEM - każde dokładnie i z przedrostkiem domeny.'
+                'Sprawdzone zostały: CurrentLogonUser, LastLogonUser i PrimaryUser w SMS_CombinedDeviceResources (to ta sama klasa, którą pokazuje węzeł "Devices" w konsoli), LastLogonUserName w SMS_R_System oraz UserName w SMS_G_System_COMPUTER_SYSTEM - każde z nich w obu zapisach, "konto" i "DOMENA\konto", oraz jako pozycja listy rozdzielonej przecinkami.'
             )
             if ($niedostepne.Count) {
                 $szczegolyBraku += @('', ('Klasy, które nie odpowiedziały: {0}.' -f ($niedostepne -join '; ')))
@@ -1397,40 +1525,25 @@ function Get-JezykOstatnioUzywanyKomputer {
             return $wynik
         }
 
-        # Aktywnosc jest DODATKIEM: brak klasy albo brak prawa do niej zostawia same nazwy.
-        # Gdy trafilo pierwsze zrodlo, daty sa juz w wierszach i nie ma o co pytac drugi raz.
-        $aktywnosc = @{}
-        foreach ($maszyna in $maszyny) {
-            $kiedy = ConvertTo-JezykCzasLokalny $maszyna.LastActiveTime
-            if ($null -ne $kiedy) { $aktywnosc[[string]$maszyna.ResourceID] = $kiedy }
-        }
-
-        if ($aktywnosc.Count -eq 0) {
+        # Aktywnosc jest DODATKIEM: brak klasy albo brak prawa do niej zostawia sama nazwe.
+        # Date niosa wiersze pierwszego zrodla i wtedy jest juz w $najData; zrodla 2 i 3 nie
+        # znaja jej wcale, wiec dla nich pytamy osobno - o JEDEN wybrany identyfikator, a nie
+        # o wszystkie przesiane, bo pokazujemy dokladnie jedna maszyne.
+        if ($null -eq $najData -and $najlepsza.ResourceID) {
             try {
                 # ResourceId przez [int] - do zapytania trafiaja wtedy same liczby, niezaleznie
                 # od tego, co oddal serwer.
-                $idy = @($maszyny | ForEach-Object { [int]$_.ResourceID } | Where-Object { $_ -gt 0 }) -join ','
-                if ($idy) {
+                $idAktywnosci = [int]$najlepsza.ResourceID
+                if ($idAktywnosci -gt 0) {
                     foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
                                             -Zapytanie (
-                        "SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE ResourceId IN ($idy)"))) {
+                        "SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE ResourceId = $idAktywnosci"))) {
                         $kiedy = ConvertTo-JezykCzasLokalny $wpis.LastActiveTime
-                        if ($null -ne $kiedy) { $aktywnosc[[string]$wpis.ResourceID] = $kiedy }
+                        if ($null -ne $kiedy) { $najData = $kiedy }
                     }
                 }
             }
             catch { }
-        }
-
-        # Przy kilku maszynach wygrywa ta o najpozniejszej aktywnosci; bez dat zostaje pierwsza.
-        $najlepsza = $null
-        $najData   = $null
-        foreach ($maszyna in $maszyny) {
-            $data = $aktywnosc[[string]$maszyna.ResourceID]
-            if ($null -eq $najlepsza -or ($null -ne $data -and ($null -eq $najData -or $data -gt $najData))) {
-                $najlepsza = $maszyna
-                $najData   = $data
-            }
         }
 
         # NetbiosName jest tylko w SMS_R_System; droga zapasowa oddaje samo Name.
@@ -1507,8 +1620,8 @@ function Get-JezykOstatnioUzywanyKomputer {
         $opisWyniku = @('źródło: {0}; protokół: {1}; stos: {2}; serwer: {3}' -f
                         $zrodlo, $sesja.Protokol, $stos, $polaczenie.Serwer)
         if ($opisPingu) { $opisWyniku += $opisPingu }
-        if ($maszyny.Count -gt 1) {
-            $opisWyniku += 'dopasowanych maszyn: {0}; pokazana najpóźniej aktywna' -f $maszyny.Count
+        if ($ileMaszyn -gt 1) {
+            $opisWyniku += 'dopasowanych maszyn: {0}; pokazana ta z najświeższym śladem logowania (pole {1})' -f $ileMaszyn, $poleTrafienia
         }
         if ($niedostepne.Count) {
             $opisWyniku += 'klasy, które nie odpowiedziały: {0}' -f ($niedostepne -join '; ')
@@ -2664,6 +2777,47 @@ function Get-JezykKontaktStatus {
     maszyna jest wylaczona. Zapora Windows blokuje ICMP w konfiguracji domyslnej wielu
     firm. "Nie odpowiada" znaczy dokladnie tyle, ile mowi - nic wiecej.
 #>
+<#
+.SYNOPSIS
+    Adresy maszyny w kolejnosci, w ktorej warto je sondowac.
+
+.DESCRIPTION
+    PIERWSZY ADRES Z DNS-A TO NIE JEST ADRES MASZYNY. Maszyna z Ethernetem i Wi-Fi rejestruje
+    w DNS OBA adresy, a kolejnosc odpowiedzi nie jest ustalona - serwer podaje je na zmiane.
+    Branie "tego z brzegu" dawalo wiec raz adres karty podlaczonej, raz odlaczonej, i to przy
+    tej samej maszynie: adres w oknie skakal miedzy wyszukaniami, a razem z nim skakal adres
+    MAC, bo karte dopasowujemy do POKAZANEGO adresu. Rekord, ktorego DNS jeszcze nie sprzatnal,
+    dokladal do tego czerwone pole przy maszynie, ktora dziala.
+
+    IPv4 przed reszta, bo to jego pokazujemy i to on trafia do zdalnej konsoli. Lista jest
+    przycinana, zeby sondowanie miescilo sie w budzecie: maszyna z kilkunastoma adresami
+    (tunele, Hyper-V) zjadalaby go na adresach, ktorych i tak nie pokazemy.
+#>
+function Get-JezykAdresyDoSondy {
+    param($Adresy, [int]$Ile = 4)
+
+    $wybrane  = New-Object System.Collections.Generic.List[string]
+    $widziane = @{}
+
+    $czworka  = [System.Net.Sockets.AddressFamily]::InterNetwork
+    $kolejnosc = @(@($Adresy) | Where-Object { $_ -and $_.AddressFamily -eq $czworka }) +
+                 @(@($Adresy) | Where-Object { $_ -and $_.AddressFamily -ne $czworka })
+
+    foreach ($adres in $kolejnosc) {
+        if ($wybrane.Count -ge $Ile) { break }
+
+        $tekst = ([string]$adres).Trim()
+        if (-not $tekst) { continue }
+        if ($widziane.ContainsKey($tekst)) { continue }
+
+        $widziane[$tekst] = $true
+        $wybrane.Add($tekst)
+    }
+
+    # Przecinek wymuszony - inaczej jeden adres wraca golym napisem, a zero jako $null.
+    return ,$wybrane.ToArray()
+}
+
 function Get-JezykPingKomputera {
     param([string]$Nazwa, [int]$LimitMs = 1500)
 
@@ -2694,19 +2848,20 @@ function Get-JezykPingKomputera {
         return $wynik
     }
 
-    if (-not $adresy -or @($adresy).Count -eq 0) {
+    # KANDYDACI, A NIE JEDEN ADRES Z BRZEGU - patrz Get-JezykAdresyDoSondy wyzej.
+    # Pusta kolejka to jedyny przypadek "DNS odpowiedzial, ale nie ma czego sondowac",
+    # wiec i bramka jest jedna: druga, na samej odpowiedzi DNS, sprawdzalaby to samo.
+    $kandydaci = Get-JezykAdresyDoSondy -Adresy $adresy
+    if (@($kandydaci).Count -eq 0) {
         $wynik.Blad      = 'nazwa nierozpoznana'
         $wynik.Szczegoly = 'DNS odpowiedział, ale nie podał żadnego adresu dla "{0}".' -f $Nazwa
         return $wynik
     }
 
-    $adres = @($adresy | Where-Object {
-        $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork })[0]
-    if (-not $adres) { $adres = @($adresy)[0] }
-
     # ADRES ZAPISUJEMY NAWET GDY MASZYNA NIE ODPOWIE. DNS ja zna - to osobny fakt od tego,
-    # czy jest wlaczona, i wlasnie on jest potrzebny do polaczenia zdalnego.
-    $wynik.Adres = [string]$adres
+    # czy jest wlaczona, i wlasnie on jest potrzebny do polaczenia zdalnego. Gdy ktorys
+    # z kandydatow odpowie, ten wpis zastapi adres, ktory faktycznie odpowiedzial.
+    $wynik.Adres = $kandydaci[0]
 
     $pozostalo = $LimitMs - $zegar.ElapsedMilliseconds
     if ($pozostalo -le 0) {
@@ -2715,22 +2870,45 @@ function Get-JezykPingKomputera {
         return $wynik
     }
 
-    $ping = $null
+    # BUDZET DZIELIMY NA KANDYDATOW, zeby caly pomiar nadal miescil sie w $LimitMs - okno
+    # czeka na wynik zadania i dwukrotnie dluzsze czekanie byloby widac. Zatrzymujemy sie
+    # na PIERWSZYM, ktory odpowie: to on jest adresem maszyny, a nie ten, ktory DNS podal
+    # jako pierwszy.
+    $naAdres = [int][math]::Floor($pozostalo / @($kandydaci).Count)
+    if ($naAdres -lt 1) { $naAdres = 1 }
+
+    $ping    = $null
+    $ostatni = $null
     try {
         $ping = New-Object System.Net.NetworkInformation.Ping
-        $odpowiedz = $ping.Send($adres, [int]$pozostalo)
 
-        $wynik.Odpowiada = ($odpowiedz.Status -eq [System.Net.NetworkInformation.IPStatus]::Success)
-        $wynik.Szczegoly = if ($wynik.Odpowiada) {
-            '{0} ({1}) odpowiedział w {2} ms.' -f $Nazwa, $adres, $odpowiedz.RoundtripTime
-        } else {
-            '{0} ({1}) nie odpowiedział na ping: {2}. To NIE jest dowód, że maszyna jest wyłączona - zapora często blokuje ICMP.' -f $Nazwa, $adres, $odpowiedz.Status
+        foreach ($kandydat in $kandydaci) {
+            $odpowiedz = $ping.Send($kandydat, $naAdres)
+            $ostatni   = $odpowiedz.Status
+
+            if ($odpowiedz.Status -eq [System.Net.NetworkInformation.IPStatus]::Success) {
+                $wynik.Adres     = $kandydat
+                $wynik.Odpowiada = $true
+                $wynik.Szczegoly = '{0} ({1}) odpowiedział w {2} ms.' -f $Nazwa, $kandydat, $odpowiedz.RoundtripTime
+                break
+            }
+        }
+
+        # $null znaczy tu "petla przeszla do konca i nikt nie odpowiedzial" - wyjatek nie
+        # doszedlby w to miejsce wcale, wiec niewiedza nadal nie miesza sie z odpowiedzia.
+        if ($null -eq $wynik.Odpowiada) {
+            $wynik.Odpowiada = $false
+            $wynik.Szczegoly = if (@($kandydaci).Count -gt 1) {
+                '{0} nie odpowiedział na ping pod żadnym ze swoich adresów ({1}); ostatni stan: {2}. To NIE jest dowód, że maszyna jest wyłączona - zapora często blokuje ICMP.' -f $Nazwa, ($kandydaci -join ', '), $ostatni
+            } else {
+                '{0} ({1}) nie odpowiedział na ping: {2}. To NIE jest dowód, że maszyna jest wyłączona - zapora często blokuje ICMP.' -f $Nazwa, $kandydaci[0], $ostatni
+            }
         }
     }
     catch {
         # Odpowiada zostaje $null: sonda sie nie odbyla, wiec nie wiemy nic o maszynie.
         $wynik.Blad      = 'ping nie doszedł do skutku'
-        $wynik.Szczegoly = 'Ping na {0} ({1}) zawiódł: {2}' -f $Nazwa, $adres, $_.Exception.Message
+        $wynik.Szczegoly = 'Ping na {0} ({1}) zawiódł: {2}' -f $Nazwa, $wynik.Adres, $_.Exception.Message
     }
     finally {
         if ($ping) { try { $ping.Dispose() } catch { } }

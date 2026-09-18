@@ -162,6 +162,10 @@ function Clear-JezykKonto {
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
     Set-JezykInfo 'Status'                ''
+    # "!" przy adresie MAC nalezy do TEGO konta, a nie do okna - zostawiony tlumaczylby
+    # przy nastepnym koncie karte sieciowa maszyny poprzedniego. Widok maszyny gasi swoj
+    # odpowiednik (MacMaszyny) od zawsze; ten byl jedynym pominietym.
+    Set-JezykInfo 'Mac'                   ''
 
     # ZADANIA W TLE GASNA RAZEM Z WIDOKIEM. Bez tego zadanie z poprzedniego wyszukania
     # bieglo dalej po wejsciu na sciezke "nie znaleziono", "zbyt wiele trafien" i "blad"
