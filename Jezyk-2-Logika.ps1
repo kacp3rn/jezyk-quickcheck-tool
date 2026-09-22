@@ -3277,6 +3277,75 @@ function Start-JezykRemoteControl {
     return $wynik
 }
 
+<#
+.SYNOPSIS
+    Otwiera udzial administracyjny wskazanej maszyny (\\NAZWA\C$) w Eksploratorze plikow.
+
+.DESCRIPTION
+    NIE URUCHAMIAMY PROGRAMU - ODDAJEMY SCIEZKE POWLOCE. Start-Process dostaje sama sciezke
+    UNC, wiec otwiera ja ten program, ktory w systemie obsluguje katalogi - dokladnie tak,
+    jak wpisanie jej w pasku adresu Eksploratora. Droga przez explorer.exe bylaby czyms
+    INNYM: sama nazwa pliku jest szukana po PATH maszyny operatora (dlatego odrzuca ja
+    Test-JezykSciezkaProgramu), a pelna sciezka wymagalaby albo odpytania systemu o katalog
+    Windows, albo kolejnego ustawienia - a udzialy administracyjne system zaklada sam i nie
+    ma tu czego konfigurowac. Stad tez brak -ArgumentList: nie ma programu, ktoremu mozna
+    by cokolwiek podac.
+
+    Zwraca ten sam ksztalt, co Start-JezykRemoteControl (Udane / Komunikat / Szczegoly),
+    i tak samo NIE RZUCA WYJATKIEM - wynik ma trafic do okna.
+
+.NOTES
+    Bez Test-Path przed otwarciem: na martwym udziale sieciowym potrafi on zawiesic watek
+    interfejsu, a nieistniejaca sciezka i tak konczy sie wyjatkiem albo komunikatem samego
+    Eksploratora. Bez -Wait z tego samego powodu, co przy zdalnej konsoli.
+#>
+function Open-JezykUdzialDysku {
+    param([string]$Netbios, [string]$Litera)
+
+    if ($null -eq $Netbios) { $Netbios = '' }
+    if ($null -eq $Litera)  { $Litera  = '' }
+    $Netbios = $Netbios.Trim()
+    $Litera  = $Litera.Trim()
+
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
+
+    # Ta sama biala lista, co przy zdalnej konsoli - tyle ze nazwa wchodzi tu W SRODEK
+    # napisu podawanego jako -FilePath, a nie osobnym elementem tablicy argumentow.
+    if (-not (Test-JezykNazwaKonta $Netbios)) {
+        $wynik.Komunikat = 'Nie mam nazwy maszyny, której dyski można otworzyć.'
+        $wynik.Szczegoly = 'Wartość "{0}" nie wygląda na nazwę komputera, więc nie została nikomu podana.' -f $Netbios
+        return $wynik
+    }
+
+    # JEDEN ZNAK I NIC WIECEJ. Litera doklada sie do sciezki, wiec cokolwiek dluzszego jest
+    # proba dopisania do niej jeszcze czegos - razem z samym "C$", ktore wygladaloby
+    # niewinnie, a dawaloby "\\NAZWA\C$$".
+    if ($Litera -notmatch '^[A-Za-z]$') {
+        $wynik.Komunikat = 'To nie jest litera dysku.'
+        $wynik.Szczegoly = 'Udział otwiera się po JEDNEJ literze dysku (np. C), a dostałem: "{0}"' -f $Litera
+        return $wynik
+    }
+
+    # Sciezka skladana DO ZMIENNEJ, a nie wprost w argumencie: w wywolaniu metody .NET
+    # przecinek nalezy do listy argumentow metody, a nie do tablicy dla operatora -f.
+    $sciezka = '\\{0}\{1}$' -f $Netbios, $Litera.ToUpper()
+
+    try {
+        Start-Process -FilePath $sciezka -ErrorAction Stop
+        $wynik.Udane     = $true
+        $wynik.Komunikat = 'Otwarto udział {0}.' -f $sciezka
+    }
+    catch {
+        # Tu laduje brak uprawnien do udzialu, wylaczone udzialy administracyjne i maszyna,
+        # ktora nie odpowiada. Rozroznia je tresc wyjatku i zostaje ona w calosci.
+        $opis = Get-JezykOpisBledu $_ ('Otwarcie udziału {0}' -f $sciezka)
+        $wynik.Komunikat = $opis.Krotki
+        $wynik.Szczegoly = $opis.Szczegoly
+    }
+
+    return $wynik
+}
+
 # Sprawdza komputer w AD po nazwie NetBIOS. Widok komputera jest celowo krotszy od widoku
 # konta - odpowiada na trzy pytania: gdzie w drzewie AD lezy ten komputer, kto ostatnio
 # z niego korzystal (to idzie w tlo, do SCCM) i kto go do AD dodal.

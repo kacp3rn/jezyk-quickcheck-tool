@@ -394,6 +394,7 @@ function Clear-JezykKomputer {
     $Script:OstatniKomputer = ''
     $Script:MacDlaAdresu    = ''
     if ($k.PrzyciskPingujMaszyny) { $k.PrzyciskPingujMaszyny.Enabled = $false }
+    if ($k.PrzyciskDyskiMaszyny)  { $k.PrzyciskDyskiMaszyny.Enabled  = $false }
     Set-JezykPrzyciskPolacz '' -Widok Maszyna
 
     Set-JezykInfo 'Uzytkownik' ''
@@ -443,6 +444,9 @@ function Set-JezykComputerResult {
         $Script:OstatniKomputer = [string]$Result.Nazwa
         if ($k.PrzyciskPingujMaszyny) {
             $k.PrzyciskPingujMaszyny.Enabled = [bool]$Script:OstatniKomputer
+        }
+        if ($k.PrzyciskDyskiMaszyny) {
+            $k.PrzyciskDyskiMaszyny.Enabled = [bool]$Script:OstatniKomputer
         }
         Set-JezykPrzyciskPolacz $Script:OstatniKomputer -Widok Maszyna
 
@@ -1596,6 +1600,35 @@ function Invoke-JezykPolacz {
     if (-not $wynik.Udane) {
         if ($pole) { $pole.Text = [string]$wynik.Komunikat }
         Set-JezykInfo $klucz ([string]$wynik.Szczegoly)
+    }
+}
+
+# Obsluga przycisku "Dyski" - pyta o udzial i otwiera go w Eksploratorze plikow.
+#
+# BEZ PARAMETRU -Widok, w odroznieniu od sasiada: ten przycisk stoi wylacznie w panelu
+# komputera, wiec pole Status: i klucz wykrzyknika sa jednoznaczne. Gdyby kiedys stanal
+# takze po drugiej stronie okna, widok ma przyjsc TUTAJ parametrem - nigdy z listy trybu,
+# bo ta bywa przestawiona, zanim cokolwiek wroci.
+#
+# Okno wyboru jest modalne, wiec funkcja czeka na odpowiedz operatora i nie ma tu nic do
+# zrobienia w tle: samo otwarcie udzialu wraca natychmiast, a na zawartosc katalogu czeka
+# juz Eksplorator, a nie Jezyk.
+#
+# Wynik obslugujemy niesymetrycznie z tego samego powodu, co przy "Polacz": niepowodzenie
+# ma gdzie trafic, a powodzenie nie rusza niczego, bo otwarte okno Eksploratora jest samo
+# w sobie potwierdzeniem. Pusta odpowiedz z okna to rezygnacja, a nie blad.
+function Invoke-JezykDyski {
+    $k = $Script:Kontrolki
+    if (-not $Script:OstatniKomputer) { return }
+
+    $litera = Show-JezykWyborDysku
+    if (-not $litera) { return }
+
+    $wynik = Open-JezykUdzialDysku -Netbios $Script:OstatniKomputer -Litera $litera
+
+    if (-not $wynik.Udane) {
+        if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$wynik.Komunikat }
+        Set-JezykInfo 'StatusMaszyny' ([string]$wynik.Szczegoly)
     }
 }
 

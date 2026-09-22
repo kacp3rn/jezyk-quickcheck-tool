@@ -2605,6 +2605,146 @@ function Show-JezykGrupyAd {
     }
 }
 
+# --- OKNO WYBORU DYSKU ----------------------------------------------------------------
+# Udzialy administracyjne, ktore system zaklada sam na kazdym dysku (C$, D$, ...). Lista
+# jest STALA i celowo nie stoi w $Script:Ustawienia: tamten blok opisuje ADRESY POLACZEN -
+# domeny, kontrolery, serwer lokacji - czyli rzeczy, ktorych Jezyk nie ma prawa zgadywac.
+# Litera dysku adresem nie jest. Nie pytamy o nia takze samej maszyny: okno ma otwierac sie
+# od razu, a odpytanie o dyski byloby szostym zadaniem w tle - dla dwoch pozycji na liscie.
+$Script:LiteryDyskow = @('C', 'D')
+
+<#
+.SYNOPSIS
+    Pyta, ktory udzial dyskowy pokazanej maszyny otworzyc. Oddaje LITERE albo pusty napis.
+
+.DESCRIPTION
+    OSOBNE OKNO, A NIE MessageBox: z komunikatu nie da sie niczego wybrac. Wzorem jest
+    Show-JezykGrupyAd i szkielet jest ten sam - okno na zadanie, wyglad BEZ -Rejestruj
+    (ginie w finally { Dispose() }, wiec czyta palete obowiazujaca w chwili otwarcia),
+    geometria mierzona od sasiada, ShowDialog na oknie glownym.
+
+    STRAZ STOI PRZED PIERWSZA KONTROLKA. Przycisk bywa czynny wylacznie przy zapamietanej
+    maszynie, ale warunek sprawdzamy takze tutaj: bez nazwy nie ma z czego zlozyc sciezki,
+    a okno pytajace o dysk nieznanej maszyny nie mialoby o czym pytac.
+
+    ZRODLEM NAZWY JEST $Script:OstatniKomputer - ta sama zmienna, co przy "Pinguj"
+    i "Polacz", czyli pisownia z AD, a nie z pola tekstowego.
+
+    Funkcja ODDAJE WYNIK, w odroznieniu od okna grup, wiec wszystko, co po drodze cokolwiek
+    zwraca (Items.Add, ShowDialog), musi isc przez [void] albo do zmiennej - inaczej do
+    wyniku wpadnie smiec i wolajacy dostanie tablice zamiast litery.
+#>
+function Show-JezykWyborDysku {
+    $maszyna = [string]$Script:OstatniKomputer
+    if (-not $maszyna) { return '' }
+
+    # Wymiary ze stalych siatki okna glownego - ten sam rytm, co w oknie grup.
+    $margines           = $Script:Margines
+    $szerokosc          = $Script:SzerokoscKolumny + 2 * $margines
+    $szerokoscPrzycisku = 90
+    $odstepPrzyciskow   = 8
+
+    $okno = $null
+    try {
+        $okno                 = New-Object System.Windows.Forms.Form
+        $okno.Text            = 'Jeżyk - Dyski: {0}' -f $maszyna
+        $okno.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $okno.MaximizeBox     = $false
+        $okno.MinimizeBox     = $false
+        $okno.ShowInTaskbar   = $false
+        $okno.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
+        $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
+        Set-JezykWyglad $okno 'Okno'
+
+        # Wysokosc przycisku ROWNA POLU, tak samo jak w oknie glownym i w oknie grup.
+        # Pomiar wymaga czcionki okna, wiec stoi za jej ustawieniem.
+        $wysokoscPrzycisku = Get-JezykWysokoscPola $okno.Font
+
+        $lista = New-Object System.Windows.Forms.ListBox
+        Set-JezykWyglad $lista 'Lista'
+        # Wysokosc przycieta do calych wierszy: czesciowy wiersz na dole wygladalby jak
+        # pozycja, ktorej nie da sie dosiegnac. Paska przewijania ta lista nie dostanie
+        # przy zadnej sensownej liczbie liter, wiec nie ma tu czego przemalowywac.
+        $lista.IntegralHeight = $true
+
+        foreach ($litera in $Script:LiteryDyskow) {
+            # Napis skladany DO ZMIENNEJ: w argumencie metody przecinek nalezy do listy
+            # argumentow, a nie do tablicy dla operatora -f.
+            $pozycja = '{0}$' -f $litera
+            [void]$lista.Items.Add($pozycja)
+        }
+        # Pierwsza pozycja zaznaczona od razu, zeby Enter dzialal bez siegania po mysz.
+        if ($lista.Items.Count -gt 0) { $lista.SelectedIndex = 0 }
+
+        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        $btnOtworz              = New-Object System.Windows.Forms.Button
+        $btnOtworz.Text         = ''
+        $btnOtworz.Tag          = 'Otwórz'
+        $btnOtworz.Size         = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
+        $btnOtworz.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnOtworz 'Przycisk'
+        $btnOtworz.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        $btnOtworz.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+        $btnZamknij              = New-Object System.Windows.Forms.Button
+        $btnZamknij.Text         = ''
+        $btnZamknij.Tag          = 'Zamknij'
+        $btnZamknij.Size         = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
+        $btnZamknij.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnZamknij 'Przycisk'
+        $btnZamknij.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+        # Lista jest PIERWSZA, wiec dostaje fokus sama - tak samo jak pole filtra w oknie grup.
+        $okno.Controls.AddRange(@($lista, $btnOtworz, $btnZamknij))
+
+        # Geometria PO dodaniu kontrolek: wysokosc wiersza wychodzi z czcionki, a te
+        # kontrolka dziedziczy po oknie dopiero w chwili dodania.
+        $wysokoscWiersza = [int][math]::Ceiling($okno.Font.GetHeight()) + 2
+        $lista.Left      = $margines
+        $lista.Width     = $szerokosc - 2 * $margines
+        $lista.Top       = $margines
+        $lista.Height    = @($Script:LiteryDyskow).Count * $wysokoscWiersza
+
+        $btnZamknij.Left = $szerokosc - $margines - $szerokoscPrzycisku
+        $btnOtworz.Left  = $btnZamknij.Left - $odstepPrzyciskow - $szerokoscPrzycisku
+        $btnOtworz.Top   = $lista.Bottom + $margines
+        $btnZamknij.Top  = $btnOtworz.Top
+
+        $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
+                               ($btnOtworz.Bottom + $margines))
+
+        # Dwuklik na liscie ma znaczyc to samo, co "Otworz" - inaczej wybor dwoma
+        # kliknieciami wygladalby na nieskuteczny. Procedura nie widzi zmiennych tej
+        # funkcji, wiec okno bierze sie z samej kontrolki.
+        $lista.Add_DoubleClick({
+            $this.FindForm().DialogResult = [System.Windows.Forms.DialogResult]::OK
+        })
+
+        $okno.AcceptButton = $btnOtworz
+        $okno.CancelButton = $btnZamknij
+
+        # Siegniecie po Handle TWORZY uchwyt, wiec wywolanie dziala mimo tego, ze okna
+        # jeszcze nie widac.
+        Set-JezykCiemnyPasekTytulu $okno.Handle -Ciemny:($Script:Motyw -eq 'Ciemny')
+
+        $odpowiedz = $okno.ShowDialog($Script:Kontrolki.Okno)
+        if ($odpowiedz -ne [System.Windows.Forms.DialogResult]::OK) { return '' }
+
+        $wybrana = [string]$lista.SelectedItem
+        if (-not $wybrana) { return '' }
+
+        # Na liscie stoi "C$", a dalej idzie sama litera: znak dolara doklada
+        # Open-JezykUdzialDysku, w jednym miejscu razem z reszta sciezki.
+        return $wybrana.Substring(0, 1)
+    }
+    finally {
+        # ShowDialog NIE zwalnia okna sam - bez tego kazde klikniecie zostawialoby
+        # w procesie komplet uchwytow GDI po jednym oknie.
+        if ($okno) { $okno.Dispose() }
+    }
+}
+
 <#
 .SYNOPSIS
     Buduje okno, wypelnia rejestr kontrolek i podpina zdarzenia.
@@ -3156,6 +3296,25 @@ function New-JezykForm {
     $btnKompPolacz.Visible   = $false
     $btnKompPolacz.TabStop   = $false
 
+    # "Dyski" staje OBOK "Polacz", a nie pod nim: pion tej kolumny jest domkniety - nad
+    # "Pinguj" stoi "Polacz", a nad "Polacz" pole "Konto komputera w AD". W poziomie
+    # miejsce jest, bo etykieta 'Adres IP:' konczy sie daleko przed prawym brzegiem.
+    #
+    # PRZYCISK SIE WYSZARZA, A NIE ZNIKA - odwrotnie niz sasiad. "Polacz" we wdrozeniu bez
+    # konsoli ConfigMgr nie zadziala NIGDY, wiec wyszarzony nie znaczylby nic; udzialy
+    # administracyjne system zaklada sam i nie ma ustawienia, ktore by je wylaczalo -
+    # zostaje wiec zwykly stan przejsciowy "jest, ale najpierw znajdz komputer", taki sam
+    # jak u "Pinguj" obok.
+    $btnKompDyski           = New-Object System.Windows.Forms.Button
+    $btnKompDyski.Text      = ''
+    $btnKompDyski.Tag       = 'Dyski'
+    $btnKompDyski.Width     = $szerokoscPingu
+    $btnKompDyski.Height    = $wysokoscPola
+    $btnKompDyski.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    Set-JezykWyglad $btnKompDyski 'Przycisk' -Rejestruj
+    $btnKompDyski.Enabled   = $false
+    $btnKompDyski.TabStop   = $false
+
     # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
     # zapytania do SCCM, rownie dlugie. Jedno pole dwulinijkowe, a drugie jednolinijkowe
     # wygladaloby jak usterka.
@@ -3174,6 +3333,7 @@ function New-JezykForm {
                                      $lblKompWlaczone, $txtKompWlaczone,
                                      $lblKompMac, $txtKompMac, $btnInfoMacMaszyny,
                                      $lblKompIp, $txtKompIp, $btnKompPinguj, $btnKompPolacz,
+                                     $btnKompDyski,
                                      $lblKompStatus, $txtKompStatus, $btnInfoStatusMaszyny))
 
     # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA. Wysokosc
@@ -3474,10 +3634,17 @@ function New-JezykForm {
     $btnKompPolacz.Left = $btnKompPinguj.Left
     $btnKompPolacz.Top  = $btnKompPinguj.Top - $btnKompPolacz.Height - $odstepPionowyPolacz
 
+    # "Dyski" dzieli wiersz z "Polacz" i bierze od niego OBIE wspolrzedne: wysokosc
+    # przyciskow rosnie z czcionka, wiec wpisana liczba rozjechalaby te pare przy
+    # pierwszym powiekszeniu tekstu w Windows.
+    $btnKompDyski.Left = $btnKompPolacz.Left - $btnKompDyski.Width - $przerwaPingu
+    $btnKompDyski.Top  = $btnKompPolacz.Top
+
     # To samo zsuniecie, co po drugiej stronie okna. Tu pole wiersz wyzej to "Konto
     # komputera w AD", a pod "Pinguj" jest wolne az do pola "Status:" - etykieta nad nim
     # stoi po lewej.
-    Set-JezykPonizejPola @($btnKompPolacz, $btnKompPinguj) $txtKompWlaczone $odstepPionowyPolacz
+    Set-JezykPonizejPola @($btnKompDyski, $btnKompPolacz, $btnKompPinguj) `
+                         $txtKompWlaczone $odstepPionowyPolacz
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
@@ -3545,6 +3712,7 @@ function New-JezykForm {
         TxtKomputerMacMaszyny        = $txtKompMac
         PrzyciskPingujMaszyny        = $btnKompPinguj
         PrzyciskPolaczMaszyny        = $btnKompPolacz
+        PrzyciskDyskiMaszyny         = $btnKompDyski
 
         # Przyciski "!". Klucze celowo nazwane "Info" + klucz z Set-JezykInfo - ta funkcja
         # skleja nazwe sama, wiec dolozenie kolejnego pola nie wymaga jej edycji.
@@ -3650,7 +3818,7 @@ function New-JezykForm {
     # zostalby po prostu PUSTY - Text ma pusty, a napis siedzi w Tag. Kolor bierze sie
     # z palety i ze stanu Enabled, wiec jedna procedura wystarcza na wszystkie.
     foreach ($przycisk in @($btnSzukaj, $btnOdblokuj, $btnPinguj, $btnPolacz,
-                            $btnGrupyAd, $btnKompPinguj, $btnKompPolacz)) {
+                            $btnGrupyAd, $btnKompPinguj, $btnKompPolacz, $btnKompDyski)) {
         $przycisk.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
     }
 
@@ -3670,6 +3838,8 @@ function New-JezykForm {
     # bo to przycisk wie, do ktorego panelu nalezy, a nie stan listy trybu.
     $btnKompPinguj.Add_Click({ Invoke-JezykPing   -Widok Maszyna })
     $btnKompPolacz.Add_Click({ Invoke-JezykPolacz -Widok Maszyna })
+    # Bez -Widok: ten przycisk stoi tylko w jednym panelu, wiec nie ma czego wskazywac.
+    $btnKompDyski.Add_Click({ Invoke-JezykDyski })
     $btnGrupyAd.Add_Click({ Show-JezykGrupyAd })
 
     $btnMotyw.Add_Click({ Invoke-JezykPrzelaczenieMotywu })
