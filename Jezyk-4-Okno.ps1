@@ -1624,12 +1624,18 @@ function New-JezykSkryptTla {
     # KOMPLET zaleznosci obu zapytan do SCCM, policzony z ich tresci, a nie z pamieci.
     # Oba wchodza tam ta sama droga (sonda portu, sesja, zapytanie z droga zapasowa,
     # klasyfikacja bledu, przeliczenie czasu) i roznia sie WYLACZNIE funkcja wejsciowa,
-    # wiec lista jest jedna - dwie kopie rozjechalyby sie przy pierwszej zmianie.
+    # wiec lista jest jedna - dwie kopie rozjechalyby sie przy pierwszej zmianie. Na tej samej
+    # liscie stoi komplet dopasowania karty sieciowej: oba zapytania konczy Set-JezykMacWWyniku,
+    # a ono siega po cale domkniecie - az do arytmetyki maski.
     $sccm = @('Test-JezykNazwaKonta', 'Test-JezykNazwaHosta',
               'Get-JezykSccmPolaczenie', 'Test-JezykPortOtwarty',
               'Get-JezykOpisBleduWmi', 'Open-JezykSesjaSccm',
               'Invoke-JezykZapytanieWmi', 'Invoke-JezykZapytanieWmiStare',
-              'Invoke-JezykZapytanieSccm', 'ConvertTo-JezykCzasLokalny')
+              'Invoke-JezykZapytanieSccm', 'ConvertTo-JezykCzasLokalny',
+              'Get-JezykRozbiteWpisy', 'Get-JezykBajtyIPv4', 'Test-JezykMaskaIPv4',
+              'Test-JezykTaSamaPodsiec', 'Get-JezykKartySieciowe',
+              'Get-JezykMacDlaAdresu', 'Get-JezykDopasowanieMac',
+              'Set-JezykMacWWyniku')
 
     if ($Zadanie -eq 'Numer') {
         # WYSZUKIWANIE PO NUMERZE TELEFONU. Najwolniejsze z pieciu zadan i jedyne, ktorego
@@ -1687,7 +1693,7 @@ function New-JezykSkryptTla {
         # wola ja Get-JezykOstatnioUzywanyKomputer, wiec bez niej zadanie konczy sie cisza.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
                              'Get-JezykKontaZPola', 'Get-JezykKontaMaszyny',
-                             'Select-JezykMaszyneDlaLoginu', 'Get-JezykMacDlaAdresu',
+                             'Select-JezykMaszyneDlaLoginu',
                              'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
@@ -1701,7 +1707,7 @@ function New-JezykSkryptTla {
         # Sonda i dopasowanie karty sieciowej jada w tym samym zadaniu, tak samo jak po
         # drugiej stronie okna - Test-JezykNazwaHosta jest juz w $sccm.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
-                             'Get-JezykMacDlaAdresu', 'Get-JezykUzytkownikKomputera')
+                             'Get-JezykUzytkownikKomputera')
 
         $naglowek  = 'param($Netbios, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
         $wywolanie = 'Get-JezykUzytkownikKomputera -Netbios $Netbios -Serwer $SccmSerwer' +
@@ -1856,7 +1862,8 @@ function Start-JezykZadanieUzytkownika {
         # tylko "nie sprawdzono", zeby pola nie zostaly z poprzedniego wyszukania.
         Update-JezykUzytkownikaWTle -Uzytkownik ([pscustomobject]@{
             Uzytkownik = ''; Data = $null; Blad = 'brak ustawień SCCM'; Szczegoly = $polaczenie.Blad
-            Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = '' })
+            Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
+            MacPodstawa = ''; MacKarta = $null; MacKarty = @(); MacWpisow = 0 })
         return
     }
 

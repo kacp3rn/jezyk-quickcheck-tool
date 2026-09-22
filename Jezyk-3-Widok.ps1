@@ -907,32 +907,144 @@ function Set-JezykDostepnoscKomputera {
 
 <#
 .SYNOPSIS
+    Sklada tresc pod przyciskiem "!" przy adresie MAC - z danych, nie z gotowych zdan.
+
+.DESCRIPTION
+    Logika oddaje DANE (podstawa dopasowania, karty, liczba wierszy), a zdania powstaja
+    tutaj - tak samo jak przy datach. MacSzczegoly niesie tylko twarde awarie i wtedy idzie
+    pod "!" bez zmian.
+
+    LICZBA SAMA NIE JEST ODPOWIEDZIA. Dotychczas pod "!" stalo "Zadna z 17 kart sieciowych
+    znanych SCCM nie ma adresu X" - a operator nie mial z tym co zrobic, bo wsrod tych
+    siedemnastu wpisow wiekszosc to tunele i karty wirtualne bez zapisanego adresu. Dlatego
+    wymieniamy KARTY Z ADRESEM, kazda z jej adresem i maska, a pozostale wpisy podajemy
+    jednym zdaniem.
+
+    Pelne wiersze tylko dla kart z adresem IPv4, bo MessageBox nie przewija: przy
+    siedemnastu wpisach z opisami okno przestaloby byc czytelne.
+
+    Maske podajemy WYLACZNIE wtedy, gdy przyszla z inwentaryzacji. Zapas 255.255.255.0
+    wypisany bez slowa wygladalby jak wartosc odczytana - a obietnica pod "!" ma byc
+    sprawdzona, nie zalozona.
+#>
+function Get-JezykTrescMac {
+    param($Wynik)
+
+    if (-not $Wynik) { return '' }
+
+    $powodTwardy = [string]$Wynik.MacSzczegoly
+    if ($powodTwardy) { return $powodTwardy }
+
+    $podstawa = [string]$Wynik.MacPodstawa
+    if (-not $podstawa -or $podstawa -eq 'Adres') { return '' }
+
+    $adresSondy = [string]$Wynik.Adres
+    # @() wokol POTOKU, nie wokol zmiennej: @($null).Count rowna sie 1, wiec brak pola
+    # dalby jeden wiersz opisujacy karte $null.
+    $karty  = @(@($Wynik.MacKarty) | Where-Object { $_ })
+    $wpisow = [int]$Wynik.MacWpisow
+    $linie  = @()
+
+    # Straz na brakujaca karte: bez niej zdanie o dopasowaniu powstaloby z pustym adresem
+    # i pusta maska, czyli wygladaloby na odpowiedz, nie bedac nia. Wtedy lepiej wymienic
+    # karty, tak jak przy braku trafienia.
+    $trafiona = $Wynik.MacKarta
+    if ($podstawa -eq 'Podsiec' -and $trafiona) {
+        $oMasce = if ($trafiona.MaskaZSccm) { 'maska {0} z inwentaryzacji' -f $trafiona.Maska }
+                  else { 'maski SCCM nie podał, przyjęto {0}' -f $trafiona.Maska }
+
+        $linie += 'Pokazany adres MAC nie jest dokładnym trafieniem.'
+        $linie += ''
+        $linie += (('Sonda zastała maszynę pod adresem {0}. Tego adresu nie ma żadna karta znana ' +
+                    'SCCM, ale karta {1} ma zapisany adres {2} z tej samej podsieci ({3}) - maszyna ' +
+                    'odpowiada więc przez tę kartę, choć zapisany adres jest starszy niż bieżąca ' +
+                    'dzierżawa DHCP.') -f $adresSondy, $trafiona.Mac, $trafiona.Adres, $oMasce)
+        if ($trafiona.Opis) {
+            $linie += ''
+            $linie += ('Karta: {0}' -f $trafiona.Opis)
+        }
+
+        return ($linie -join [Environment]::NewLine)
+    }
+
+    if ($wpisow -eq 0) {
+        return ('SCCM nie zna żadnej karty sieciowej tej maszyny. Klasa ' +
+                'SMS_G_System_NETWORK_ADAPTER_CONFIGURATION bywa wyłączona w ustawieniach ' +
+                'inwentaryzacji sprzętu.')
+    }
+
+    $linie += if ($podstawa -eq 'Wiele') {
+        (('Sonda zastała maszynę pod adresem {0}. Tego adresu nie ma żadna karta znana SCCM, ' +
+          'a adres z jego podsieci ma więcej niż jedna karta - która z nich odpowiada, nie ' +
+          'wiadomo, więc pole nie pokazuje żadnej.') -f $adresSondy)
+    } else {
+        (('Sonda zastała maszynę pod adresem {0}. Żadna karta znana SCCM nie ma tego adresu ' +
+          'ani adresu z jego podsieci. Inwentaryzacja sprzętu bywa starsza niż bieżąca ' +
+          'dzierżawa DHCP.') -f $adresSondy)
+    }
+
+    $linie += ''
+    if ($karty.Count) {
+        $linie += 'Karty z zapisanym adresem IPv4:'
+        foreach ($karta in $karty) {
+            $zapisy = @()
+            foreach ($wpis in @($karta.Adresy)) {
+                $zapisy += if ($wpis.MaskaZSccm) { '{0} / {1}' -f $wpis.Adres, $wpis.Maska }
+                           else { [string]$wpis.Adres }
+            }
+
+            $wiersz = '  {0}   {1}' -f $karta.Mac, ($zapisy -join ', ')
+            if ($karta.Opis) { $wiersz = '{0}   {1}' -f $wiersz, $karta.Opis }
+            $linie += $wiersz
+        }
+    }
+    else {
+        $linie += 'Żadna karta znana SCCM nie ma zapisanego adresu IPv4.'
+    }
+
+    # Liczby podajemy po dwukropku, a nie w zdaniu: "pozostale 2 wpisow" wymagaloby odmiany
+    # liczebnika, a ta nie ma tu nic do powiedzenia o karcie sieciowej.
+    $linie += ''
+    $linie += ('Wiersze inwentaryzacji: {0}.' -f $wpisow)
+    if (($wpisow - $karty.Count) -gt 0) {
+        $linie += (('Wpisy bez zapisanego adresu IPv4: {0} - tunele, karty wirtualne i karty ' +
+                    'wyłączone w chwili inwentaryzacji.') -f ($wpisow - $karty.Count))
+    }
+
+    return ($linie -join [Environment]::NewLine)
+}
+
+<#
+.SYNOPSIS
     Wypelnia pole "Adres MAC" i rozstrzyga przy nim przycisk "!".
 
 .DESCRIPTION
-    MAC pokazujemy WYLACZNIE wtedy, gdy karta z inwentaryzacji SCCM ma ten sam adres IP,
-    ktory stoi w polu obok. Maszyna miewa kilka kart - Ethernet, Wi-Fi, VPN, Hyper-V -
-    i adres wziety "z brzegu" opisywalby inna z nich niz ta, ktora odpowiada pod pokazanym
-    IP. Nic by tego przy tym nie zdradzilo, bo jeden adres MAC wyglada jak kazdy inny.
+    O TRESCI POLA DECYDUJE PODSTAWA DOPASOWANIA, a nie to, czy jest co wyjasnic. Napis
+    "nie dopasowano" rozstrzygal sie dotad po niepustosci tresci pod "!" - a odkad zwykly
+    brak trafienia nie jest awaria i tresc powstaje w widoku, to samo pole zaczeloby mowic
+    "nie sprawdzono" o rzeczy sprawdzonej. Podstawy sa cztery i pusta: patrz
+    Get-JezykDopasowanieMac.
 
-    Brak dopasowania jest zwyklym wynikiem, nie awaria: inwentaryzacja sprzetu odswieza sie
-    co kilka dni, wiec po zmianie dzierzawy DHCP zapisany adres bywa starszy niz biezacy.
-    Stad przycisk NIEBIESKI i tresc pod nim - zapalany tylko wtedy, gdy jest co wyjasnic.
+    MAC Z TEJ SAMEJ PODSIECI JEST OZNACZONY W POLU, bo operator czyta je raz i goly adres
+    wygladalby jak trafienie dokladne. Przy najwiekszych czcionkach Windows znacznik moze
+    nie zmiescic sie w kolumnie - i wlasnie dlatego "!" zapala sie tu MIMO pokazanego
+    MAC-a: jego obecnosc przy wypelnionym polu sama niesie te wiadomosc. Stalym
+    wyjasnieniem to nie jest, bo przy trafieniu dokladnym tresci nie ma wcale.
 #>
 function Set-JezykAdresMac {
     param([string]$Mac, [string]$Szczegoly,
+          [ValidateSet('', 'Adres', 'Podsiec', 'Wiele', 'Brak')][string]$Podstawa = '',
           [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
     $pola = Get-JezykPolaSondy -Widok $Widok
     if ($pola.Mac) {
-        $pola.Mac.Text = if ($Mac) { $Mac }
-                         elseif ($Szczegoly) { 'nie dopasowano' }
+        $pola.Mac.Text = if ($Mac -and $Podstawa -eq 'Podsiec') { $Mac + ' (ta podsieć)' }
+                         elseif ($Mac) { $Mac }
+                         elseif ($Podstawa -or $Szczegoly) { 'nie dopasowano' }
                          else { 'nie sprawdzono' }
     }
 
-    # Tresc tylko wtedy, gdy MAC-a NIE MA: przy trafieniu wyjasniac nie ma czego, a przycisk
-    # widoczny zawsze bylby stalym wyjasnieniem - takie z tego okna zostaly usuniete.
-    Set-JezykInfo $pola.KluczMac $(if ($Mac) { '' } else { $Szczegoly })
+    Set-JezykInfo $pola.KluczMac $Szczegoly
 }
 
 <#
@@ -1066,7 +1178,7 @@ function Update-JezykPingWTle {
     # wziac nowego: idzie sama, bez sesji do SCCM.
     $adres = [string]$Ping.Adres
     if ($Script:MacDlaAdresu -and $adres -and $adres -ne $Script:MacDlaAdresu) {
-        Set-JezykAdresMac -Widok $widok -Mac '' -Szczegoly (
+        Set-JezykAdresMac -Widok $widok -Mac '' -Podstawa 'Brak' -Szczegoly (
             'Maszyna odpowiada teraz spod adresu {0}, a pokazany wcześniej adres MAC opisywał kartę spod {1}. Nowego dopasowania sonda nie zna - zna je wyłącznie SCCM, więc wyszukaj ponownie.' -f
                 $adres, $Script:MacDlaAdresu)
         $Script:MacDlaAdresu = ''
@@ -1234,7 +1346,8 @@ function Update-JezykUzytkownikaWTle {
                                  -Adres ([string]$Uzytkownik.Adres) -Widok Maszyna
 
     Set-JezykAdresMac -Mac ([string]$Uzytkownik.Mac) `
-                      -Szczegoly ([string]$Uzytkownik.MacSzczegoly) -Widok Maszyna
+                      -Szczegoly (Get-JezykTrescMac -Wynik $Uzytkownik) `
+                      -Podstawa ([string]$Uzytkownik.MacPodstawa) -Widok Maszyna
 
     # Adres, do ktorego MAC zostal dopasowany - ponowny ping sprawdzi po nim, czy pokazana
     # karta nadal opisuje te maszyne.
@@ -1755,7 +1868,8 @@ function Update-JezykKomputerWTle {
 
     # MAC dopasowany do TEGO adresu - i tylko do niego. Adres odkladamy osobno, zeby
     # ponowny ping mial z czym porownac swoj wynik (patrz Update-JezykPingWTle).
-    Set-JezykAdresMac -Mac ([string]$Komputer.Mac) -Szczegoly ([string]$Komputer.MacSzczegoly)
+    Set-JezykAdresMac -Mac ([string]$Komputer.Mac) -Szczegoly (Get-JezykTrescMac -Wynik $Komputer) `
+                      -Podstawa ([string]$Komputer.MacPodstawa)
     $Script:MacDlaAdresu = if ($Komputer.Mac) { [string]$Komputer.Adres } else { '' }
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })

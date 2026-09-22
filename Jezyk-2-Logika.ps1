@@ -1297,6 +1297,342 @@ function Get-JezykMacDlaAdresu {
 
 <#
 .SYNOPSIS
+    Rozbiera wartosc z inwentaryzacji na pojedyncze wpisy, zachowujac ich POZYCJE.
+
+.DESCRIPTION
+    Inwentaryzacja sprzetu splaszcza wlasciwosci tablicowe do jednego napisu, wiec ta sama
+    karta potrafi przyjsc raz jako tablica, a raz jako "10.0.0.5, fe80::1" w calosci.
+    Rozbieramy wiec kazdy element, zamiast ufac, ze jest juz rozebrany.
+
+    PUSTYCH WPISOW NIE ODSIEWAMY, i to jest tu cala rzecz: IPSubnet paruje sie z IPAddress
+    PO INDEKSIE, wiec wyrzucenie pustego wpisu z jednej listy przesuwa druga i adres dostaje
+    maske sasiada. Wpisy nieczytelne odpadaja pozniej, przy sprawdzaniu kazdej pary osobno.
+
+    OWINIECIE @() STOI NA MIEJSCU WYWOLANIA, wiec przecinka wymuszajacego tu NIE MA - byl by
+    bledem. Przy "return ,$tablica" wyrazenie @(wywolanie) oddaje JEDEN element, ktorym jest
+    cala tablica: petla wykonuje sie raz, a odczyt pola przechodzi po WSZYSTKICH jej
+    elementach naraz (wyliczanie czlonkow) i sklada wartosci w jedna. Przecinek nalezy
+    wylacznie do funkcji, ktorych wynik przypisuje sie wprost - patrz Get-JezykAdresyDoSondy.
+#>
+function Get-JezykRozbiteWpisy {
+    param($Wartosc)
+
+    $wpisy = New-Object System.Collections.Generic.List[string]
+    foreach ($element in @($Wartosc)) {
+        foreach ($czesc in ([string]$element) -split '[,;]') {
+            $wpisy.Add($czesc.Trim())
+        }
+    }
+
+    return $wpisy.ToArray()
+}
+
+<#
+.SYNOPSIS
+    Bajty adresu IPv4 z napisu - albo $null, gdy napis adresem IPv4 nie jest.
+
+.DESCRIPTION
+    BRAMKA JEST TU WAZNIEJSZA OD SAMEGO ODCZYTU. [System.Net.IPAddress]::TryParse przyjmuje
+    znacznie wiecej, niz wyglada, i kazdy z tych trzech napisow przeszedlby dalej jako
+    poprawny adres, dopasowujac karte z zupelnie innej sieci:
+
+        "64"           -> 0.0.0.64      (dlugosc prefiksu IPv6, ktora inwentaryzacja
+                                         wpisuje w IPSubnet obok masek IPv4)
+        "10.0.0"       -> 10.0.0.0      (zapis niepelny)
+        "010.20.30.44" -> 8.20.30.44    (wiodace zero czytane OSEMKOWO)
+
+    Zapora jest jedna i zamyka wszystkie trzy przypadki: adres musi wrocic TYM SAMYM
+    napisem. Rodzine sprawdzamy osobno, bo IPv6 wraca poprawnie - a maska ma sens wylacznie
+    dla IPv4.
+
+    Przecinek przy return wymuszony - inaczej tablica czterech bajtow rozwija sie w potok.
+#>
+function Get-JezykBajtyIPv4 {
+    param([string]$Tekst)
+
+    $czysty = ([string]$Tekst).Trim()
+    if (-not $czysty) { return $null }
+
+    $odczytany = $null
+    if (-not [System.Net.IPAddress]::TryParse($czysty, [ref]$odczytany)) { return $null }
+    if ($odczytany.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { return $null }
+    if ($odczytany.ToString() -ne $czysty) { return $null }
+
+    return ,$odczytany.GetAddressBytes()
+}
+
+<#
+.SYNOPSIS
+    Czy napis jest maska podsieci IPv4, czyli ciagiem jedynek, a po nim samych zer.
+
+.DESCRIPTION
+    CZESC INWENTARYZACJI WPISUJE W IPSubnet ADRES PODSIECI, A NIE MASKE. Maskowanie przez
+    "10.0.0.0" zrownuje 10.0.0.5 z 10.99.99.99, wiec karta z zupelnie innej sieci wyszlaby
+    jako ta, ktora odpowiada pod pokazanym adresem - i nic by tego nie zdradzilo, bo jeden
+    adres MAC wyglada w oknie dokladnie jak kazdy inny. Sprawdzenie ciaglosci jest jedyna
+    rzecza, ktora to odsiewa.
+
+    Sama lista dozwolonych bajtow nie wystarcza: 255.128.128.0 sklada sie wylacznie z nich,
+    a maska nie jest. Po pierwszym bajcie innym niz 255 kazdy nastepny musi byc zerem.
+    Maske /0 odrzucamy osobno - odpowiadalaby "zawsze ta sama podsiec", a to nie jest zadna
+    odpowiedz.
+#>
+function Test-JezykMaskaIPv4 {
+    param([string]$Maska)
+
+    $bajty = Get-JezykBajtyIPv4 $Maska
+    if (-not $bajty) { return $false }
+
+    $dozwolone   = @(0, 128, 192, 224, 240, 248, 252, 254, 255)
+    $bylaPrzerwa = $false
+    $sumaBajtow  = 0
+    foreach ($bajt in $bajty) {
+        $wartosc     = [int]$bajt
+        $sumaBajtow += $wartosc
+        if ($dozwolone -notcontains $wartosc) { return $false }
+        if ($bylaPrzerwa -and $wartosc -ne 0) { return $false }
+        if ($wartosc -ne 255) { $bylaPrzerwa = $true }
+    }
+
+    return ($sumaBajtow -gt 0)
+}
+
+<#
+.SYNOPSIS
+    Czy adres z sondy i adres karty leza w tej samej podsieci IPv4.
+
+.DESCRIPTION
+    Drugi szczebel dopasowania karty. Adres zapisany w inwentaryzacji bywa starszy od
+    biezacej dzierzawy DHCP, wiec dokladna zgodnosc nie zachodzi - ale maszyna, ktora
+    odpowiada w tej samej podsieci, odpowiada przez te sama karte.
+
+    Porownanie idzie BAJT PO BAJCIE, a nie przez [uint32]: w operacji bajtowej nie ma
+    pojecia kolejnosci bajtow, wiec nie da sie w niej popelnic bledu, ktory przy masce /24
+    wyglada poprawnie, a wywraca sie przy /23.
+
+    Bez try - TryParse oddaje wartosc logiczna i nie rzuca, a catch zamienilby maske-smiec
+    w ciche "nie ta podsiec", czyli w stan nie do odroznienia od poprawnej odpowiedzi.
+#>
+function Test-JezykTaSamaPodsiec {
+    param([string]$Sonda, [string]$Karta, [string]$Maska)
+
+    if (-not (Test-JezykMaskaIPv4 $Maska)) { return $false }
+
+    $bajtySondy = Get-JezykBajtyIPv4 $Sonda
+    $bajtyKarty = Get-JezykBajtyIPv4 $Karta
+    $bajtyMaski = Get-JezykBajtyIPv4 $Maska
+    if (-not $bajtySondy -or -not $bajtyKarty) { return $false }
+
+    for ($i = 0; $i -lt 4; $i++) {
+        if (($bajtySondy[$i] -band $bajtyMaski[$i]) -ne ($bajtyKarty[$i] -band $bajtyMaski[$i])) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+<#
+.SYNOPSIS
+    Karty sieciowe z wierszy inwentaryzacji - tylko te z czytelnym adresem IPv4.
+
+.DESCRIPTION
+    Jeden rekord na karte, z lista jej adresow IPv4 i maska przy kazdym z nich. Wiersze bez
+    adresu IPv4 nie wchodza do listy wcale: liczba wierszy oddanych przez SCCM idzie osobno
+    (patrz Get-JezykDopasowanieMac), bo klasa NETWORK_ADAPTER_CONFIGURATION obejmuje takze
+    tunele, karty wirtualne i WAN Miniporty - to one robia z kilku kart siedemnascie wpisow.
+
+    MASKA PAROWANA PO INDEKSIE PELNEJ LISTY: IPSubnet[i] opisuje IPAddress[i]. Odsianie
+    IPv6 przed sparowaniem przesuwa indeksy i adres IPv4 dostaje maske sasiada - przy karcie
+    "fe80::1, 10.0.0.5" bylaby to wartosc "64", czyli dlugosc prefiksu IPv6.
+
+    MaskaZSccm mowi, czy maska pochodzi z inwentaryzacji, czy jest zapasem. Bez tego
+    znacznika komunikat podawalby wymyslona maske jako odczytana - a obietnica pod "!" ma
+    byc sprawdzona, nie zalozona. IPSubnet i Description czytamy przez PSObject.Properties,
+    bo obie wlasciwosci bywaja wylaczone w ustawieniach inwentaryzacji sprzetu.
+
+    OWINIECIE @() STOI NA MIEJSCU WYWOLANIA, wiec przecinka wymuszajacego tu NIE MA - byl by
+    bledem. Przy "return ,$tablica" wyrazenie @(wywolanie) oddaje JEDEN element, ktorym jest
+    cala tablica: petla wykonuje sie raz, a odczyt pola przechodzi po WSZYSTKICH jej
+    elementach naraz (wyliczanie czlonkow) i sklada wartosci w jedna. Przecinek nalezy
+    wylacznie do funkcji, ktorych wynik przypisuje sie wprost - patrz Get-JezykAdresyDoSondy.
+#>
+function Get-JezykKartySieciowe {
+    param($Wiersze)
+
+    $karty = New-Object System.Collections.Generic.List[object]
+
+    foreach ($wiersz in @($Wiersze)) {
+        if (-not $wiersz) { continue }
+        if (-not $wiersz.MACAddress) { continue }
+
+        $maskiWiersza = @()
+        if ($wiersz.PSObject.Properties['IPSubnet']) {
+            $maskiWiersza = @(Get-JezykRozbiteWpisy $wiersz.IPSubnet)
+        }
+        $opisWiersza = ''
+        if ($wiersz.PSObject.Properties['Description']) {
+            $opisWiersza = ([string]$wiersz.Description).Trim()
+        }
+
+        $adresyKarty = @(Get-JezykRozbiteWpisy $wiersz.IPAddress)
+        $czytelne    = New-Object System.Collections.Generic.List[object]
+
+        for ($i = 0; $i -lt $adresyKarty.Count; $i++) {
+            if (-not (Get-JezykBajtyIPv4 $adresyKarty[$i])) { continue }
+
+            $maskaWpisu = if ($i -lt $maskiWiersza.Count) { [string]$maskiWiersza[$i] } else { '' }
+            $zSccm      = Test-JezykMaskaIPv4 $maskaWpisu
+            if (-not $zSccm) { $maskaWpisu = '255.255.255.0' }
+
+            $czytelne.Add([pscustomobject]@{ Adres      = [string]$adresyKarty[$i]
+                                             Maska      = $maskaWpisu
+                                             MaskaZSccm = [bool]$zSccm })
+        }
+
+        if ($czytelne.Count -eq 0) { continue }
+
+        $karty.Add([pscustomobject]@{ Mac    = [string]$wiersz.MACAddress
+                                      Opis   = $opisWiersza
+                                      Adresy = $czytelne.ToArray() })
+    }
+
+    return $karty.ToArray()
+}
+
+<#
+.SYNOPSIS
+    Rozstrzyga, ktora karta odpowiada pod pokazanym adresem - i na jakiej podstawie.
+
+.DESCRIPTION
+    JEDNO MIEJSCE, W KTORYM ZAPADA DECYZJA. Podstawa mowi, skad wzial sie adres MAC, i widok
+    pokazuje go inaczej dla kazdej z nich:
+
+        'Adres'   - karta ma DOKLADNIE ten adres, ktory oddala sonda. Odpowiedz pewna.
+        'Podsiec' - dokladnego adresu nie ma zadna karta, ale jedna ma adres z tej samej
+                    podsieci. Odpowiedz prawdopodobna, oznaczona w oknie.
+        'Wiele'   - adres z tej podsieci ma kilka kart. Ktora z nich odpowiada, nie wiadomo,
+                    wiec nie wybieramy zadnej - "!" wymienia wszystkie.
+        'Brak'    - zapytanie poszlo, nie pasuje nic.
+        ''        - nie bylo czego dopasowywac.
+
+    TRZECIEGO SZCZEBLA ("jedyna karta z jakimkolwiek adresem") NIE MA SWIADOMIE. Karta Wi-Fi
+    wylaczona w chwili inwentaryzacji nie ma zapisanego adresu, wiec taki szczebel pokazywalby
+    MAC Ethernetu dokladnie wtedy, gdy maszyna odpowiada przez Wi-Fi. Zgadywanie wyglada tu
+    identycznie jak odpowiedz.
+
+    Karta liczy sie RAZ, nawet gdy ma dwa adresy w tej podsieci - inaczej jedna karta
+    z dwoma adresami udawalaby dwie i wywracala rozstrzygniecie na 'Wiele'.
+#>
+function Get-JezykDopasowanieMac {
+    param($Wiersze, [string]$Adres)
+
+    $dopasowanie = [pscustomobject]@{ Mac = ''; Podstawa = ''; Karta = $null
+                                      Karty = @(); Wpisow = 0 }
+
+    # @() wokol POTOKU, nie wokol zmiennej: @($null).Count rowna sie 1, wiec brak wiersza
+    # policzylby sie jako jeden wpis inwentaryzacji.
+    $zWierszy = @(@($Wiersze) | Where-Object { $_ })
+    $dopasowanie.Wpisow = $zWierszy.Count
+    $dopasowanie.Karty  = @(Get-JezykKartySieciowe -Wiersze $zWierszy)
+
+    if (-not $Adres) { return $dopasowanie }
+
+    $dokladny = Get-JezykMacDlaAdresu -Karty $zWierszy -Adres $Adres
+    if ($dokladny) {
+        $dopasowanie.Mac      = $dokladny
+        $dopasowanie.Podstawa = 'Adres'
+        return $dopasowanie
+    }
+
+    $trafione = New-Object System.Collections.Generic.List[object]
+    foreach ($karta in $dopasowanie.Karty) {
+        foreach ($wpis in @($karta.Adresy)) {
+            if (Test-JezykTaSamaPodsiec -Sonda $Adres -Karta $wpis.Adres -Maska $wpis.Maska) {
+                $trafione.Add([pscustomobject]@{ Mac        = [string]$karta.Mac
+                                                 Opis       = [string]$karta.Opis
+                                                 Adres      = [string]$wpis.Adres
+                                                 Maska      = [string]$wpis.Maska
+                                                 MaskaZSccm = [bool]$wpis.MaskaZSccm })
+                break
+            }
+        }
+    }
+
+    if ($trafione.Count -eq 1) {
+        $dopasowanie.Mac      = [string]$trafione[0].Mac
+        $dopasowanie.Karta    = $trafione[0]
+        $dopasowanie.Podstawa = 'Podsiec'
+    }
+    elseif ($trafione.Count -gt 1) { $dopasowanie.Podstawa = 'Wiele' }
+    else                           { $dopasowanie.Podstawa = 'Brak' }
+
+    return $dopasowanie
+}
+
+<#
+.SYNOPSIS
+    Dopisuje do wyniku adres MAC karty, ktora odpowiada pod ustalonym adresem IP.
+
+.DESCRIPTION
+    ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny. Laptop ma
+    Ethernet, Wi-Fi, czesto jeszcze karte VPN albo Hyper-V - wybranie pierwszego z brzegu
+    dawaloby adres innej karty niz ta, ktora odpowiada pod tym IP, i nic by tego nie
+    zdradzilo. Dlatego pytamy o karty Z ICH ADRESAMI i dopasowujemy.
+
+    JEDNA FUNKCJA NA DWIE DROGI. Ten sam blok stal wczesniej w dwoch kopiach - raz w drodze
+    od loginu do maszyny, raz w odwrotnej - wiec kazdy komunikat trzeba bylo zmieniac dwa
+    razy. Funkcja WPISUJE POLA do przekazanego wyniku; zasada tego pliku to "zero kodu GUI",
+    nie "zero mutacji", a odpowiednik oddajacy paczke zostawialby te same przypisania
+    w dwoch kopiach i niczego nie domykal.
+
+    SELECT * ZAMIAST LISTY KOLUMN, bo IPSubnet i Description bywaja wylaczone w ustawieniach
+    inwentaryzacji sprzetu, a WQL wymieniajacy nieistniejaca wlasciwosc klasy wywraca CALE
+    zapytanie - i Invoke-JezykZapytanieWmi nie ma drogi zapasowej. To usuwa jednak tylko ten
+    jeden tryb awarii: gdy wlasciwosci nie ma w wierszu, odczyt przez PSObject.Properties
+    jest potrzebny OBOK, a nie zamiast.
+
+    Brak dopasowania jest zwyklym, spodziewanym wynikiem, nie awaria - i wychodzi jako
+    MacPodstawa, a nie jako MacSzczegoly. MacSzczegoly niesie TWARDE awarie: brak adresu,
+    brak identyfikatora zasobu i nieudany odczyt.
+#>
+function Set-JezykMacWWyniku {
+    param($Wynik, $ResourceID, $Sesja, [string]$Przestrzen, [int]$LimitSek)
+
+    if (-not $Wynik.Adres) {
+        $Wynik.MacSzczegoly = 'Nie ustalono adresu IP maszyny, więc nie ma do czego dopasować karty sieciowej.'
+        return
+    }
+
+    if (-not $ResourceID) {
+        $Wynik.MacSzczegoly = 'Źródło, które podało tę maszynę, nie niesie identyfikatora zasobu (ResourceID), a bez niego nie ma jak zapytać o jej karty sieciowe.'
+        return
+    }
+
+    try {
+        $idKarty = [int]$ResourceID
+        $wiersze = @(Invoke-JezykZapytanieWmi -Sesja $Sesja -Przestrzen $Przestrzen -LimitSek $LimitSek `
+                         -Zapytanie (
+            "SELECT * FROM SMS_G_System_NETWORK_ADAPTER_CONFIGURATION WHERE ResourceId = $idKarty"))
+
+        $dopasowanie = Get-JezykDopasowanieMac -Wiersze $wiersze -Adres $Wynik.Adres
+
+        $Wynik.Mac         = [string]$dopasowanie.Mac
+        $Wynik.MacPodstawa = [string]$dopasowanie.Podstawa
+        $Wynik.MacKarta    = $dopasowanie.Karta
+        $Wynik.MacKarty    = @($dopasowanie.Karty)
+        $Wynik.MacWpisow   = [int]$dopasowanie.Wpisow
+    }
+    catch {
+        # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa albo
+        # wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny bez kart
+        # sieciowych.
+        $Wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
+    }
+}
+
+<#
+.SYNOPSIS
     Wybiera z wierszy SCCM maszyne nalezaca do podanego loginu - i mowi, po czym ja poznal.
 
 .DESCRIPTION
@@ -1375,12 +1711,17 @@ function Get-JezykOstatnioUzywanyKomputer {
     # Odpowiada i Adres wypelnia sonda ICMP na samym koncu, po ustaleniu nazwy maszyny.
     # $null w Odpowiada znaczy "nie sprawdzono albo nie wiadomo" i tak ma zostac na kazdej
     # sciezce bledu - patrz Get-JezykPingKomputera.
-    # Mac wypelnia sie PO sondzie i tylko wtedy, gdy karta z inwentaryzacji SCCM ma ten sam
-    # adres IP, ktory oddalo rozwiazanie nazwy. MacSzczegoly niesie powod, gdy sie nie udalo.
+    # Mac wypelnia sie PO sondzie, bo karte dopasowujemy do adresu, ktory oddala sonda.
+    # MacPodstawa mowi, SKAD ten adres MAC sie wzial, i pole pokazuje go inaczej dla kazdej
+    # podstawy - patrz Get-JezykDopasowanieMac. MacSzczegoly niesie tylko TWARDE awarie.
+    # MacKarty to karty z czytelnym adresem IPv4, a MacWpisow - wszystkie wiersze oddane
+    # przez SCCM: widok liczy z tej roznicy wpisy bez adresu, wiec jedno NIE wynika
+    # z drugiego i nie wolno go z drugiego wyliczac.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
                                 Blad = ''; Szczegoly = ''
                                 Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
-                                Mac = ''; MacSzczegoly = '' }
+                                Mac = ''; MacSzczegoly = ''; MacPodstawa = ''
+                                MacKarta = $null; MacKarty = @(); MacWpisow = 0 }
 
     # Login pochodzi z AD, wiec jest bezpieczny - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1579,43 +1920,11 @@ function Get-JezykOstatnioUzywanyKomputer {
         }
         catch { $opisPingu = 'Sprawdzenie dostępności zawiodło: {0}' -f $_.Exception.Message }
 
-        # ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny.
-        # Laptop ma Ethernet, Wi-Fi, czesto jeszcze karte VPN albo Hyper-V - wybranie
-        # pierwszego z brzegu dawaloby adres innej karty niz ta, ktora odpowiada pod tym IP,
-        # i nic by tego nie zdradzilo. Dlatego pytamy o karty Z ICH ADRESAMI i dopasowujemy.
-        #
-        # Inwentaryzacja bywa starsza od dzierzawy DHCP, wiec BRAK DOPASOWANIA jest zwyklym,
-        # spodziewanym wynikiem - i ma wyjsc jako "nie wiadomo", a nie jako cudzy adres.
-        if (-not $wynik.Adres) {
-            $wynik.MacSzczegoly = 'Nie ustalono adresu IP maszyny, więc nie ma do czego dopasować karty sieciowej.'
-        }
-        elseif (-not $najlepsza.ResourceID) {
-            $wynik.MacSzczegoly = 'Źródło, które podało tę maszynę, nie niesie identyfikatora zasobu (ResourceID), a bez niego nie ma jak zapytać o jej karty sieciowe.'
-        }
-        else {
-            try {
-                $idKarty = [int]$najlepsza.ResourceID
-                $karty = @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
-                               -Zapytanie (
-                    "SELECT MACAddress, IPAddress FROM SMS_G_System_NETWORK_ADAPTER_CONFIGURATION WHERE ResourceId = $idKarty"))
-
-                $wynik.Mac = Get-JezykMacDlaAdresu -Karty $karty -Adres $wynik.Adres
-
-                if (-not $wynik.Mac) {
-                    $wynik.MacSzczegoly = if ($karty.Count) {
-                        'Żadna z {0} kart sieciowych znanych SCCM nie ma adresu {1}. Inwentaryzacja sprzętu jest odświeżana co kilka dni, więc po zmianie dzierżawy DHCP zapisany adres bywa starszy niż ten, pod którym maszyna odpowiada teraz.' -f $karty.Count, $wynik.Adres
-                    } else {
-                        'SCCM nie zna żadnej karty sieciowej tej maszyny. Klasa SMS_G_System_NETWORK_ADAPTER_CONFIGURATION bywa wyłączona w ustawieniach inwentaryzacji sprzętu.'
-                    }
-                }
-            }
-            catch {
-                # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa
-                # albo wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny
-                # bez kart sieciowych.
-                $wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
-            }
-        }
+        # Karta sieciowa dopasowana do adresu, ktory oddala sonda - cala regule i jej
+        # uzasadnienie niesie Set-JezykMacWWyniku. Blok stoi PO sondzie, bo bez adresu nie
+        # ma do czego dopasowywac.
+        Set-JezykMacWWyniku -Wynik $wynik -ResourceID $najlepsza.ResourceID -Sesja $sesja.Sesja `
+                            -Przestrzen $przestrzen -LimitSek $LimitSek
 
         $opisWyniku = @('źródło: {0}; protokół: {1}; stos: {2}; serwer: {3}' -f
                         $zrodlo, $sesja.Protokol, $stos, $polaczenie.Serwer)
@@ -1667,8 +1976,12 @@ function Get-JezykUzytkownikKomputera {
     param([string]$Netbios, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
+    # Nazwy pol MAC-a sa te same, co po drugiej stronie okna - widok ma jedna sciezke
+    # wyswietlania, patrz Set-JezykMacWWyniku.
     $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = ''
-                                Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = '' }
+                                Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
+                                MacPodstawa = ''; MacKarta = $null; MacKarty = @()
+                                MacWpisow = 0 }
 
     # Nazwa pochodzi z AD, wiec jest bezpieczna - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1807,10 +2120,8 @@ function Get-JezykUzytkownikKomputera {
             return $wynik
         }
 
-        # ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny -
-        # ten sam powod i ten sam sposob, co przy drodze odwrotnej: laptop ma Ethernet,
-        # Wi-Fi, czesto jeszcze karte VPN albo Hyper-V, a jeden adres MAC wyglada w oknie
-        # dokladnie jak kazdy inny.
+        # Karta sieciowa dopasowana do adresu z sondy - ta sama funkcja, co po drugiej
+        # stronie okna (Set-JezykMacWWyniku).
         #
         # Blok stoi PO odmowie (tam przestrzeni juz raz odmowiono, wiec pytanie o karty
         # powtorzyloby tylko te sama odmowe), ale PRZED wyjsciem "brak zapisanego
@@ -1820,36 +2131,8 @@ function Get-JezykUzytkownikKomputera {
         # Maszyny NIEZNANEJ w SCCM zostawiamy bez powodu - pole ma wtedy powiedziec
         # "nie sprawdzono", bo nie bylo czego dopasowywac, a nie "nie dopasowano".
         if ($wierszMaszyny) {
-            if (-not $wynik.Adres) {
-                $wynik.MacSzczegoly = 'Nie ustalono adresu IP maszyny, więc nie ma do czego dopasować karty sieciowej.'
-            }
-            elseif (-not $wierszMaszyny.ResourceID) {
-                $wynik.MacSzczegoly = 'Źródło, które podało tę maszynę, nie niesie identyfikatora zasobu (ResourceID), a bez niego nie ma jak zapytać o jej karty sieciowe.'
-            }
-            else {
-                try {
-                    $idKarty = [int]$wierszMaszyny.ResourceID
-                    $karty = @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
-                                   -Zapytanie (
-                        "SELECT MACAddress, IPAddress FROM SMS_G_System_NETWORK_ADAPTER_CONFIGURATION WHERE ResourceId = $idKarty"))
-
-                    $wynik.Mac = Get-JezykMacDlaAdresu -Karty $karty -Adres $wynik.Adres
-
-                    if (-not $wynik.Mac) {
-                        $wynik.MacSzczegoly = if ($karty.Count) {
-                            'Żadna z {0} kart sieciowych znanych SCCM nie ma adresu {1}. Inwentaryzacja sprzętu jest odświeżana co kilka dni, więc po zmianie dzierżawy DHCP zapisany adres bywa starszy niż ten, pod którym maszyna odpowiada teraz.' -f $karty.Count, $wynik.Adres
-                        } else {
-                            'SCCM nie zna żadnej karty sieciowej tej maszyny. Klasa SMS_G_System_NETWORK_ADAPTER_CONFIGURATION bywa wyłączona w ustawieniach inwentaryzacji sprzętu.'
-                        }
-                    }
-                }
-                catch {
-                    # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa
-                    # albo wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny
-                    # bez kart sieciowych.
-                    $wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
-                }
-            }
+            Set-JezykMacWWyniku -Wynik $wynik -ResourceID $wierszMaszyny.ResourceID `
+                                -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek
         }
 
         if (-not $uzytkownik) {
