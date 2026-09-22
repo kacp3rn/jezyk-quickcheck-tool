@@ -1530,6 +1530,19 @@ $Script:WidokSondy = 'Konto'
 # opisuje karte, ktorej pod tym adresem nie ma.
 $Script:MacDlaAdresu = ''
 
+# Ostatnia odpowiedz sondy dla POKAZANEJ maszyny - zrodlo prawdy dla przyciskow "Polacz"
+# i "Dyski". Dotad wynik sondy zyl wylacznie w kolorze kontrolki, a kolor nie nadaje sie
+# na warunek: przechowuje go rejestr rol i odtwarza go motyw.
+#
+# TROJSTANOWA I TAK MA ZOSTAC. $false znaczy "nazwa rozpoznana, ale maszyna milczy",
+# a $null - "nie wiadomo"; splaszczenie do [bool] zamienilo by drugie w pierwsze.
+# Obie akcje zdalne wymagaja jednak POTWIERDZONEJ odpowiedzi, wiec gasna tak samo przy
+# $false i przy $null - patrz Set-JezykPrzyciskiZdalne.
+#
+# WSPOLNA DLA OBU WIDOKOW, jak $Script:OstatniKomputer: panele nigdy nie sa widoczne
+# naraz, a zmiana trybu czysci oba.
+$Script:MaszynaOdpowiada = $null
+
 # Gotowe teksty skryptow dla wszystkich zadan - skladane raz, patrz New-JezykSkryptTla.
 $Script:SkryptyTla = @{}
 
@@ -3095,8 +3108,10 @@ function New-JezykForm {
     # w oknie - ani nazwisku wyzej, ani nazwie maszyny obok, ani adresowi IP nizej. Panel
     # konta zostaje dziewieciowierszowy i okno nie uroslo ani o piksel.
     #
-    # W ODROZNIENIU OD "PINGUJ" ten przycisk ZNIKA, a nie wyszarza sie - powod przy
-    # Set-JezykPrzyciskPolacz. Wspolrzedne dostaje na koncu, razem z calym wyrownaniem.
+    # DWIE NIEZALEZNE OSIE, powod przy Set-JezykPrzyciskiZdalne: ten przycisk ZNIKA, gdy
+    # nie ma sie z czym laczyc (brak maszyny albo brak sciezki do konsoli), a WYSZARZA SIE,
+    # gdy maszyna nie potwierdzila, ze odpowiada. Wspolrzedne dostaje na koncu, razem
+    # z calym wyrownaniem.
     $btnPolacz           = New-Object System.Windows.Forms.Button
     $btnPolacz.Text      = ''
     $btnPolacz.Tag       = 'Połącz'

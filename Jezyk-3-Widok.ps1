@@ -150,9 +150,12 @@ function Clear-JezykKonto {
 
     # Nazwa maszyny nalezy do KONKRETNEGO konta - zostawiona kazalaby przyciskowi "Pinguj"
     # sprawdzac komputer kogos, kogo juz nie ma na ekranie.
-    $Script:OstatniKomputer = ''
+    $Script:OstatniKomputer  = ''
+    # Wynik sondy zapominany RAZEM z maszyna, ktorej dotyczyl - zostawiony zapalalby akcje
+    # zdalne dla nastepnego konta, zanim cokolwiek o jego maszynie wiadomo.
+    $Script:MaszynaOdpowiada = $null
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = $false }
-    Set-JezykPrzyciskPolacz ''
+    Set-JezykPrzyciskiZdalne ''
 
     # Grupy naleza do KONKRETNEGO konta - zostawiony czynny przycisk pokazywalby liste
     # opisujaca kogos, kogo juz nie ma w oknie. Samej listy nie ma czego zerowac osobno:
@@ -391,11 +394,13 @@ function Clear-JezykKomputer {
     # Maszyna zapomniana RAZEM z polami: to ona jest zrodlem prawdy dla obu przyciskow,
     # a nie pole tekstowe. Przyciski gasna tu, a nie przy wyniku - wynik nie-Ok idzie
     # ta sama droga i niczego nie zapala.
-    $Script:OstatniKomputer = ''
-    $Script:MacDlaAdresu    = ''
+    $Script:OstatniKomputer  = ''
+    $Script:MacDlaAdresu     = ''
+    # Jak po drugiej stronie okna: wynik sondy nalezy do TEJ maszyny i ginie razem z nia.
+    $Script:MaszynaOdpowiada = $null
     if ($k.PrzyciskPingujMaszyny) { $k.PrzyciskPingujMaszyny.Enabled = $false }
-    if ($k.PrzyciskDyskiMaszyny)  { $k.PrzyciskDyskiMaszyny.Enabled  = $false }
-    Set-JezykPrzyciskPolacz '' -Widok Maszyna
+    # "Polacz" i "Dyski" gasi jedno miejsce z warunkiem - patrz Set-JezykPrzyciskiZdalne.
+    Set-JezykPrzyciskiZdalne '' -Widok Maszyna
 
     Set-JezykInfo 'Uzytkownik' ''
     Set-JezykInfo 'Tworca' ''
@@ -445,10 +450,10 @@ function Set-JezykComputerResult {
         if ($k.PrzyciskPingujMaszyny) {
             $k.PrzyciskPingujMaszyny.Enabled = [bool]$Script:OstatniKomputer
         }
-        if ($k.PrzyciskDyskiMaszyny) {
-            $k.PrzyciskDyskiMaszyny.Enabled = [bool]$Script:OstatniKomputer
-        }
-        Set-JezykPrzyciskPolacz $Script:OstatniKomputer -Widok Maszyna
+        # "Polacz" i "Dyski" NIE zapalaja sie samym znalezieniem komputera: obie siegaja
+        # do maszyny po sieci, wiec czekaja na sonde. Tu ustawiaja sie na stan "jeszcze
+        # nie wiadomo", ktory Clear-JezykKomputer wyzej wlasnie odlozyl.
+        Set-JezykPrzyciskiZdalne $Script:OstatniKomputer -Widok Maszyna
 
         # Kropki zamiast napisu nieruchomego: trzy pola czekaja teraz na to samo zapytanie
         # (uzytkownik, adres IP, adres MAC), a napis nieruchomy nie odroznia trwajacej
@@ -885,8 +890,14 @@ function Get-JezykPolaSondy {
                znaczyc fakt; pomalowanie niewiedzy ktorymkolwiek z nich bylo by klamstwem.
 
     Adres IP zostaje wpisany takze wtedy, gdy maszyna nie odpowiada - DNS ja zna, a to
-    osobny fakt od tego, czy jest wlaczona, i wlasnie ten adres jest potrzebny do
-    polaczenia zdalnego.
+    osobny fakt od tego, czy jest wlaczona. Sam adres do niczego wtedy nie wystarcza:
+    akcje zdalne ("Polacz", "Dyski") gasna, dopoki sonda nie potwierdzi odpowiedzi -
+    patrz Set-JezykPrzyciskiZdalne, tam stoi tez cena tej decyzji.
+
+    STAD ODKLADANA JEST TU ODPOWIEDZ SONDY. Ta funkcja jest jedynym punktem, przez ktory
+    przechodza wszystkie trzy stany z obu widokow - zarowno sonda wliczona w zadania SCCM,
+    jak i przycisk "Pinguj", jak i sciezki bledu. Warunek przyciskow ma wiec jedno zrodlo
+    i nie trzeba go dopisywac przy kazdym z piatki wywolan.
 
     Ktory panel wypelnic, mowi -Widok - patrz Get-JezykPolaSondy wyzej.
 #>
@@ -902,11 +913,18 @@ function Set-JezykDostepnoscKomputera {
                  else                      { 'Problem' }
     Set-JezykKolorPola $pola.Kolor $rolaSondy
 
-    if (-not $pola.Ip) { return }
+    if ($pola.Ip) {
+        $pola.Ip.Text = if ($Adres) { $Adres }
+                        elseif ($Opis) { $Opis }
+                        else { 'nie sprawdzono' }
+    }
 
-    $pola.Ip.Text = if ($Adres) { $Adres }
-                    elseif ($Opis) { $Opis }
-                    else { 'nie sprawdzono' }
+    # ODPOWIEDZ ODKLADANA TU, BO TO JEDYNY PUNKT WIDZACY WSZYSTKIE TRZY STANY OBU WIDOKOW.
+    # Dzieki temu przyciski siegajace do maszyny nie wymagaja ani jednej linii w piatce
+    # funkcji, ktore te sonde przynosza - i zadna przyszla nie zostanie pominieta.
+    # Kolor kontrolki na warunek sie nie nadaje: trzyma go rejestr rol i odtwarza motyw.
+    $Script:MaszynaOdpowiada = $Odpowiada
+    Set-JezykPrzyciskiZdalne $Script:OstatniKomputer -Widok $Widok
 }
 
 <#
@@ -1545,33 +1563,65 @@ function Set-JezykStanJeza {
 
 <#
 .SYNOPSIS
-    Pokazuje albo chowa przycisk "Polacz" - jedyne miejsce z warunkiem jego widocznosci.
+    Steruje przyciskami siegajacymi do maszyny - "Polacz" i "Dyski". Jedyne miejsce
+    z ich warunkami.
 
 .DESCRIPTION
-    Przycisk ZNIKA I POJAWIA SIE, a nie wyszarza sie jak "Pinguj". Roznica jest
-    zamierzona: tamten ma stan, ktory warto pokazac ("jest, ale nie teraz"), a ten ma
-    tylko jeden powod istnienia - jest maszyna i jest czym sie z nia polaczyc. Przycisk
-    wyszarzony na stale w kazdym wdrozeniu bez konsoli ConfigMgr bylby obietnica, ktorej
-    nikt tam nigdy nie spelni. Z tego samego powodu "Odblokuj konto" znika w domenie
-    spoza listy DomenyZOdblokowaniem (patrz Set-JezykPrzyciskOdblokuj).
+    DWIE NIEZALEZNE OSIE, i to jest sedno tej funkcji.
 
-    Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan - rozpisany
-    rozjechalby sie przy pierwszej zmianie i przycisk zostawalby widoczny po przelaczeniu
-    konta.
+    WIDOCZNOSC odpowiada na pytanie "czy jest z czym sie laczyc": jest maszyna i jest
+    sciezka do konsoli ConfigMgr. Tu przycisk ZNIKA, a nie wyszarza sie - wyszarzony
+    na stale w kazdym wdrozeniu bez tej konsoli bylby obietnica, ktorej nikt tam nigdy
+    nie spelni. Z tego samego powodu "Odblokuj konto" znika w domenie spoza listy
+    DomenyZOdblokowaniem (patrz Set-JezykPrzyciskOdblokuj).
+
+    DOSTEPNOSC odpowiada na pytanie "czy maszyna odpowiada" i jest zwyklym stanem
+    przejsciowym - "jest, ale nie teraz" - czyli dokladnie tym, co pokazuje wyszarzenie.
+    Obie akcje siegaja do maszyny po sieci, wiec bez potwierdzonej odpowiedzi konczylyby
+    sie bledem, ktory dalo sie przewidziec.
+
+    POTWIERDZONA znaczy $true, a nie "nie $false". $null jest tu rownie gaszacy:
+    nie sprawdzono, nie udalo sie sprawdzic i sprawdzono z wynikiem negatywnym to nadal
+    trzy rozne rzeczy (i trzy rozne KOLORY pola, patrz Set-JezykDostepnoscKomputera),
+    ale zadna z dwoch ostatnich nie jest zgoda na siegniecie do maszyny.
+
+    CENA TEJ DECYZJI JEST ZNANA I PRZYJETA: milczenie na ping nie dowodzi, ze maszyna
+    jest wylaczona - zapora blokuje ICMP w konfiguracji domyslnej wielu firm - wiec
+    tam obie akcje beda nieczynne az do udanego "Pinguj". Dlatego sam "Pinguj" nigdy
+    nie gasnie z tego powodu: to jest droga powrotu i musi zostac otwarta.
+
+    Warunki stoja TUTAJ, w jednym miejscu, a nie przy kazdym z wywolan - rozpisane
+    rozjechalyby sie przy pierwszej zmianie, a przycisk zostawalby czynny po przelaczeniu
+    na maszyne, o ktorej nic jeszcze nie wiadomo.
+
+    "Dyski" ma tylko widok komputera i tylko os dostepnosci: udzialow administracyjnych
+    nie wylacza zadne ustawienie, wiec nie ma powodu go chowac.
 #>
-function Set-JezykPrzyciskPolacz {
+function Set-JezykPrzyciskiZdalne {
     param([string]$Netbios, [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
-    $przycisk = if ($Widok -eq 'Maszyna') { $Script:Kontrolki.PrzyciskPolaczMaszyny }
-                else                      { $Script:Kontrolki.PrzyciskPolacz }
-    if (-not $przycisk) { return }
+    $k = $Script:Kontrolki
 
-    # Pusta sciezka w konfiguracji = funkcja swiadomie wylaczona, dokladnie tak samo jak
-    # puste SccmSerwer. Czytamy ja przy kazdym wywolaniu, a nie raz przy starcie, bo to
-    # jedna linia mniej stanu do zgubienia.
-    $sciezka = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
+    # Porownanie z $true, a nie [bool] na zmiennej: $null ma tu gasic tak samo jak $false,
+    # ale stan "nie wiadomo" ma dalej byc odroznialny od "milczy" - patrz opis wyzej.
+    $odpowiada = ($true -eq $Script:MaszynaOdpowiada)
 
-    $przycisk.Visible = ([bool]$Netbios -and [bool]$sciezka)
+    $polacz = if ($Widok -eq 'Maszyna') { $k.PrzyciskPolaczMaszyny } else { $k.PrzyciskPolacz }
+    if ($polacz) {
+        # Pusta sciezka w konfiguracji = funkcja swiadomie wylaczona, dokladnie tak samo jak
+        # puste SccmSerwer. Czytamy ja przy kazdym wywolaniu, a nie raz przy starcie, bo to
+        # jedna linia mniej stanu do zgubienia.
+        $sciezka = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
+
+        $polacz.Visible = ([bool]$Netbios -and [bool]$sciezka)
+        $polacz.Enabled = $odpowiada
+    }
+
+    if ($Widok -ne 'Maszyna') { return }
+
+    if ($k.PrzyciskDyskiMaszyny) {
+        $k.PrzyciskDyskiMaszyny.Enabled = ([bool]$Netbios -and $odpowiada)
+    }
 }
 
 # Obsluga przycisku "Polacz": oddaje wykryta maszyne zdalnej konsoli z ConfigMgr.
@@ -1893,7 +1943,7 @@ function Update-JezykKomputerWTle {
     # stanu. Przycisk jest czynny dokladnie wtedy, gdy jest co pingowac.
     $Script:OstatniKomputer = [string]$Komputer.Nazwa
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = [bool]$Script:OstatniKomputer }
-    Set-JezykPrzyciskPolacz $Script:OstatniKomputer
+    Set-JezykPrzyciskiZdalne $Script:OstatniKomputer
 
     # Wynik sondy przyszedl razem z nazwa - zapytanie do SCCM i ping poszly jednym zadaniem
     # w tle, wiec kolor i adres sa gotowe od razu, bez drugiej podrozy po sieci.
