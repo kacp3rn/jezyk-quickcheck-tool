@@ -1700,12 +1700,8 @@ function New-JezykSkryptTla {
         # Wejsciem jest droga ODWROTNA: OD MASZYNY DO UZYTKOWNIKA.
         # Sonda i dopasowanie karty sieciowej jada w tym samym zadaniu, tak samo jak po
         # drugiej stronie okna - Test-JezykNazwaHosta jest juz w $sccm.
-        # Get-JezykKontaZPola dochodzi tutaj, bo droga odwrotna sklada nia liste kont
-        # maszyny - bez niej zadanie konczy sie wyjatkiem WEWNATRZ przestrzeni, a okno
-        # widzi tylko brak wyniku.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
-                             'Get-JezykMacDlaAdresu', 'Get-JezykKontaZPola',
-                             'Get-JezykUzytkownikKomputera')
+                             'Get-JezykMacDlaAdresu', 'Get-JezykUzytkownikKomputera')
 
         $naglowek  = 'param($Netbios, $SccmSerwer, $SccmKodLokacji, $SccmProtokol, $SccmProtokolZapasowy)'
         $wywolanie = 'Get-JezykUzytkownikKomputera -Netbios $Netbios -Serwer $SccmSerwer' +
@@ -2910,8 +2906,8 @@ function New-JezykForm {
     # Trzeci, NIEBIESKI: nie usterka, tylko realna niejednoznacznosc - maszyna, ktora wg
     # SCCM ma wiecej niz jedno konto. Wlasny kolor nadpisany PO utworzeniu, zeby nie ruszac
     # sygnatury New-JezykPrzyciskInfo uzywanej przez pozostale, czerwone przyciski.
-    $btnInfoKomputerWiecej = New-JezykPrzyciskInfo 'KomputerWiecej'
-    Set-JezykWyglad $btnInfoKomputerWiecej 'InfoNiebieski' -Rejestruj
+    $btnInfoKomputerWspoldzielony = New-JezykPrzyciskInfo 'KomputerWspoldzielony'
+    Set-JezykWyglad $btnInfoKomputerWspoldzielony 'InfoNiebieski' -Rejestruj
 
     # Komputer stoi przy e-mailu, a nie przy dacie logowania: data pokazuje DWIE wartosci
     # naraz i nie miesci sie w kolumnie, a adres e-mail nigdy nie potrzebowal calej szerokosci.
@@ -3053,7 +3049,7 @@ function New-JezykForm {
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
         $lblOstatnieLogowanie, $txtOstatnieLogowanie,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
-        $btnInfoKomputerWiecej, $btnPinguj, $btnPolacz,
+        $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
         $lblKomputerIp, $txtKomputerIp,
         $lblKatalog, $txtKatalog,
@@ -3089,13 +3085,6 @@ function New-JezykForm {
     $lblKompUzytkownik = New-JezykEtykieta 'Ostatnio zalogowany użytkownik:' $Script:Margines $kompWiersz1
     $txtKompUzytkownik = New-JezykPole $Script:Margines ($kompWiersz1 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoUzytkownik = New-JezykPrzyciskInfo 'Uzytkownik'
-
-    # Drugi, NIEBIESKI przy tym samym polu i w tym samym miejscu - blizniak tego z widoku
-    # konta. Maszyna zna zwykle kilka kont naraz (zalogowane teraz, ostatnio, przypisane
-    # na stale), a w polu miesci sie jedno: reszta idzie pod ten wykrzyknik. Nie usterka,
-    # wiec wlasny kolor - i nigdy razem z czerwonym, bo oba stoja na koncu tego pola.
-    $btnInfoUzytkownikWiecej = New-JezykPrzyciskInfo 'UzytkownikWiecej'
-    Set-JezykWyglad $btnInfoUzytkownikWiecej 'InfoNiebieski' -Rejestruj
 
     # Wlasciciel obiektu w AD razem z data zalozenia - jedno pole, bo to jedna odpowiedz
     # na jedno pytanie. Przycisk NIEBIESKI, jak przy komputerze wspoldzielonym: to nie
@@ -3174,7 +3163,6 @@ function New-JezykForm {
 
     $pnlKomputer.Controls.AddRange(@($lblKompKatalog, $txtKompKatalog,
                                      $lblKompUzytkownik, $txtKompUzytkownik, $btnInfoUzytkownik,
-                                     $btnInfoUzytkownikWiecej,
                                      $lblKompTworca, $txtKompTworca, $btnInfoTworca,
                                      $lblKompWlaczone, $txtKompWlaczone,
                                      $lblKompMac, $txtKompMac, $btnInfoMacMaszyny,
@@ -3413,8 +3401,8 @@ function New-JezykForm {
     # ja dopiero po dodaniu do okna - i po tym, jak wyrownanie wyzej poprzestawialo im
     # wspolrzedne pionowe.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
-                        $btnInfoKomputerWiecej, $btnInfoUzytkownikWiecej, $btnInfoTworca,
-                        $btnInfoMac, $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
+                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
         # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
@@ -3461,11 +3449,10 @@ function New-JezykForm {
     # obok siebie, wiec samotny czerwony - czyli zwykly przypadek - konczyl sie o caly
     # przycisk przed polem.
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer              $lblKomputerUzytkownika $txtKomputerUzytkownika
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWiecej $lblKomputerUzytkownika $txtKomputerUzytkownika
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWspoldzielony $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac                   $lblKomputerMac         $txtKomputerMac
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus                $lblStatus              $txtStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik            $lblKompUzytkownik      $txtKompUzytkownik
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownikWiecej      $lblKompUzytkownik      $txtKompUzytkownik
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca                $lblKompTworca          $txtKompTworca
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMacMaszyny            $lblKompMac             $txtKompMac
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatusMaszyny         $lblKompStatus          $txtKompStatus
@@ -3559,8 +3546,7 @@ function New-JezykForm {
         InfoUzytkownik            = $btnInfoUzytkownik
         InfoTworca                = $btnInfoTworca
         InfoMac                   = $btnInfoMac
-        InfoKomputerWiecej        = $btnInfoKomputerWiecej
-        InfoUzytkownikWiecej      = $btnInfoUzytkownikWiecej
+        InfoKomputerWspoldzielony = $btnInfoKomputerWspoldzielony
         InfoMacMaszyny            = $btnInfoMacMaszyny
         InfoStatusMaszyny         = $btnInfoStatusMaszyny
     }
@@ -3647,8 +3633,8 @@ function New-JezykForm {
     # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
     # kontrolka, ktora zdarzenie zglosila.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
-                        $btnInfoKomputerWiecej, $btnInfoUzytkownikWiecej, $btnInfoTworca,
-                        $btnInfoMac, $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
+                        $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
+                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 

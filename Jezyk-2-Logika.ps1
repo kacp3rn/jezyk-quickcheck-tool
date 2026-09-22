@@ -1247,16 +1247,6 @@ function Get-JezykKontaMaszyny {
     Wspoldzielony/SzczegolyWspoldzielenia dziala wylacznie, gdy trafilo pierwsze zrodlo
     (SMS_CombinedDeviceResources) - tylko ono niesie CurrentLogonUser/LastLogonUser/
     PrimaryUser w wierszu wyniku, patrz Get-JezykKontaMaszyny.
-
-    JEDNA OSOBA MIEWA KILKA URZADZEN, wiec oddajemy ich uszeregowana liste (Urzadzenia,
-    do LimitUrzadzen pozycji) razem z liczba wszystkich dopasowan (IleUrzadzen). W polu
-    okna miesci sie jedna nazwa z data i tak ma zostac; reszta idzie pod niebieski "!".
-    Pierwsza pozycja listy JEST ta z pola - obie biora sie z tego samego szeregowania,
-    patrz Select-JezykMaszyneDlaLoginu.
-
-    Sonda ICMP, adres i karta sieciowa opisuja WYLACZNIE pozycje pierwsza. Nie jest to
-    oszczednosc, tylko odpowiedz na pytanie, ktore operator zadal: pyta o maszyne, przy
-    ktorej ktos siedzi, a nie o stan wszystkiego, co kiedykolwiek jej przypisano.
 #>
 <#
 .SYNOPSIS
@@ -1268,9 +1258,8 @@ function Get-JezykKontaMaszyny {
     karte niz ta, ktora odpowiada pod pokazanym IP, i NIC BY TEGO NIE ZDRADZILO: jeden
     adres MAC wyglada w oknie dokladnie jak kazdy inny.
 
-    Jedna karta miewa adres IPv4 i IPv6 naraz, a inwentaryzacja oddaje je raz tablica, raz
-    jednym napisem po przecinku - wiec ksztaltu nie zakladamy wcale, patrz komentarz
-    w ciele funkcji.
+    IPAddress jest TABLICA - jedna karta miewa adres IPv4 i IPv6 naraz - wiec porownanie
+    idzie po calej tablicy, a nie po jej pierwszym elemencie.
 
     Brak dopasowania oddajemy jako pusty napis, a nie jako pierwszy lepszy adres: "nie
     wiadomo" i "wiadomo, ze ten" to dwie rozne odpowiedzi.
@@ -1336,30 +1325,20 @@ function Get-JezykMacDlaAdresu {
 
     Wiersz bez nazwy maszyny nie liczy sie za trafienie: nie ma go czym pokazac w polu,
     a zajalby miejsce prawdziwej odpowiedzi z kolejnego zrodla.
-
-    ODDAJEMY CALA USZEREGOWANA LISTE, a zwyciezczyni jest po prostu jej pierwsza pozycja.
-    Dwie osobne reguly - jedna wybierajaca maszyne do pola, druga ustawiajaca liste pod
-    przyciskiem "!" - rozjechalyby sie przy pierwszej zmianie i okno pokazywaloby w polu
-    inna maszyne, niz lista obok podaje jako pierwsza.
 #>
 function Select-JezykMaszyneDlaLoginu {
     param($Wiersze, [string]$Login,
           $Pola = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser'))
 
-    $wynik = [pscustomobject]@{ Wiersz = $null; Pole = ''; Data = $null; Ile = 0; Lista = @() }
+    $wynik = [pscustomobject]@{ Wiersz = $null; Pole = ''; Data = $null; Ile = 0 }
     if (-not $Login) { return $wynik }
 
     $nazwyPol = @($Pola)
-    $pozycje  = New-Object System.Collections.Generic.List[object]
-    $indeks   = 0
+    $najlepszy = $nazwyPol.Count
 
     foreach ($wiersz in @($Wiersze)) {
         if (-not $wiersz) { continue }
-
-        # NetbiosName jest tylko w SMS_R_System; pozostale zrodla maja samo Name.
-        $nazwa = [string]$wiersz.NetbiosName
-        if (-not $nazwa) { $nazwa = [string]$wiersz.Name }
-        if (-not $nazwa) { continue }
+        if (-not ($wiersz.Name -or $wiersz.NetbiosName)) { continue }
 
         $stopien = -1
         for ($i = 0; $i -lt $nazwyPol.Count; $i++) {
@@ -1371,69 +1350,36 @@ function Select-JezykMaszyneDlaLoginu {
         }
         if ($stopien -lt 0) { continue }
 
+        $wynik.Ile++
         $kiedy = ConvertTo-JezykCzasLokalny $wiersz.LastActiveTime
 
-        # Id sluzy do doczytania daty i tylko do tego - zrodla 2 i 3 nie znaja
-        # LastActiveTime wcale. Zero znaczy "to zrodlo nie poda identyfikatora zasobu".
-        $id = 0
-        if ($wiersz.ResourceID) { try { $id = [int]$wiersz.ResourceID } catch { $id = 0 } }
+        # Nizszy stopien bije kazda date; data rozstrzyga tylko w obrebie tego samego.
+        $lepszy = ($null -eq $wynik.Wiersz) -or ($stopien -lt $najlepszy) -or
+                  ($stopien -eq $najlepszy -and $null -ne $kiedy -and
+                   ($null -eq $wynik.Data -or $kiedy -gt $wynik.Data))
+        if (-not $lepszy) { continue }
 
-        $pozycje.Add([pscustomobject]@{
-            Nazwa   = $nazwa
-            Pole    = $nazwyPol[$stopien]
-            Data    = $kiedy
-            Id      = $id
-            Wiersz  = $wiersz
-            Stopien = $stopien
-            # Sortujemy rosnaco, wiec "bez daty" musi byc WIEKSZE - pozycja bez daty ma
-            # stanac za kazda datowana z tego samego stopnia, dokladnie tak jak dotad.
-            BezDaty = [int]($null -eq $kiedy)
-            Indeks  = $indeks })
-        $indeks++
+        $wynik.Wiersz = $wiersz
+        $wynik.Pole   = $nazwyPol[$stopien]
+        $wynik.Data   = $kiedy
+        $najlepszy    = $stopien
     }
-
-    if ($pozycje.Count -eq 0) { return $wynik }
-
-    # INDEKS JAKO OSTATNI KLUCZ, a nie zdanie sie na stabilnosc sortowania: Sort-Object
-    # kolejnosci elementow rownych nie gwarantuje, a od niej zalezy, ktora maszyna trafi
-    # do pola, gdy dwie maja te sama date. Nizszy stopien bije kazda date; data rozstrzyga
-    # tylko w obrebie tego samego stopnia.
-    $uszeregowane = @($pozycje | Sort-Object -Property @{ Expression = 'Stopien' },
-                                                       @{ Expression = 'BezDaty' },
-                                                       @{ Expression = 'Data'; Descending = $true },
-                                                       @{ Expression = 'Indeks' })
-
-    $wynik.Lista  = @($uszeregowane | ForEach-Object {
-                        [pscustomobject]@{ Nazwa = $_.Nazwa; Pole = $_.Pole; Data = $_.Data; Id = $_.Id } })
-    $wynik.Ile    = $uszeregowane.Count
-    $wynik.Wiersz = $uszeregowane[0].Wiersz
-    $wynik.Pole   = $uszeregowane[0].Pole
-    $wynik.Data   = $uszeregowane[0].Data
 
     return $wynik
 }
 
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
-          [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15, [int]$LimitUrzadzen = 3)
+          [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
     # Odpowiada i Adres wypelnia sonda ICMP na samym koncu, po ustaleniu nazwy maszyny.
     # $null w Odpowiada znaczy "nie sprawdzono albo nie wiadomo" i tak ma zostac na kazdej
     # sciezce bledu - patrz Get-JezykPingKomputera.
     # Mac wypelnia sie PO sondzie i tylko wtedy, gdy karta z inwentaryzacji SCCM ma ten sam
     # adres IP, ktory oddalo rozwiazanie nazwy. MacSzczegoly niesie powod, gdy sie nie udalo.
-    #
-    # Urzadzenia to uszeregowana lista dopasowanych maszyn - do LimitUrzadzen pozycji,
-    # pierwsza jest zawsze ta, ktorej nazwa stoi w polu. IleUrzadzen mowi, ile dopasowano
-    # NAPRAWDE, bo to dwie rozne liczby i operator ma prawo znac obie.
-    #
-    # Limit jest WARTOSCIA DOMYSLNA PARAMETRU, a nie zmienna skryptowa: ta funkcja biegnie
-    # w przestrzeni uruchomieniowej w tle, a ta startuje pusta i zadnego $Script:... w niej
-    # nie ma.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
                                 Blad = ''; Szczegoly = ''
                                 Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
-                                Urzadzenia = @(); IleUrzadzen = 0
                                 Mac = ''; MacSzczegoly = '' }
 
     # Login pochodzi z AD, wiec jest bezpieczny - ale zapytanie budowane z tekstu sprawdza
@@ -1509,9 +1455,9 @@ function Get-JezykOstatnioUzywanyKomputer {
         )
 
         $najlepsza     = $null
+        $najData       = $null
         $poleTrafienia = ''
         $ileMaszyn     = 0
-        $urzadzenia    = @()
         $zrodlo        = ''
         $stos          = 'CIM'
         $odmowa        = $null
@@ -1549,9 +1495,9 @@ function Get-JezykOstatnioUzywanyKomputer {
             $trafienie = Select-JezykMaszyneDlaLoginu -Wiersze $odp.Wiersze -Login $Login -Pola $z.Pola
             if ($trafienie.Wiersz) {
                 $najlepsza     = $trafienie.Wiersz
+                $najData       = $trafienie.Data
                 $poleTrafienia = $trafienie.Pole
                 $ileMaszyn     = $trafienie.Ile
-                $urzadzenia    = @(@($trafienie.Lista) | Select-Object -First $LimitUrzadzen)
                 $zrodlo        = $z.Nazwa
                 $stos          = $odp.Stos
                 break
@@ -1579,41 +1525,32 @@ function Get-JezykOstatnioUzywanyKomputer {
             return $wynik
         }
 
-        # Aktywnosc jest DODATKIEM: brak klasy albo brak prawa do niej zostawia same nazwy.
-        # Date niosa wiersze pierwszego zrodla i wtedy jest juz w pozycjach; zrodla 2 i 3 nie
-        # znaja jej wcale, wiec dla nich pytamy osobno - JEDNYM zapytaniem o WSZYSTKIE
-        # pokazywane maszyny naraz. Po jednym zapytaniu na maszyne kosztowaloby trzy podroze
-        # po sieci zamiast jednej, za dokladnie te sama odpowiedz.
-        $bezDaty = @($urzadzenia | Where-Object { $null -eq $_.Data -and $_.Id -gt 0 })
-        if ($bezDaty.Count) {
+        # Aktywnosc jest DODATKIEM: brak klasy albo brak prawa do niej zostawia sama nazwe.
+        # Date niosa wiersze pierwszego zrodla i wtedy jest juz w $najData; zrodla 2 i 3 nie
+        # znaja jej wcale, wiec dla nich pytamy osobno - o JEDEN wybrany identyfikator, a nie
+        # o wszystkie przesiane, bo pokazujemy dokladnie jedna maszyne.
+        if ($null -eq $najData -and $najlepsza.ResourceID) {
             try {
                 # ResourceId przez [int] - do zapytania trafiaja wtedy same liczby, niezaleznie
                 # od tego, co oddal serwer.
-                $warunki = @($bezDaty | ForEach-Object { 'ResourceId = {0}' -f [int]$_.Id })
-                $daty    = @{}
-                foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
-                                        -Zapytanie (
-                    "SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE " +
-                    ($warunki -join ' OR ')))) {
-                    $kiedy = ConvertTo-JezykCzasLokalny $wpis.LastActiveTime
-                    if ($null -ne $kiedy) { $daty[[string][int]$wpis.ResourceId] = $kiedy }
-                }
-
-                foreach ($pozycja in $bezDaty) {
-                    $klucz = [string][int]$pozycja.Id
-                    if ($daty.ContainsKey($klucz)) { $pozycja.Data = $daty[$klucz] }
+                $idAktywnosci = [int]$najlepsza.ResourceID
+                if ($idAktywnosci -gt 0) {
+                    foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
+                                            -Zapytanie (
+                        "SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE ResourceId = $idAktywnosci"))) {
+                        $kiedy = ConvertTo-JezykCzasLokalny $wpis.LastActiveTime
+                        if ($null -ne $kiedy) { $najData = $kiedy }
+                    }
                 }
             }
             catch { }
         }
 
-        # NAZWA I DATA BIORA SIE Z PIERWSZEJ POZYCJI LISTY, a nie z osobnej arytmetyki obok:
-        # pole i lista pod przyciskiem "!" maja mowic o tej samej maszynie, a dwa wyliczenia
-        # tej samej rzeczy rozjezdzaja sie przy pierwszej zmianie.
-        $wynik.Urzadzenia  = $urzadzenia
-        $wynik.IleUrzadzen = $ileMaszyn
-        $wynik.Nazwa       = [string]$urzadzenia[0].Nazwa
-        $wynik.Data        = $urzadzenia[0].Data
+        # NetbiosName jest tylko w SMS_R_System; droga zapasowa oddaje samo Name.
+        $nazwa = $najlepsza.NetbiosName
+        if (-not $nazwa) { $nazwa = $najlepsza.Name }
+        $wynik.Nazwa = [string]$nazwa
+        $wynik.Data  = $najData
 
         # Wieloosobowosc sprawdzamy WYLACZNIE, gdy trafilo pierwsze zrodlo - tylko ono
         # niesie CurrentLogonUser/LastLogonUser/PrimaryUser w wierszu (zrodla 2 i 3 tych
@@ -1623,8 +1560,8 @@ function Get-JezykOstatnioUzywanyKomputer {
             if ($konta.Count -gt 1) {
                 $wynik.Wspoldzielony = $true
                 $wynik.SzczegolyWspoldzielenia =
-                    'SCCM zna na maszynie {0} więcej niż jedno konto ({1}) - pokazana data i nazwa mogą dotyczyć innej osoby niż {2}.' -f
-                        $wynik.Nazwa, ($konta -join ', '), $Login
+                    'SCCM zna na tej maszynie więcej niż jedno konto ({0}) - pokazana data i nazwa mogą dotyczyć innej osoby niż {1}.' -f
+                        ($konta -join ', '), $Login
             }
         }
 
@@ -1689,7 +1626,7 @@ function Get-JezykOstatnioUzywanyKomputer {
         if ($niedostepne.Count) {
             $opisWyniku += 'klasy, które nie odpowiedziały: {0}' -f ($niedostepne -join '; ')
         }
-        if ($null -eq $wynik.Data) {
+        if ($null -eq $najData) {
             $opisWyniku += 'bez daty aktywności - klasa SMS_CombinedDeviceResources nie odpowiedziała albo nie ma do niej prawa'
         }
         $wynik.Szczegoly = $opisWyniku -join [Environment]::NewLine
@@ -1720,13 +1657,6 @@ function Get-JezykOstatnioUzywanyKomputer {
     w SCCM - pierwsze znaczy "klient nie zameldowal jeszcze logowania", drugie "tej maszyny
     tu nie ma". Komunikaty rozroznia te dwa przypadki, bo prowadza do zupelnie innych krokow.
 
-    MASZYNA MIEWA KILKA KONT, wiec obok pokazanego uzytkownika oddajemy ich liste (Konta,
-    do LimitKont pozycji). NIE JEST TO HISTORIA LOGOWAN i nie da sie jej stad zrobic: te
-    trzy klasy trzymaja po jednym rekordzie na maszyne, a nie dziennik. Lista wymienia wiec
-    konta z ROZNYCH POL tego samego rekordu - zalogowane teraz, zalogowane ostatnio,
-    przypisane na stale - i tylko widok potrafi to nazwac tak, zeby nikt nie wzial trzech
-    rol za trzy kolejne logowania.
-
     Razem z uzytkownikiem oddajemy DOSTEPNOSC MASZYNY (sonda ICMP) i adres MAC karty, ktora
     odpowiada pod znalezionym adresem - tak samo jak droga odwrotna i z tego samego powodu:
     obie rzeczy sa dodatkiem do zapytania, ktore i tak idzie w tle, wiec nie kosztuja okna
@@ -1735,15 +1665,10 @@ function Get-JezykOstatnioUzywanyKomputer {
 #>
 function Get-JezykUzytkownikKomputera {
     param([string]$Netbios, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
-          [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15, [int]$LimitKont = 3)
+          [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
-    # Konta to lista odrebnych kont TEGO rekordu - do LimitKont pozycji, pierwsze jest to,
-    # ktore stoi w polu. Kazde niesie nazwy pol, w ktorych wystapilo; na slowa operatora
-    # zamienia je widok. Limit jest wartoscia domyslna parametru, a nie zmienna skryptowa:
-    # funkcja biegnie w przestrzeni uruchomieniowej w tle, a ta startuje pusta.
     $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = ''
-                                Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
-                                Konta = @() }
+                                Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = '' }
 
     # Nazwa pochodzi z AD, wiec jest bezpieczna - ale zapytanie budowane z tekstu sprawdza
     # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
@@ -1819,8 +1744,6 @@ function Get-JezykUzytkownikKomputera {
 
         $uzytkownik  = ''
         $pole        = ''
-        $konta       = New-Object System.Collections.Generic.List[object]
-        $widziane    = @{}
         $zrodlo      = ''
         $stos        = 'CIM'
         $data        = $null
@@ -1856,48 +1779,12 @@ function Get-JezykUzytkownikKomputera {
                     if (-not $wierszMaszyny) { $wierszMaszyny = $wiersz }
                 }
 
-                # PETLA IDZIE PRZEZ WSZYSTKIE POLA, a nie konczy sie na pierwszym niepustym.
-                # W polu okna nadal staje pierwsze - to sie nie zmienia - ale jedna maszyna
-                # miewa konto zalogowane teraz, inne ostatnio i jeszcze inne przypisane na
-                # stale, a operator pyta wlasnie o nie.
                 foreach ($nazwaPola in $z.Pola) {
                     $wartosc = ([string]$wiersz.$nazwaPola).Trim()
-                    if (-not $wartosc) { continue }
-
-                    if (-not $uzytkownik) {
+                    if ($wartosc) {
                         $uzytkownik = $wartosc
                         $pole       = $nazwaPola
-                    }
-
-                    # PrimaryUser bywa LISTA kont po przecinku, wiec kazde pole rozbieramy.
-                    foreach ($zapis in $wartosc -split ',') {
-                        $pelny = $zapis.Trim()
-                        if (-not $pelny) { continue }
-
-                        # PELNY ZAPIS W OKNIE, POROWNANIE PO SAMEJ NAZWIE KONTA. Pokazujemy
-                        # to, co zapisal SCCM - razem z przedrostkiem domeny - bo operator
-                        # porownuje to z konsola. O tym, CZY TO TO SAMO KONTO, rozstrzyga
-                        # Get-JezykKontaZPola: "jkowalski" i "JEZYK\JKowalski" to jedna
-                        # osoba. Bez tego jeden czlowiek wyczerpalby caly limit pozycji
-                        # i drugi uzytkownik maszyny nie zmiescilby sie na liscie.
-                        #
-                        # Tablice PRZYPISUJEMY do zmiennej - @(Get-JezykKontaZPola ...) nie
-                        # rozwinaloby jej, tylko owinelo w jednoelementowa tablice tablic.
-                        $bezDomeny = Get-JezykKontaZPola $pelny
-                        if ($bezDomeny.Count -eq 0) { continue }
-
-                        $klucz = $bezDomeny[0].ToLowerInvariant()
-                        if (-not $klucz) { continue }
-
-                        if ($widziane.ContainsKey($klucz)) {
-                            $znane = $widziane[$klucz]
-                            if ($znane.Pola -notcontains $nazwaPola) { $znane.Pola += $nazwaPola }
-                            continue
-                        }
-
-                        $pozycja = [pscustomobject]@{ Nazwa = $pelny; Pola = @($nazwaPola) }
-                        $widziane[$klucz] = $pozycja
-                        $konta.Add($pozycja)
+                        break
                     }
                 }
 
@@ -1994,7 +1881,6 @@ function Get-JezykUzytkownikKomputera {
 
         $wynik.Uzytkownik = $uzytkownik
         $wynik.Data       = $data
-        $wynik.Konta      = @($konta | Select-Object -First $LimitKont)
 
         $opisWyniku = @('źródło: {0} (pole {1}); protokół: {2}; stos: {3}; serwer: {4}' -f
                         $zrodlo, $pole, $sesja.Protokol, $stos, $polaczenie.Serwer)
