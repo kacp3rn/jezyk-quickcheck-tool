@@ -160,7 +160,7 @@ function Clear-JezykKonto {
     Set-JezykPrzyciskGrupy @()
 
     Set-JezykInfo 'Komputer'              ''
-    Set-JezykInfo 'KomputerWspoldzielony' ''
+    Set-JezykInfo 'KomputerWiecej' ''
     Set-JezykInfo 'Status'                ''
     # "!" przy adresie MAC nalezy do TEGO konta, a nie do okna - zostawiony tlumaczylby
     # przy nastepnym koncie karte sieciowa maszyny poprzedniego. Widok maszyny gasi swoj
@@ -282,7 +282,7 @@ function Set-JezykResult {
             $Script:LogowaniePrzyblizone   = $Result.OstatnieLogowaniePrzyblizone
             Set-JezykNotkeSprawdzania
             Set-JezykInfo 'Komputer'              ''
-            Set-JezykInfo 'KomputerWspoldzielony' ''
+            Set-JezykInfo 'KomputerWiecej' ''
             Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
             Start-JezykZadanieKomputera -Login ([string]$Result.Login)
 
@@ -397,6 +397,9 @@ function Clear-JezykKomputer {
     Set-JezykPrzyciskPolacz '' -Widok Maszyna
 
     Set-JezykInfo 'Uzytkownik' ''
+    # Lista kont nalezy do TEJ maszyny, a nie do okna - zostawiona tlumaczylaby przy
+    # nastepnej maszynie konta poprzedniej.
+    Set-JezykInfo 'UzytkownikWiecej' ''
     Set-JezykInfo 'Tworca' ''
     Set-JezykInfo 'MacMaszyny' ''
     Set-JezykInfo 'StatusMaszyny' ''
@@ -832,7 +835,7 @@ function Set-JezykPoleKomputeraBezTla {
     Set-JezykDostepnoscKomputera -Odpowiada $null -Adres ''
     Set-JezykAdresMac -Mac '' -Szczegoly ''
     Set-JezykInfo 'Komputer'              $Blad
-    Set-JezykInfo 'KomputerWspoldzielony' ''
+    Set-JezykInfo 'KomputerWiecej' ''
 }
 
 <#
@@ -1087,6 +1090,8 @@ function Set-JezykPoleUzytkownikaBezTla {
     Set-JezykDostepnoscKomputera -Odpowiada $null -Adres '' -Widok Maszyna
     Set-JezykAdresMac -Mac '' -Szczegoly '' -Widok Maszyna
     Set-JezykInfo 'Uzytkownik' $Blad
+    # Niebieski gasnie razem z zapaleniem czerwonego - oba stoja w tym samym miejscu.
+    Set-JezykInfo 'UzytkownikWiecej' ''
 }
 
 <#
@@ -1241,6 +1246,13 @@ function Update-JezykUzytkownikaWTle {
     $Script:MacDlaAdresu = if ($Uzytkownik.Mac) { [string]$Uzytkownik.Adres } else { '' }
 
     Set-JezykInfo 'Uzytkownik' $(if ($Uzytkownik.Blad) { [string]$Uzytkownik.Szczegoly } else { '' })
+
+    # Niebieski "!" stoi w TYM SAMYM miejscu co czerwony, wiec blad go gasi - dokladnie tak
+    # samo jak po drugiej stronie okna. Nazwa maszyny idzie z $Script:OstatniKomputer, a nie
+    # z pola tekstowego: w polu siedzi uzytkownik, nie maszyna.
+    Set-JezykInfo 'UzytkownikWiecej' $(
+        if ($Uzytkownik.Blad) { '' }
+        else { Get-JezykTrescKontMaszyny -Uzytkownik $Uzytkownik -Maszyna ([string]$Script:OstatniKomputer) })
 }
 
 <#
@@ -1716,6 +1728,138 @@ function Invoke-JezykPrzelaczenieMotywu {
     if ($pole) { [void]$pole.Focus() }
 }
 
+<#
+.SYNOPSIS
+    Nazwa pola SCCM zamieniona na slowa, ktorymi operator mysli o tej maszynie.
+
+.DESCRIPTION
+    Jedno miejsce z tym slownikiem, bo czytaja go obie listy - urzadzen przy koncie
+    i kont przy maszynie. Pole nieznane oddaje WLASNA NAZWE, a nie pustke: pusty opis
+    wygladalby w oknie jak brak danych, a jest bledem programisty i ma byc widoczny.
+#>
+function Get-JezykOpisRoliKonta {
+    param([string]$Pole)
+
+    switch ($Pole) {
+        'CurrentLogonUser'  { return 'zalogowany teraz' }
+        'LastLogonUser'     { return 'ostatnio zalogowany' }
+        'PrimaryUser'       { return 'użytkownik główny' }
+        # Rekord odkrycia, odswiezany rzadziej niz widok "Devices" - warto to powiedziec,
+        # bo data przy nim bywa wyraznie starsza.
+        'LastLogonUserName' { return 'ostatnio zalogowany (rekord odkrycia)' }
+        'UserName'          { return 'zalogowany wg inwentaryzacji sprzętu' }
+    }
+
+    return $Pole
+}
+
+<#
+.SYNOPSIS
+    Tresc niebieskiego "!" przy polu "Ostatnio uzywany komputer" - lista maszyn konta.
+
+.DESCRIPTION
+    W polu miesci sie JEDNA nazwa z data i tak ma zostac: kolumna ma okolo trzydziestu
+    znakow, a sam zapis "PC-1041 (2026-09-18 09:41)" zajmuje dwadziescia siedem. Komplet
+    idzie wiec pod wykrzyknik, ktory zapala sie WYLACZNIE wtedy, gdy ma co pokazac - jedna
+    maszyna bez wspoldzielenia oddaje pustke, czyli zgaszony przycisk.
+
+    NIE ROWNAMY KOLUMN SPACJAMI. MessageBox rysuje czcionka proporcjonalna, wiec kolumny
+    wyrownane w edytorze rozjezdzaja sie w oknie; kazda pozycja jest jednym zdaniem.
+
+    Pulapka @($null): wynik zadania, ktore nie ruszylo, nie ma pola Urzadzenia wcale,
+    a @($null).Count rowna sie JEDEN - bez odsiewu pustych okno pokazywaloby wtedy liste
+    o jednej, nieistniejacej pozycji. Odsiew stoi tutaj, czyli tam, gdzie zapada decyzja,
+    a nie w kazdym miejscu wywolania.
+#>
+function Get-JezykTrescUrzadzen {
+    param($Komputer, [string]$Login)
+
+    $urzadzenia = @(@($Komputer.Urzadzenia) | Where-Object { $_ -and $_.Nazwa })
+    $akapity    = New-Object System.Collections.Generic.List[string]
+
+    if ($urzadzenia.Count -gt 1) {
+        $ile = [int]$Komputer.IleUrzadzen
+        if ($ile -lt $urzadzenia.Count) { $ile = $urzadzenia.Count }
+
+        $kogo = if ($Login) { 'Konto {0}' -f $Login } else { 'To konto' }
+        $akapity.Add($(
+            if ($ile -gt $urzadzenia.Count) {
+                '{0} pasuje do {1} maszyn w inwentaryzacji SCCM; poniżej {2} z najświeższym śladem logowania:' -f $kogo, $ile, $urzadzenia.Count
+            } else {
+                '{0} pasuje do {1} maszyn w inwentaryzacji SCCM:' -f $kogo, $ile
+            }))
+        $akapity.Add('')
+
+        $numer = 0
+        foreach ($u in $urzadzenia) {
+            $numer++
+
+            $wiersz = '{0}. {1} - {2}' -f $numer, $u.Nazwa, (Get-JezykOpisRoliKonta ([string]$u.Pole))
+            # Brak daty zostaje BRAKIEM: pusta para nawiasow albo zero wygladaja jak dana,
+            # a to jest jej nieobecnosc.
+            if ($null -ne $u.Data) { $wiersz = '{0}, {1:yyyy-MM-dd HH:mm}' -f $wiersz, $u.Data }
+            if ($numer -eq 1)      { $wiersz += ' (pokazana w polu)' }
+
+            $akapity.Add($wiersz)
+        }
+
+        $akapity.Add('')
+        $akapity.Add(('Adres IP, adres MAC oraz przyciski "Pinguj" i "Połącz" dotyczą wyłącznie maszyny {0}.' -f
+                      $urzadzenia[0].Nazwa))
+    }
+
+    # Wspoldzielenie to DRUGI, niezalezny powod, dla ktorego ten wynik bywa niejednoznaczny -
+    # i jedyna tresc tego przycisku, dopoki maszyna byla jedna.
+    if ($Komputer.Wspoldzielony -and $Komputer.SzczegolyWspoldzielenia) {
+        if ($akapity.Count) { $akapity.Add('') }
+        $akapity.Add([string]$Komputer.SzczegolyWspoldzielenia)
+    }
+
+    if ($akapity.Count -eq 0) { return '' }
+    return ($akapity -join [Environment]::NewLine)
+}
+
+<#
+.SYNOPSIS
+    Tresc niebieskiego "!" przy polu "Ostatnio zalogowany uzytkownik" - konta maszyny.
+
+.DESCRIPTION
+    Ta sama zasada, co po drugiej stronie okna: pole niesie jedna odpowiedz, komplet idzie
+    pod wykrzyknik, a jedno konto nie ma czego pokazywac i gasi go.
+
+    OSTATNIE ZDANIE JEST TU NAJWAZNIEJSZE I NIE DA SIE GO WYCZYTAC Z OKNA. Trzy konta
+    wypisane pod soba wygladaja jak trzy kolejne logowania, a sa wartosciami TRZECH POL
+    jednego rekordu - SCCM w tych klasach dziennika logowan nie trzyma wcale. Bez tego
+    zdania lista mowilaby nieprawde samym swoim ksztaltem.
+#>
+function Get-JezykTrescKontMaszyny {
+    param($Uzytkownik, [string]$Maszyna)
+
+    $konta = @(@($Uzytkownik.Konta) | Where-Object { $_ -and $_.Nazwa })
+    if ($konta.Count -le 1) { return '' }
+
+    $kogo    = if ($Maszyna) { 'Maszyna {0}' -f $Maszyna } else { 'Ta maszyna' }
+    $akapity = New-Object System.Collections.Generic.List[string]
+    $akapity.Add(('{0} - konta, które zna SCCM ({1}):' -f $kogo, $konta.Count))
+    $akapity.Add('')
+
+    $numer = 0
+    foreach ($konto in $konta) {
+        $numer++
+
+        $role   = @(@($konto.Pola) | ForEach-Object { Get-JezykOpisRoliKonta ([string]$_) })
+        $wiersz = '{0}. {1} - {2}' -f $numer, $konto.Nazwa, ($role -join ', ')
+        if ($numer -eq 1) { $wiersz += ' (pokazany w polu)' }
+
+        $akapity.Add($wiersz)
+    }
+
+    $akapity.Add('')
+    $akapity.Add('To są wartości kilku pól JEDNEGO rekordu (kto jest zalogowany teraz, kto był ostatnio, kto ma maszynę przypisaną), a nie historia logowań - SCCM w tych klasach jej nie trzyma.')
+
+    return ($akapity -join [Environment]::NewLine)
+}
+
 # Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
 # idzie pod przycisk "!" WYLACZNIE PRZY BLEDZIE: w polu jest na nia za malo miejsca, a bez
 # niej nazwa przyczyny mowi, CO sie stalo, ale nie mowi, co z tym zrobic. Na sukcesie
@@ -1760,14 +1904,19 @@ function Update-JezykKomputerWTle {
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })
 
-    # Niebieski "!" - nie usterka, wiec klucz jest osobny od czerwonego. Gaszony na kazdej
-    # innej sciezce, inaczej zostalby stan po POPRZEDNIM, wspoldzielonym komputerze.
+    # Niebieski "!" - nie usterka, wiec klucz jest osobny od czerwonego. Niesie DWA powody,
+    # dla ktorych ten wynik bywa niejednoznaczny, i oba naraz: konto pasujace do kilku
+    # maszyn oraz maszyne znana SCCM z kilku kont. Jeden przycisk, bo przy tym polu jest
+    # jedno miejsce - tresc sklada Get-JezykTrescUrzadzen. Gaszony na kazdej innej sciezce,
+    # inaczej zostalby stan po POPRZEDNIM koncie.
     #
     # NIGDY RAZEM Z CZERWONYM: oba stoja w oknie w TYM SAMYM MIEJSCU, na koncu pola nazwy
-    # maszyny. Logika i tak konczy zapytanie na bledzie, zanim ustali wspoldzielenie - ale
-    # to jest fakt o tamtej funkcji, a warunek tutaj pilnuje tego w miejscu, w ktorym
-    # decyduje sie, co widac.
-    Set-JezykInfo 'KomputerWspoldzielony' $(if ($Komputer.Wspoldzielony -and -not $Komputer.Blad) { [string]$Komputer.SzczegolyWspoldzielenia } else { '' })
+    # maszyny. Logika i tak konczy zapytanie na bledzie, zanim cokolwiek ustali - ale to
+    # jest fakt o tamtej funkcji, a warunek tutaj pilnuje tego w miejscu, w ktorym decyduje
+    # sie, co widac.
+    Set-JezykInfo 'KomputerWiecej' $(
+        if ($Komputer.Blad) { '' }
+        else { Get-JezykTrescUrzadzen -Komputer $Komputer -Login ([string]$Script:OstatnieKonto.Login) })
 }
 
 #endregion

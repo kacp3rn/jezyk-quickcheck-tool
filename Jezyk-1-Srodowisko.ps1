@@ -572,23 +572,28 @@ $Script:Informacje = @{}
 # Kazdy klucz tutaj pokazuje sie WYLACZNIE warunkowo - nigdy jako stale, zawsze widoczne
 # wyjasnienie. Odpadly kolejno: Domena i Ostatnie logowanie (stale wyjasnienia bez zwiazku
 # z awaria) oraz Odblokuj (powody wylaczenia przycisku sa normalnymi stanami, nie bledami).
-# Wiekszosc kluczy oznacza realna usterke (czerwony przycisk) - KomputerWspoldzielony jest
-# drugi, niebieski rodzaj: nie usterka, tylko realna niejednoznacznosc konkretnego wyniku
-# (komputer, z ktorego korzysta wiecej niz jedna osoba wedlug SCCM). Warunkowosc jest tu
-# tym, co odroznia go od trzech usunietych - pokazuje sie tylko wtedy, gdy dane wyszukanie
-# to faktycznie wykryje, a nie zawsze.
+#
+# Wiekszosc kluczy oznacza realna usterke (czerwony przycisk). KomputerWiecej i
+# UzytkownikWiecej sa drugiego, NIEBIESKIEGO rodzaju: nie usterka, tylko realna
+# niejednoznacznosc konkretnego wyniku - konto pasujace do kilku maszyn, maszyna znajaca
+# kilka kont. Warunkowosc jest tu tym, co odroznia je od trzech usunietych: zapalaja sie
+# wylacznie wtedy, gdy dane wyszukanie faktycznie cos takiego znajdzie.
+#
+# TYTUL NAZYWA POLE, NIE PANEL ANI KOLOR. Czerwony i niebieski przycisk tego samego pola
+# maja wiec ten sam tytul - operator czyta w naglowku nazwe pola, ktore klika, a nie nazwe
+# przyczyny, dla ktorej wykrzyknik sie zapalil.
 $Script:TytulyInformacji = @{
-    Status                = 'Status'
-    Komputer              = 'Ostatnio używany komputer'
-    Uzytkownik            = 'Ostatnio zalogowany użytkownik'
-    KomputerWspoldzielony = 'Komputer współdzielony'
-    Tworca                = 'Dodany do AD przez'
-    Mac                   = 'Adres MAC'
+    Status           = 'Status'
+    Komputer         = 'Ostatnio używany komputer'
+    KomputerWiecej   = 'Ostatnio używany komputer'
+    Uzytkownik       = 'Ostatnio zalogowany użytkownik'
+    UzytkownikWiecej = 'Ostatnio zalogowany użytkownik'
+    Tworca           = 'Dodany do AD przez'
+    Mac              = 'Adres MAC'
     # Widok komputera ma wlasne kontrolki, wiec i wlasne klucze - przycisk "!" to JEDNA
-    # kontrolka, a dwa panele istnieja naraz (widoczny jest zawsze tylko jeden). Tytuly
-    # celowo brzmia tak samo, jak po stronie konta: okno ma nazywac pole, nie panel.
-    MacMaszyny            = 'Adres MAC'
-    StatusMaszyny         = 'Status'
+    # kontrolka, a dwa panele istnieja naraz (widoczny jest zawsze tylko jeden).
+    MacMaszyny       = 'Adres MAC'
+    StatusMaszyny    = 'Status'
 }
 
 <#
