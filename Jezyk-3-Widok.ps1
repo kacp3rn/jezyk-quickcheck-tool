@@ -1567,42 +1567,41 @@ function Set-JezykStanJeza {
     z ich warunkami.
 
 .DESCRIPTION
-    DWIE NIEZALEZNE OSIE, i to jest sedno tej funkcji.
+    JEDNA OS: WIDOCZNOSC. Oba przyciski albo sa, albo ich nie ma - wyszarzeniem nie
+    steruje tu nic. Warunki sa jednak TRZY i musza byc spelnione naraz:
 
-    WIDOCZNOSC odpowiada na pytanie "czy jest z czym sie laczyc": jest maszyna i jest
-    sciezka do konsoli ConfigMgr. Tu przycisk ZNIKA, a nie wyszarza sie - wyszarzony
-    na stale w kazdym wdrozeniu bez tej konsoli bylby obietnica, ktorej nikt tam nigdy
-    nie spelni. Z tego samego powodu "Odblokuj konto" znika w domenie spoza listy
-    DomenyZOdblokowaniem (patrz Set-JezykPrzyciskOdblokuj).
+      1. jest zapamietana maszyna,
+      2. jest czym sie z nia polaczyc (dotyczy tylko "Polacz": SciezkaRemoteControl),
+      3. sonda ICMP potwierdzila, ze maszyna odpowiada.
 
-    DOSTEPNOSC odpowiada na pytanie "czy maszyna odpowiada" i jest zwyklym stanem
-    przejsciowym - "jest, ale nie teraz" - czyli dokladnie tym, co pokazuje wyszarzenie.
-    Obie akcje siegaja do maszyny po sieci, wiec bez potwierdzonej odpowiedzi konczylyby
-    sie bledem, ktory dalo sie przewidziec.
+    Warunek trzeci bierze sie stad, ze obie akcje siegaja do maszyny PO SIECI - bez
+    potwierdzonej odpowiedzi konczylyby sie bledem, ktory dalo sie przewidziec.
 
-    POTWIERDZONA znaczy $true, a nie "nie $false". $null jest tu rownie gaszacy:
-    nie sprawdzono, nie udalo sie sprawdzic i sprawdzono z wynikiem negatywnym to nadal
-    trzy rozne rzeczy (i trzy rozne KOLORY pola, patrz Set-JezykDostepnoscKomputera),
-    ale zadna z dwoch ostatnich nie jest zgoda na siegniecie do maszyny.
+    POTWIERDZONA znaczy $true, a nie "nie $false". $null chowa tak samo: nie sprawdzono,
+    nie udalo sie sprawdzic i sprawdzono z wynikiem negatywnym to nadal trzy rozne rzeczy
+    (i trzy rozne KOLORY pola, patrz Set-JezykDostepnoscKomputera), ale zadna z dwoch
+    ostatnich nie jest zgoda na siegniecie do maszyny.
 
-    CENA TEJ DECYZJI JEST ZNANA I PRZYJETA: milczenie na ping nie dowodzi, ze maszyna
-    jest wylaczona - zapora blokuje ICMP w konfiguracji domyslnej wielu firm - wiec
-    tam obie akcje beda nieczynne az do udanego "Pinguj". Dlatego sam "Pinguj" nigdy
-    nie gasnie z tego powodu: to jest droga powrotu i musi zostac otwarta.
+    ODSTEPSTWO OD REGULY "ZNIKA KONTRA WYSZARZA SIE" JEST TU SWIADOME. Dotad chowalismy
+    to, co w danym wdrozeniu nie zadziala NIGDY (przycisk bez SciezkaRemoteControl,
+    "Odblokuj konto" w domenie spoza DomenyZOdblokowaniem), a wyszarzali stan przejsciowy
+    - "jest, ale nie teraz". Warunek trzeci jest przejsciowy, a mimo to chowa.
+
+    CENA JEST ZNANA I PRZYJETA: milczenie na ping nie dowodzi, ze maszyna jest wylaczona
+    - zapora blokuje ICMP w konfiguracji domyslnej wielu firm - wiec tam tych przyciskow
+    nie widac ANI RAZU i z samego okna nie da sie poznac, ze istnieja. Droga powrotu jest
+    jedna: "Pinguj", ktory z tego powodu nie gasnie nigdy.
 
     Warunki stoja TUTAJ, w jednym miejscu, a nie przy kazdym z wywolan - rozpisane
-    rozjechalyby sie przy pierwszej zmianie, a przycisk zostawalby czynny po przelaczeniu
-    na maszyne, o ktorej nic jeszcze nie wiadomo.
-
-    "Dyski" ma tylko widok komputera i tylko os dostepnosci: udzialow administracyjnych
-    nie wylacza zadne ustawienie, wiec nie ma powodu go chowac.
+    rozjechalyby sie przy pierwszej zmianie, a przycisk zostawalby widoczny po
+    przelaczeniu na maszyne, o ktorej nic jeszcze nie wiadomo.
 #>
 function Set-JezykPrzyciskiZdalne {
     param([string]$Netbios, [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
     $k = $Script:Kontrolki
 
-    # Porownanie z $true, a nie [bool] na zmiennej: $null ma tu gasic tak samo jak $false,
+    # Porownanie z $true, a nie [bool] na zmiennej: $null ma tu chowac tak samo jak $false,
     # ale stan "nie wiadomo" ma dalej byc odroznialny od "milczy" - patrz opis wyzej.
     $odpowiada = ($true -eq $Script:MaszynaOdpowiada)
 
@@ -1613,14 +1612,14 @@ function Set-JezykPrzyciskiZdalne {
         # jedna linia mniej stanu do zgubienia.
         $sciezka = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
 
-        $polacz.Visible = ([bool]$Netbios -and [bool]$sciezka)
-        $polacz.Enabled = $odpowiada
+        $polacz.Visible = ([bool]$Netbios -and [bool]$sciezka -and $odpowiada)
     }
 
     if ($Widok -ne 'Maszyna') { return }
 
+    # "Dyski" nie pyta o sciezke do niczego - udzialy administracyjne zaklada system sam.
     if ($k.PrzyciskDyskiMaszyny) {
-        $k.PrzyciskDyskiMaszyny.Enabled = ([bool]$Netbios -and $odpowiada)
+        $k.PrzyciskDyskiMaszyny.Visible = ([bool]$Netbios -and $odpowiada)
     }
 }
 

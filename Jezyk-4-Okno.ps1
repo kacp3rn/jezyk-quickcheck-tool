@@ -3109,9 +3109,9 @@ function New-JezykForm {
     # konta zostaje dziewieciowierszowy i okno nie uroslo ani o piksel.
     #
     # DWIE NIEZALEZNE OSIE, powod przy Set-JezykPrzyciskiZdalne: ten przycisk ZNIKA, gdy
-    # nie ma sie z czym laczyc (brak maszyny albo brak sciezki do konsoli), a WYSZARZA SIE,
-    # gdy maszyna nie potwierdzila, ze odpowiada. Wspolrzedne dostaje na koncu, razem
-    # z calym wyrownaniem.
+    # nie ma sie z czym laczyc - a to znaczy TRZY rzeczy naraz: jest maszyna, jest sciezka
+    # do konsoli i maszyna odpowiedziala na ping. Powod przy Set-JezykPrzyciskiZdalne, tam
+    # stoi tez cena tej decyzji. Wspolrzedne dostaje na koncu, razem z calym wyrownaniem.
     $btnPolacz           = New-Object System.Windows.Forms.Button
     $btnPolacz.Text      = ''
     $btnPolacz.Tag       = 'Połącz'
@@ -3315,11 +3315,14 @@ function New-JezykForm {
     # "Pinguj" stoi "Polacz", a nad "Polacz" pole "Konto komputera w AD". W poziomie
     # miejsce jest, bo etykieta 'Adres IP:' konczy sie daleko przed prawym brzegiem.
     #
-    # PRZYCISK SIE WYSZARZA, A NIE ZNIKA - odwrotnie niz sasiad. "Polacz" we wdrozeniu bez
-    # konsoli ConfigMgr nie zadziala NIGDY, wiec wyszarzony nie znaczylby nic; udzialy
-    # administracyjne system zaklada sam i nie ma ustawienia, ktore by je wylaczalo -
-    # zostaje wiec zwykly stan przejsciowy "jest, ale najpierw znajdz komputer", taki sam
-    # jak u "Pinguj" obok.
+    # PRZYCISK ZNIKA I POJAWIA SIE, tak samo jak sasiad - rozni ich tylko to, ze "Dyski"
+    # nie pyta o zadna sciezke z konfiguracji: udzialy administracyjne zaklada system sam.
+    # Warunki obu stoja w Set-JezykPrzyciskiZdalne i tam tez jest napisane, dlaczego
+    # chowamy je takze w stanie PRZEJSCIOWYM, wbrew regule od "Odblokuj konto".
+    #
+    # STAN POCZATKOWY IDZIE WIEC PRZEZ Visible, A NIE Enabled. Zostawione tu dawne
+    # Enabled = $false przezylo by cale zycie okna - dostepnoscia nie steruje juz nic -
+    # i przycisk bylby widoczny, ale trwale szary. Nic by tego nie zglosilo.
     $btnKompDyski           = New-Object System.Windows.Forms.Button
     $btnKompDyski.Text      = ''
     $btnKompDyski.Tag       = 'Dyski'
@@ -3327,7 +3330,7 @@ function New-JezykForm {
     $btnKompDyski.Height    = $wysokoscPola
     $btnKompDyski.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnKompDyski 'Przycisk' -Rejestruj
-    $btnKompDyski.Enabled   = $false
+    $btnKompDyski.Visible   = $false
     $btnKompDyski.TabStop   = $false
 
     # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
