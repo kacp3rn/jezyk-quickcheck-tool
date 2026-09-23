@@ -3210,7 +3210,11 @@ function New-JezykForm {
     # konta. Wspolrzedna pionowa ustawiana jest przez wyrownanie na koncu tej funkcji.
     $chkWerdykt           = New-JezykCheckbox '' $Script:Margines 0 18
     # Lewa wspolrzedna napisu tez z wyrownania - liczy sie od kwadratu, jak we flagach.
-    $lblWerdykt           = New-JezykEtykieta 'Konto zablokowane' 0 0
+    # Napis startowy jest NEUTRALNY, a nie przykladowy. Szerokosc etykiety mierzy sie
+    # i tak stala $Script:NajdluzszyWerdykt, wiec tresc niczego tu nie ustawia - a nazwa
+    # jednego ze stanow konta, wpisana tu "na probe", zawedrowala juz raz do
+    # Clear-JezykKonto i zostala tam jako werdykt wyczyszczonego okna.
+    $lblWerdykt           = New-JezykEtykieta 'Nie sprawdzono' 0 0
     # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
     # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
