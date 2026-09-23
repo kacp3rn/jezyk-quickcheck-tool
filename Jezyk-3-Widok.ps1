@@ -165,7 +165,7 @@ function Clear-JezykKonto {
     # Grupy naleza do KONKRETNEGO konta - zostawiony czynny przycisk pokazywalby liste
     # opisujaca kogos, kogo juz nie ma w oknie. Samej listy nie ma czego zerowac osobno:
     # jedzie w $Script:OstatnieKonto, ktore gasnie linijke wyzej.
-    Set-JezykPrzyciskGrupy @()
+    Set-JezykPrzyciskGrupy $null
 
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
@@ -217,7 +217,7 @@ function Set-JezykResult {
     # JEDNO WYWOLANIE NA WSZYSTKIE GALEZIE. Wynik bez konta ("nie znaleziono", "blad",
     # pusty login) niesie pusta liste grup, wiec warunek w Set-JezykPrzyciskGrupy gasi
     # przycisk sam - bez wpisu w kazdej galezi switcha z osobna.
-    Set-JezykPrzyciskGrupy $Result.Grupy
+    Set-JezykPrzyciskGrupy $Result
 
     switch ($Result.Status) {
 
@@ -1815,17 +1815,275 @@ function Update-JezykDyskWTle {
     Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan. Rozpisany
     rozjechalby sie przy pierwszej zmianie i przycisk zostawalby czynny po przelaczeniu
     na konto bez grup - otwierajac liste opisujaca kogos, kogo juz nie ma na ekranie.
+
+    DWA POWODY, DLA KTORYCH JEST PO CO OTWIERAC. Konto z grupami - zeby je przeczytac.
+    Konto BEZ grup w domenie, w ktorej wolno dopisywac - zeby dopisac pierwsza; bez tego
+    warunku okna nie dalo by sie otworzyc dokladnie tam, gdzie dodawanie jest najbardziej
+    potrzebne. W domenie bez dodawania konto bez grup nadal zostaje wyszarzone: otwieraloby
+    puste okno bez jednej czynnej kontrolki.
+
+    Kontakt czytac wolno, dopisac go nie da sie wcale - Add-ADGroupMember przyjmuje
+    podmioty zabezpieczen, a kontakt nim nie jest.
 #>
 function Set-JezykPrzyciskGrupy {
-    param([string[]]$Grupy)
+    param($Result)
 
     $przycisk = $Script:Kontrolki.PrzyciskGrupyAd
     if (-not $przycisk) { return }
 
+    $przycisk.Enabled = Test-JezykJestPoCoOtwieracGrupy $Result
+}
+
+# Czy TO konto da sie w TEJ domenie dopisac do grupy. Trzy warunki, kazdy z innego powodu:
+# domena z listy DomenyZDodawaniemDoGrup (fakt o wdrozeniu), pozycja bedaca kontem (kontakt
+# nie jest podmiotem zabezpieczen, wiec Add-ADGroupMember go nie przyjmie) i login, ktorym
+# to konto da sie wskazac.
+#
+# JEDNO MIEJSCE Z TA DECYZJA: pyta o nia i dostepnosc przycisku w oknie glownym, i widocznosc
+# calego wiersza dodawania w oknie grup. Rozpisana po obu rozjechalaby sie przy pierwszej
+# zmianie, a objawem bylby wiersz, ktory jest, i przycisk, ktory nic nie robi.
+function Test-JezykMoznaDodacKontoDoGrupy {
+    param($Result)
+
+    if (-not $Result) { return $false }
+    if ($Result.Status -ne 'Ok') { return $false }
+    if (-not [bool]$Result.Login) { return $false }
+    return (Test-JezykWolnoDodacDoGrupy $Script:Config.Domena)
+}
+
+# Czy okno grup ma co pokazac ALBO co zrobic. Dwa powody, by je otwierac: sa grupy do
+# przeczytania, albo wolno dopisac pierwsza. Konto bez grup w domenie bez dodawania zostaje
+# wyszarzone - otwieraloby puste okno bez jednej czynnej kontrolki.
+#
+# Warunek stoi TUTAJ, a nie osobno przy przycisku i osobno w strazy Show-JezykGrupyAd:
+# dwie kopie rozjechalyby sie przy pierwszej zmianie, a roznicy nie widac - przycisk po
+# prostu przestalby cokolwiek otwierac.
+function Test-JezykJestPoCoOtwieracGrupy {
+    param($Result)
+
+    if (-not $Result) { return $false }
+    if ($Result.Status -ne 'Ok' -and $Result.Status -ne 'Kontakt') { return $false }
+
     # FILTR, A NIE SAMO @().Count. W PowerShellu @($null) to tablica JEDNOELEMENTOWA,
     # wiec licznik bez odsiania pustych zapalalby przycisk przy koncie bez grup - czyli
-    # dokladnie tam, gdzie ma byc wyszarzony, i bez zadnego komunikatu o pomylce.
-    $przycisk.Enabled = (@($Grupy | Where-Object { $_ }).Count -gt 0)
+    # tam, gdzie o otwarciu ma decydowac dopiero prawo dopisywania.
+    if (@($Result.Grupy | Where-Object { $_ }).Count -gt 0) { return $true }
+
+    return (Test-JezykMoznaDodacKontoDoGrupy $Result)
+}
+
+# Notka w oknie "Grupy AD" i jej wlasny przycisk "!". Set-JezykInfo tu NIE ZADZIALA:
+# stoi na $Script:Kontrolki i $Script:TytulyInformacji, a to okno powstaje na zadanie
+# i niczego tam nie rejestruje - zarejestrowane zostawialoby martwe uchwyty po Dispose().
+#
+# "!" zapala sie WYLACZNIE warunkowo, tak samo jak w oknie glownym: przy powodzeniu
+# szczegolow nie ma i wykrzyknik gasnie.
+function Set-JezykNotkeGrup {
+    param($Okno, [string]$Tekst, [string]$Szczegoly = '')
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    $stan.Szczegoly = $Szczegoly
+    if ($stan.Notka)        { $stan.Notka.Text = $Tekst }
+    if ($stan.PrzyciskInfo) { $stan.PrzyciskInfo.Visible = [bool]$Szczegoly }
+}
+
+# Nowa lista grup wchodzi w TRZY miejsca naraz: w zapamietany wynik konta, w pelna liste
+# wiszaca na kontrolce i w widoczne pozycje razem z licznikiem w tytule - a na koniec
+# przelicza przycisk w oknie glownym. Rozpisane po miejscach wywolania rozjechalyby sie
+# przy pierwszej zmianie: okno pokazywaloby nowa grupe, a przycisk liczylby stare.
+function Update-JezykGrupyWOknie {
+    param($Okno, [string[]]$Grupy)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    $nowe = @($Grupy | Where-Object { $_ })
+
+    if ($Script:OstatnieKonto) { $Script:OstatnieKonto.Grupy = $nowe }
+    if ($stan.Lista)           { $stan.Lista.Tag = [string[]]$nowe }
+    if ($stan.PoleFiltra)      { Update-JezykFiltrGrup $stan.PoleFiltra }
+
+    Set-JezykPrzyciskGrupy $Script:OstatnieKonto
+}
+
+<#
+.SYNOPSIS
+    Rozpoznaje w AD nazwe wpisana w polu "Dodaj do grupy" - obsluga przycisku
+    "Sprawdz nazwy".
+
+.DESCRIPTION
+    Zapytanie idzie SYNCHRONICZNIE, na watku interfejsu, i okno na nie stoi - stad
+    klepsydra. To nie jest przeoczenie: okno grup jest modalne, wiec wynik zadania w tle
+    musialby wrocic do kontrolek, ktore gina razem z tym oknem, a modalna petla pompuje
+    komunikaty - czyli wchodzi sie w te sama re-entrancje, ktora opisuje
+    Receive-JezykZadanieDysku. Rozpoznanie po anr= jest indeksowane i wraca w ulamku
+    sekundy, czyli kosztuje tyle, co synchroniczne Find-JezykUsers.
+#>
+function Invoke-JezykSprawdzenieNazwyGrupy {
+    param($Okno)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    # Poprzednie rozpoznanie przestaje obowiazywac JUZ TERAZ, a nie dopiero po odpowiedzi:
+    # miedzy klknieciem a wynikiem pole i zapamietana nazwa wyrozniajaca moglyby opisywac
+    # dwie rozne grupy.
+    $stan.Wybrana = $null
+    if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
+
+    $fraza = ''
+    if ($stan.PoleGrupy) { $fraza = [string]$stan.PoleGrupy.Text }
+
+    if (-not (Get-JezykFrazaLdap $fraza)) {
+        Set-JezykNotkeGrup -Okno $Okno -Tekst 'Wpisz fragment nazwy grupy, a potem kliknij „Sprawdź nazwy”.'
+        return
+    }
+
+    $ile = [int]$Script:Config.LimitPodpowiedziGrup
+
+    $Okno.UseWaitCursor = $true
+    try {
+        $wynik = Find-JezykGrupyPoNazwie -Fraza $fraza -Limit $ile -Serwer ([string]$Script:Config.Domena)
+    }
+    finally { $Okno.UseWaitCursor = $false }
+
+    # Nieudane sprawdzenie ma byc ODROZNIALNE od pustego wyniku - inaczej awaria sieci
+    # wygladalaby jak brak takiej grupy i ktos zalozylby ja drugi raz.
+    if ($wynik.Przerwane) {
+        Set-JezykNotkeGrup -Okno $Okno -Tekst 'Nie udało się sprawdzić nazwy grupy w AD.' `
+                           -Szczegoly ([string]$wynik.Powod)
+        return
+    }
+
+    $trafienia = @($wynik.Trafienia)
+    if ($trafienia.Count -eq 0) {
+        $pusto = 'Nie znaleziono grupy pasującej do „{0}”.' -f $fraza
+        Set-JezykNotkeGrup -Okno $Okno -Tekst $pusto
+        return
+    }
+
+    $wybrana = $trafienia[0]
+    if ($trafienia.Count -gt 1) {
+        $wybrana = Show-JezykWyborGrupy -Trafienia $trafienia -Wlasciciel $Okno
+        if (-not $wybrana) {
+            # Rezygnacja z wyboru jest cisza: notka nadal mowi prawde o tym, co znaleziono.
+            $wiele = 'Znaleziono {0} grup - kliknij „Sprawdź nazwy” i wybierz jedną.' -f $trafienia.Count
+            Set-JezykNotkeGrup -Okno $Okno -Tekst $wiele
+            return
+        }
+    }
+
+    # NAZWA Z AD, A NIE WPISANA. Pole pokazuje odtad to, co odpowiedzial katalog - operator
+    # ma widziec, ktora grupe naprawde rozpoznano.
+    if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = [string]$wybrana.Nazwa }
+
+    # KOLEJNOSC JEST ISTOTNA I NIC JEJ NIE ZDRADZA: przepisanie pola budzi TextChanged,
+    # ktore zeruje wybor i gasi "Dodaj" (po to tam jest). Zapamietanie musi wiec isc PO
+    # nim, inaczej przycisk zostawalby wyszarzony mimo rozpoznanej grupy.
+    $stan.Wybrana = $wybrana
+    if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $true }
+
+    $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Nazwa
+    if ($wynik.ZaDuzo) {
+        # Zdanie, ktore UNIEWAZNIA poprzednie, ma je ZASTAPIC, a nie stanac za nim
+        # w kolejce - w polu o dwoch wierszach druga polowy i tak nie byloby widac.
+        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $ile, $wybrana.Nazwa
+    }
+    Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst
+}
+
+<#
+.SYNOPSIS
+    Dopisuje pokazane konto do rozpoznanej grupy - obsluga przycisku "Dodaj".
+
+.DESCRIPTION
+    Ta sama droga, co przy odblokowaniu: konto bierzemy z ostatniego odczytu z AD, a nie
+    z kontrolki; okno logowania jest zarazem POTWIERDZENIEM operacji i nazywa konto, grupe
+    i domene; anulowanie jest cisza; poswiadczenia ida wylacznie do tego jednego wywolania
+    i gina w finally.
+
+    Po udanym zapisie lista odswieza sie ODCZYTEM Z KONTROLERA, KTORY TEN ZAPIS PRZYJAL -
+    jedno zrodlo prawdy zamiast dopisywania pozycji z pamieci okna. Gdy odczyt zawiedzie,
+    POWODZENIA ZAPISU NIE WOLNO ZGUBIC: bez tego zdania operator dopisuje te sama grupe
+    drugi raz.
+#>
+function Invoke-JezykDodanieDoGrupy {
+    param($Okno)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    $wybrana = $stan.Wybrana
+    if (-not $wybrana) { return }
+
+    # KONTO Z OBIEKTU WYNIKU, NIE Z KONTROLKI - zrodlem prawdy dla operacji zapisu jest
+    # ostatni odczyt z AD.
+    if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return }
+    $login = [string]$Script:OstatnieKonto.Login
+    if (-not $login) { return }
+
+    $domena = [string]$Script:Config.Domena
+
+    $poswiadczenia = $null
+    try {
+        try {
+            $poswiadczenia = Get-Credential -Message (
+                'Konto z prawem dopisywania do grup w domenie {0}. Konto {1} zostanie dodane do grupy {2}.' -f $domena, $login, $wybrana.Nazwa)
+        }
+        catch {
+            $opis = Get-JezykOpisBledu $_ 'Okno logowania'
+            Set-JezykNotkeGrup -Okno $Okno -Tekst $opis.Krotki -Szczegoly $opis.Szczegoly
+            return
+        }
+
+        # Anulowanie okna logowania: zadnego zapisu, zadnego bledu.
+        if (-not $poswiadczenia) { return }
+
+        $Okno.UseWaitCursor = $true
+        try {
+            $wynik = Add-JezykKontoDoGrupy -Login $login -Dn ([string]$Script:OstatnieKonto.Dn) `
+                                           -GrupaDn ([string]$wybrana.Dn) -Domena $domena `
+                                           -Poswiadczenia $poswiadczenia
+        }
+        finally { $Okno.UseWaitCursor = $false }
+
+        # Niepowodzenie konczy sie tutaj: nie ma czego odswiezac, a powod odmowy jest
+        # jedyna rzecza, ktora ma zostac na ekranie. Wybor zostaje, zeby dalo sie
+        # sprobowac ponownie innym kontem.
+        if (-not $wynik.Udane) {
+            Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat) `
+                               -Szczegoly ([string]$wynik.Szczegoly)
+            return
+        }
+
+        # Zapis sie udal. Pole czyscimy JUZ TERAZ - zostawiona nazwa wygladalaby na gotowa
+        # do uzycia i drugie kliniecie dopisywaloby to samo czlonkostwo. Czyszczenie budzi
+        # TextChanged, wiec przy okazji gasi "Dodaj" i zeruje wybor.
+        if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = '' }
+        $stan.Wybrana = $null
+        if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
+
+        $odczyt = Get-JezykGrupyKonta -Login $login -Serwer ([string]$wynik.Serwer)
+
+        if (-not $odczyt.Udane) {
+            $tekst = '{0} Nie udało się jednak odświeżyć listy - zamknij i otwórz okno grup.' -f $wynik.Komunikat
+            Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst -Szczegoly ([string]$odczyt.Szczegoly)
+            return
+        }
+
+        Update-JezykGrupyWOknie -Okno $Okno -Grupy @($odczyt.Grupy)
+        Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat)
+    }
+    finally {
+        # Niszczymy haslo, a nie "zapominamy referencje" - tak samo jak przy odblokowaniu.
+        if ($poswiadczenia -and $poswiadczenia.Password) { $poswiadczenia.Password.Dispose() }
+    }
 }
 
 <#

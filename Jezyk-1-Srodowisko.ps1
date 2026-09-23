@@ -351,11 +351,22 @@ $Script:Ustawienia = @{
         'wydra.pl'
     )
 
-    # Domeny, w ktorych przycisk "Odblokuj konto" ma byc czynny - jedyna operacja ZAPISU
-    # w calym narzedziu. Pusta lista = nieczynny wszedzie i to jest wartosc domyslna.
+    # Domeny, w ktorych przycisk "Odblokuj konto" ma byc czynny - jedna z DWOCH operacji
+    # ZAPISU w calym narzedziu. Pusta lista = nieczynny wszedzie i to jest wartosc domyslna.
     DomenyZOdblokowaniem = @(
         'zolw.pl'
     )
+
+    # Domeny, w ktorych wolno DOPISAC KONTO DO GRUPY z okna "Grupy AD" - druga operacja
+    # ZAPISU. Pusta lista = wiersza dodawania nie ma w zadnej domenie i to jest wartosc
+    # domyslna.
+    #
+    # OSOBNA LISTA, A NIE PONOWNE UZYCIE DomenyZOdblokowaniem. W AD odblokowanie konta
+    # i zarzadzanie czlonkostwem grupy to dwie niezalezne delegacje, nadawane osobno
+    # i czesto komu innemu. Jedna lista dla obu znaczylaby, ze wlaczenie jednej operacji
+    # po cichu wlacza druga - a przycisk obiecywalby prawo, ktorego konto operatora
+    # w tej domenie nie ma.
+    DomenyZDodawaniemDoGrup = @()
 
     # Ogranicza obejscie kontrolerow do wypisanych maszyn. Pusta lista = Jezyk pyta o nie
     # samo AD. Kazda nazwa musi nalezec do jednej z domen wyzej.
@@ -410,9 +421,10 @@ $Script:Ustawienia = @{
     SciezkaRemoteControl = ''
 }
 
-# Normalizacja obu list: male litery i bez spacji na brzegach. Od tego zalezy porownanie
-# w Test-JezykWolnoOdblokowac - bez niej wpis "ZOLW.PL" nie zgadzalby sie z domena wybrana
-# w oknie i przycisk odblokowania po cichu przestalby dzialac.
+# Normalizacja wszystkich trzech list: male litery i bez spacji na brzegach. Od tego zalezy
+# porownanie w Test-JezykWolnoOdblokowac i w Test-JezykWolnoDodacDoGrupy - bez niej wpis
+# "ZOLW.PL" nie zgadzalby sie z domena wybrana w oknie i przycisk po cichu przestalby
+# dzialac.
 $Script:Domeny = @($Script:Ustawienia.Domeny |
                    ForEach-Object { ([string]$_).Trim().ToLower() } |
                    Where-Object { $_ })
@@ -420,6 +432,10 @@ $Script:Domeny = @($Script:Ustawienia.Domeny |
 $Script:DomenyZOdblokowaniem = @($Script:Ustawienia.DomenyZOdblokowaniem |
                                  ForEach-Object { ([string]$_).Trim().ToLower() } |
                                  Where-Object { $_ })
+
+$Script:DomenyZDodawaniemDoGrup = @($Script:Ustawienia.DomenyZDodawaniemDoGrup |
+                                    ForEach-Object { ([string]$_).Trim().ToLower() } |
+                                    Where-Object { $_ })
 
 # Zadnej wartosci zapasowej: brak listy jest brakiem listy i konczy sie komunikatem.
 $Script:DomenaAD = if ($Script:Domeny.Count) { $Script:Domeny[0] } else { '' }
@@ -461,6 +477,13 @@ $Script:Config = @{
     # Osobne od LimitWynikow, bo tamten dotyczy zapytan po nazwie, ktore indeksy
     # wykorzystuja i moga oddac wiecej bez tego kosztu.
     LimitNumeru   = 10
+
+    # ILE NAZW GRUP ODDAJE "Sprawdz nazwy" W OKNIE GRUP AD. Powyzej tej liczby okno prosi
+    # o doprecyzowanie zamiast stawiac liste, z ktorej i tak nikt nie wybiera. Ta liczba
+    # idzie rowniez na -ResultPageSize, czyli konczy prace KONTROLERA - ma to znaczenie
+    # przy drugim przebiegu wyszukiwania, ktory dopasowuje fragment w srodku nazwy i przez
+    # to nie korzysta z indeksu (patrz Find-JezykGrupyPoNazwie).
+    LimitPodpowiedziGrup = 20
 
     TrybNazwa     = 'dane AD użytkownika'
     TrybKomputer  = 'nazwę komputera'
@@ -683,6 +706,12 @@ function Get-JezykOpisKonfiguracji {
         'Odblokowanie konta dozwolone w: {0}' -f (@($Script:DomenyZOdblokowaniem) -join ', ')
     } else {
         'Odblokowanie konta: wyłączone we wszystkich domenach'
+    }
+
+    $wiersze += if (@($Script:DomenyZDodawaniemDoGrup).Count) {
+        'Dodawanie do grup AD dozwolone w: {0}' -f (@($Script:DomenyZDodawaniemDoGrup) -join ', ')
+    } else {
+        'Dodawanie do grup AD: wyłączone we wszystkich domenach'
     }
 
     $wiersze += if (@($Script:Ustawienia.Kontrolery).Count) {

@@ -1018,6 +1018,20 @@ function Set-JezykPonizejPola {
     }
 }
 
+# Szerokosc przycisku LICZONA Z NAPISU, a nie wpisana. Napis rysuje
+# Set-JezykRysunekNapisuPrzycisku w CALYM prostokacie kontrolki, wiec za waski przycisk
+# obcina napis od boku - a 90 px, ktore starcza na "Zamknij" przy zwyklej czcionce, nie
+# starcza na "Sprawdz nazwy" przy "Rozmiarze tekstu" 150%. Margines po bokach bierze sie
+# z szerokosci spacji, zeby rosl razem z czcionka zamiast zostawac stala liczba pikseli.
+function Get-JezykSzerokoscPrzycisku {
+    param([string]$Napis, $Czcionka)
+
+    $bezMarginesow = [System.Windows.Forms.TextFormatFlags]::NoPadding
+    $pomiar = [System.Windows.Forms.TextRenderer]::MeasureText($Napis, $Czcionka,
+                                                              [System.Drawing.Size]::Empty, $bezMarginesow)
+    return ($pomiar.Width + 4 * (Get-JezykSzerokoscSpacji $Czcionka))
+}
+
 function Get-JezykSzerokoscSpacji {
     param($Czcionka)
 
@@ -1409,14 +1423,17 @@ function New-JezykStrzalkaListy {
     miedzy polami.
 #>
 function New-JezykPrzyciskInfo {
-    param([string]$Klucz, [int]$Bok = 18)
+    # -BezRejestracji dla okna budowanego NA ZADANIE: zarejestrowana kontrolka zostaje
+    # w $Script:KontrolkiMotywu po Dispose() i pierwsze przelaczenie motywu probuje
+    # pomalowac martwy uchwyt.
+    param([string]$Klucz, [int]$Bok = 18, [switch]$BezRejestracji)
 
     $btn           = New-Object System.Windows.Forms.Button
     $btn.Text      = '!'
     $btn.Tag       = $Klucz
     $btn.Size      = [System.Drawing.Size]::new($Bok, $Bok)
     $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    Set-JezykWyglad $btn 'InfoProblem' -Rejestruj
+    Set-JezykWyglad $btn 'InfoProblem' -Rejestruj:(-not $BezRejestracji)
     $btn.FlatAppearance.BorderSize  = 2
     $btn.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
     $btn.TabStop   = $false
@@ -2683,8 +2700,10 @@ function Set-JezykPrzewijanieListy {
 
     STAN IDZIE PRZEZ Tag. Procedury zdarzen nie sa domknieciami i nie widza zmiennych lokalnych
     Show-JezykGrupyAd, a $Script:Kontrolki opisuje okno GLOWNE. Tag ginie razem z oknem, wiec
-    pelna lista grup nie staje sie druga rzecza, ktora trzeba pamietac o wyczyszczeniu przy
-    zmianie konta - inaczej niz zmienna skryptowa.
+    ani pelna lista grup, ani rozpoznana grupa nie staja sie rzeczami, ktore trzeba pamietac
+    o wyczyszczeniu przy zmianie konta - inaczej niz zmienna skryptowa. Na oknie wisi cala
+    tablica skrotow (podpis, kontrolki, rozpoznana grupa), bo kontrolki tego okna musza
+    odnalezc sie nawzajem.
 
     BeginUpdate/EndUpdate: bez nich lista przerysowuje sie przy kazdej dokladanej pozycji, czyli
     kilkadziesiat razy na jedno nacisniecie klawisza.
@@ -2709,7 +2728,7 @@ function Update-JezykFiltrGrup {
 
     $okno = $Pole.FindForm()
     if (-not $okno) { return }
-    $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag) -Ile $pozycje.Count `
+    $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag.Podpis) -Ile $pozycje.Count `
                                     -Wszystkich $grupy.Count
 }
 
@@ -2744,8 +2763,12 @@ function Show-JezykGrupyAd {
     $konto = $Script:OstatnieKonto
     if (-not $konto) { return }
 
-    $grupy = @($konto.Grupy)
-    if ($grupy.Count -eq 0) { return }
+    # STRAZ STOI PRZED PIERWSZA KONTROLKA i pyta DOKLADNIE O TO SAMO, co warunek
+    # dostepnosci przycisku - jedna funkcja na oba miejsca, zeby nie dalo sie ich rozjechac.
+    if (-not (Test-JezykJestPoCoOtwieracGrupy $konto)) { return }
+
+    $grupy      = @($konto.Grupy | Where-Object { $_ })
+    $wolnoDodac = Test-JezykMoznaDodacKontoDoGrupy $konto
 
     # Kontakt loginu nie ma, wiec podpis spada na nazwe obiektu - ta sama zasada, co przy
     # etykiecie pierwszego pola w oknie glownym ("Login:" kontra "Nazwa:").
@@ -2758,13 +2781,11 @@ function Show-JezykGrupyAd {
     $wysokoscListy      = 300
     $szerokoscPrzycisku = 90
     $odstepEtykiety     = 8
+    $odstepPrzyciskow   = 8
 
     $okno = $null
     try {
         $okno                 = New-Object System.Windows.Forms.Form
-        # Podpis zostaje pod reka okna, bo licznik w tytule przelicza sie po kazdym znaku
-        # wpisanym do filtra - a procedura zdarzenia nie widzi zmiennych lokalnych tej funkcji.
-        $okno.Tag             = $podpis
         $okno.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
         $okno.MaximizeBox     = $false
         $okno.MinimizeBox     = $false
@@ -2784,7 +2805,7 @@ function Show-JezykGrupyAd {
         $lblFiltr = New-JezykEtykieta 'Szukaj grupy:' $margines $margines
 
         # Zwykly TextBox, a nie New-JezykPole: tamto pole jest ReadOnly, bo sluzy do pokazywania
-        # odpowiedzi AD. To jedyne pole w programie poza wyszukiwaniem, do ktorego sie pisze.
+        # odpowiedzi AD, i rejestruje sie w motywie. Tu pisze operator, a okno ginie z Dispose().
         $txtFiltr           = New-Object System.Windows.Forms.TextBox
         $txtFiltr.MaxLength = 256
         Set-JezykWyglad $txtFiltr 'Pole'
@@ -2794,7 +2815,7 @@ function Show-JezykGrupyAd {
         # Wysokosc przycieta do calych wierszy. Czesciowy wiersz na dole rozjezdzal zawartosc
         # z paskiem przewijania (pasek liczy zakres z liczby pozycji, lista przewija calymi
         # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Szpara, ktora
-        # przyciecie zostawia pod lista, nic juz nie kosztuje: przycisk i okno mierza sie od
+        # przyciecie zostawia pod lista, nic juz nie kosztuje: wszystko pod nia mierzy sie od
         # $lista.Bottom, a nie od wpisanej na sztywno wysokosci.
         $lista.IntegralHeight = $true
         # Nazwy grup bywaja dluzsze niz kolumna; poziomy pasek daje je doczytac zamiast
@@ -2804,6 +2825,61 @@ function Show-JezykGrupyAd {
         $lista.Tag = [string[]]$grupy
         # Pole filtra musi trafic do swojej listy bez pomocy zmiennych lokalnych tej funkcji.
         $txtFiltr.Tag = $lista
+
+        # --- WIERSZ DODAWANIA ---------------------------------------------------------
+        # Caly wiersz istnieje WYLACZNIE w domenie z listy DomenyZDodawaniemDoGrup i tylko
+        # dla konta (nie dla kontaktu). Puste ustawienie ma CHOWAC, a nie zostawiac element
+        # wyszarzony: kontrolka, ktora w danym wdrozeniu nie zadziala nigdy, przestaje
+        # cokolwiek znaczyc - ta sama zasada, co przy przycisku "Polacz".
+        $lblDodaj = New-JezykEtykieta 'Dodaj do grupy:' $margines 0
+
+        $txtGrupa           = New-Object System.Windows.Forms.TextBox
+        $txtGrupa.MaxLength = 256
+        Set-JezykWyglad $txtGrupa 'Pole'
+
+        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        $btnSprawdz           = New-Object System.Windows.Forms.Button
+        $btnSprawdz.Text      = ''
+        $btnSprawdz.Tag       = 'Sprawdź nazwy'
+        $btnSprawdz.Size      = [System.Drawing.Size]::new(
+                                    (Get-JezykSzerokoscPrzycisku ([string]$btnSprawdz.Tag) $okno.Font),
+                                    $wysokoscPrzycisku)
+        $btnSprawdz.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnSprawdz 'Przycisk'
+        $btnSprawdz.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+
+        $btnDodaj           = New-Object System.Windows.Forms.Button
+        $btnDodaj.Text      = ''
+        $btnDodaj.Tag       = 'Dodaj'
+        $btnDodaj.Size      = [System.Drawing.Size]::new(
+                                  (Get-JezykSzerokoscPrzycisku ([string]$btnDodaj.Tag) $okno.Font),
+                                  $wysokoscPrzycisku)
+        $btnDodaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnDodaj 'Przycisk'
+        $btnDodaj.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        # Stan poczatkowy: nie ma jeszcze czego dodawac. Zapala sie dopiero po rozpoznaniu
+        # nazwy w AD.
+        $btnDodaj.Enabled = $false
+
+        $lblDodaj.Visible   = $wolnoDodac
+        $txtGrupa.Visible   = $wolnoDodac
+        $btnSprawdz.Visible = $wolnoDodac
+        $btnDodaj.Visible   = $wolnoDodac
+
+        # --- NOTKA ---------------------------------------------------------------------
+        # Pole "Status:" tego okna: odpowiedz "Sprawdz nazwy", wynik dodania i zdanie
+        # otwierajace. DWIE LINIJKI z tego samego powodu, co w oknie glownym - komunikat
+        # o odmowie uprawnien nie miesci sie w jednej, a operator czyta pole RAZ.
+        $lblNotka = New-JezykEtykieta 'Status:' $margines 0
+
+        $txtNotka           = New-Object System.Windows.Forms.TextBox
+        $txtNotka.ReadOnly  = $true
+        $txtNotka.Multiline = $true
+        Set-JezykWyglad $txtNotka 'Pole'
+
+        # "!" wlasny, bo Set-JezykInfo stoi na rejestrach okna GLOWNEGO. -BezRejestracji,
+        # zeby po Dispose() nie zostal martwy uchwyt w $Script:KontrolkiMotywu.
+        $btnInfo = New-JezykPrzyciskInfo 'Grupy' -BezRejestracji
 
         # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
         $btnZamknij           = New-Object System.Windows.Forms.Button
@@ -2815,9 +2891,40 @@ function Show-JezykGrupyAd {
         $btnZamknij.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
         $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
-        # Pole filtra jest PIERWSZE, wiec dostaje fokus samo - pisac mozna od razu po otwarciu,
-        # bez osobnej procedury na Shown.
-        $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista, $btnZamknij))
+        # STAN OKNA WISI NA OKNIE. Procedury zdarzen nie widza zmiennych lokalnych tej
+        # funkcji, a kontrolki tego okna musza odnalezc sie nawzajem - jedna tablica skrotow
+        # zalatwia oba problemy i ginie razem z oknem, wiec nie ma jej czego czyscic.
+        $okno.Tag = @{
+            Podpis        = $podpis
+            PoleFiltra    = $txtFiltr
+            Lista         = $lista
+            PoleGrupy     = $txtGrupa
+            PrzyciskDodaj = $btnDodaj
+            Notka         = $txtNotka
+            PrzyciskInfo  = $btnInfo
+            Szczegoly     = ''
+            Wybrana       = $null
+        }
+
+        # Pole filtra jest PIERWSZA kontrolka, ktora przyjmuje fokus, wiec dostaje go samo -
+        # pisac mozna od razu po otwarciu, bez osobnej procedury na Shown.
+        $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista,
+                                  $lblDodaj, $txtGrupa, $btnSprawdz, $btnDodaj,
+                                  $lblNotka, $txtNotka, $btnInfo, $btnZamknij))
+
+        # SZEROKOSC OKNA LICZONA Z WIERSZA, KTORY JEJ NAPRAWDE POTRZEBUJE. Kolumna okna
+        # glownego jest stala liczba pikseli, a etykieta i oba przyciski rosna razem
+        # z czcionka: przy "Rozmiarze tekstu" 150% na pole zostawaloby kilkanascie pikseli
+        # albo mniej niz zero - i NIKT BY TEGO NIE POLICZYL, bo szerokosc pola liczy sie
+        # od sasiadow. Minimum pola bierzemy z napisu przycisku, zeby i ono skalowalo sie
+        # z czcionka zamiast byc kolejna wpisana liczba.
+        if ($wolnoDodac) {
+            $minimumPola = 2 * $btnSprawdz.Width
+            $potrzebne   = $margines + $lblDodaj.Width + $odstepEtykiety + $minimumPola +
+                           $odstepPrzyciskow + $btnSprawdz.Width +
+                           $odstepPrzyciskow + $btnDodaj.Width + $margines
+            if ($potrzebne -gt $szerokosc) { $szerokosc = $potrzebne }
+        }
 
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
@@ -2829,8 +2936,36 @@ function Show-JezykGrupyAd {
         $lista.Top    = $txtFiltr.Bottom + $margines
         $lista.Height = $wysokoscListy
 
+        # Kazdy nastepny wiersz mierzy sie OD SASIADA. Gdy wiersza dodawania nie ma,
+        # notka siada wprost pod lista i okno jest o ten wiersz nizsze.
+        $dolPoprzedniego = $lista.Bottom
+
+        if ($wolnoDodac) {
+            $btnDodaj.Left   = $szerokosc - $margines - $btnDodaj.Width
+            $btnSprawdz.Left = $btnDodaj.Left - $odstepPrzyciskow - $btnSprawdz.Width
+            $txtGrupa.Left   = $lblDodaj.Right + $odstepEtykiety
+            $txtGrupa.Width  = $btnSprawdz.Left - $odstepPrzyciskow - $txtGrupa.Left
+
+            Set-JezykSrodekPionowy -Kontrolki @($lblDodaj, $txtGrupa, $btnSprawdz, $btnDodaj) `
+                                   -Srodek ($dolPoprzedniego + $margines +
+                                            (Get-JezykPolowaWysokosci $txtGrupa.Height))
+            $dolPoprzedniego = $txtGrupa.Bottom
+        }
+
+        # Notka ma WLASNA ETYKIETE po to, zeby "!" stanal dokladnie tam, gdzie stoi w oknie
+        # glownym: Set-JezykPrzyciskPrzyEtykiecie konczy go razem z prawa krawedzia POLA.
+        $lblNotka.Left   = $margines
+        $lblNotka.Top    = $dolPoprzedniego + $margines
+        $txtNotka.Left   = $margines
+        $txtNotka.Top    = $lblNotka.Top + $Script:OdstepPodEtykieta
+        $txtNotka.Width  = $szerokosc - 2 * $margines
+        # Druga linijka liczona z czcionki, nie wpisana - ta sama arytmetyka, co przy polach
+        # "Status:" w oknie glownym.
+        $txtNotka.Height = $txtNotka.PreferredHeight + [int][math]::Ceiling($okno.Font.GetHeight())
+        Set-JezykPrzyciskPrzyEtykiecie $btnInfo $lblNotka $txtNotka
+
         $btnZamknij.Left = $szerokosc - $margines - $szerokoscPrzycisku
-        $btnZamknij.Top  = $lista.Bottom + $margines
+        $btnZamknij.Top  = $txtNotka.Bottom + $margines
 
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnZamknij.Bottom + $margines))
@@ -2846,11 +2981,57 @@ function Show-JezykGrupyAd {
         # z tytulem, ktory niesie licznik.
         Update-JezykFiltrGrup $txtFiltr
 
+        # NOTKA OTWIERAJACA tam, gdzie pole bez niej nie tlumaczy tego, co widac. Pusta
+        # lista sama nie mowi, czy konto nie ma grup, czy cos zawiodlo; a wiersza dodawania
+        # brakuje kontaktowi z powodu, ktory warto nazwac - ale tylko tam, gdzie dodawanie
+        # w ogole jest wlaczone, bo inaczej wiersza nie ma nikt i zdanie mylilo by tropy.
+        $notka = ''
+        if ($grupy.Count -eq 0) { $notka = 'To konto nie należy do żadnej grupy.' }
+        if ($konto.Status -eq 'Kontakt' -and (Test-JezykWolnoDodacDoGrupy $Script:Config.Domena)) {
+            $notka = 'Kontakt nie jest kontem w domenie - nie da się go dopisać do grupy.'
+        }
+        if ($notka) { Set-JezykNotkeGrup -Okno $okno -Tekst $notka }
+
         $txtFiltr.Add_TextChanged({ Update-JezykFiltrGrup $this })
         $lista.Add_MouseWheel({ Set-JezykPrzewijanieListy $this $_ })
 
-        # Enter i Esc zamykaja tak samo jak przycisk - lista zaweza sie po kazdym znaku, wiec
-        # nie ma czego zatwierdzac, a okno jest do przeczytania, nie do podjecia decyzji.
+        if ($wolnoDodac) {
+            # ZMIANA TEKSTU UNIEWAZNIA ROZPOZNANA GRUPE. Bez tego zapis poszedlby na nazwe
+            # wyrozniajaca grupy, ktorej w polu juz nie ma - i nic by tego nie zdradzilo.
+            $txtGrupa.Add_TextChanged({
+                $stan = $this.FindForm().Tag
+                if (-not $stan) { return }
+                $stan.Wybrana = $null
+                if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
+            })
+
+            # ENTER MA ZNACZYC "Sprawdz nazwy", A NIE "Zamknij". Wlasna obsluga DODAJE SIE
+            # do domyslnej, wiec bez oznaczenia zdarzenia jako obsluzonego AcceptButton
+            # zamykalby okno w polowie wpisywania nazwy grupy.
+            $txtGrupa.Add_KeyDown({
+                if ($_.KeyCode -ne [System.Windows.Forms.Keys]::Enter) { return }
+                $_.Handled          = $true
+                $_.SuppressKeyPress = $true
+                Invoke-JezykSprawdzenieNazwyGrupy -Okno $this.FindForm()
+            })
+
+            $btnSprawdz.Add_Click({ Invoke-JezykSprawdzenieNazwyGrupy -Okno $this.FindForm() })
+            $btnDodaj.Add_Click({   Invoke-JezykDodanieDoGrupy        -Okno $this.FindForm() })
+        }
+
+        # Pelna tresc pod "!" - wlasnym MessageBoxem, bo Show-JezykInformacja czyta
+        # $Script:Informacje i $Script:TytulyInformacji, czyli rejestry okna glownego.
+        $btnInfo.Add_Click({
+            $okienko = $this.FindForm()
+            $stan    = $okienko.Tag
+            if (-not $stan -or -not $stan.Szczegoly) { return }
+            [void][System.Windows.Forms.MessageBox]::Show($okienko, [string]$stan.Szczegoly,
+                'Jeżyk - Grupy AD', [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Information)
+        })
+
+        # Esc zamyka. Enter takze - poza polem nazwy grupy, ktore przejmuje go wyzej: lista
+        # zaweza sie po kazdym znaku, wiec w filtrze nie ma czego zatwierdzac.
         $okno.AcceptButton = $btnZamknij
         $okno.CancelButton = $btnZamknij
 
@@ -2859,6 +3040,120 @@ function Show-JezykGrupyAd {
     finally {
         # ShowDialog NIE zwalnia okna sam (w odroznieniu od Show) - bez tego kazde
         # klikniecie zostawialoby w procesie komplet uchwytow GDI po jednym oknie.
+        if ($okno) { $okno.Dispose() }
+    }
+}
+
+<#
+.SYNOPSIS
+    Pyta, ktora z rozpoznanych grup chodzilo - gdy "Sprawdz nazwy" trafilo w wiecej niz jedna.
+
+.DESCRIPTION
+    Ten sam szkielet, co Show-JezykWyborDysku. Pozycje sklada Select-JezykGrupyDoPokazania
+    z pusta fraza: numeracja i odsiew pustych sa juz tam, a zaznaczenie mapuje sie na liste
+    trafien INDEKS W INDEKS, bo Find-JezykGrupyPoNazwie odsiewa pozycje bez nazwy jeszcze
+    w logice.
+
+    WLASCICIELEM JEST OKNO GRUP, a nie okno glowne: to okno wstaje nad innym oknem modalnym,
+    wiec podpiete pod glowne potrafiloby schowac sie za tym, z ktorego je otwarto.
+#>
+function Show-JezykWyborGrupy {
+    param($Trafienia, $Wlasciciel)
+
+    $pozycje = @($Trafienia)
+    if ($pozycje.Count -eq 0) { return $null }
+
+    $margines           = $Script:Margines
+    $szerokosc          = $Script:SzerokoscKolumny + 2 * $margines
+    $szerokoscPrzycisku = 90
+    $odstepPrzyciskow   = 8
+
+    $okno = $null
+    try {
+        $okno                 = New-Object System.Windows.Forms.Form
+        $okno.Text            = 'Jeżyk - Wybierz grupę'
+        $okno.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $okno.MaximizeBox     = $false
+        $okno.MinimizeBox     = $false
+        $okno.ShowInTaskbar   = $false
+        $okno.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
+        $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
+        Set-JezykWyglad $okno 'Okno'
+
+        $wysokoscPrzycisku = Get-JezykWysokoscPola $okno.Font
+
+        $lista = New-Object System.Windows.Forms.ListBox
+        Set-JezykWyglad $lista 'Lista'
+        $lista.IntegralHeight      = $true
+        $lista.HorizontalScrollbar = $true
+
+        $nazwy = @($pozycje | ForEach-Object { [string]$_.Nazwa })
+        foreach ($wiersz in @(Select-JezykGrupyDoPokazania -Grupy $nazwy -Fraza '')) {
+            [void]$lista.Items.Add($wiersz)
+        }
+        # Pierwsza pozycja zaznaczona od razu, zeby Enter dzialal bez siegania po mysz.
+        if ($lista.Items.Count -gt 0) { $lista.SelectedIndex = 0 }
+
+        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        $btnWybierz              = New-Object System.Windows.Forms.Button
+        $btnWybierz.Text         = ''
+        $btnWybierz.Tag          = 'Wybierz'
+        $btnWybierz.Size         = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
+        $btnWybierz.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnWybierz 'Przycisk'
+        $btnWybierz.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        $btnWybierz.DialogResult = [System.Windows.Forms.DialogResult]::OK
+
+        $btnAnuluj              = New-Object System.Windows.Forms.Button
+        $btnAnuluj.Text         = ''
+        $btnAnuluj.Tag          = 'Anuluj'
+        $btnAnuluj.Size         = [System.Drawing.Size]::new($szerokoscPrzycisku, $wysokoscPrzycisku)
+        $btnAnuluj.FlatStyle    = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnAnuluj 'Przycisk'
+        $btnAnuluj.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        $btnAnuluj.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+
+        # Lista jest PIERWSZA, wiec dostaje fokus sama.
+        $okno.Controls.AddRange(@($lista, $btnWybierz, $btnAnuluj))
+
+        # Geometria PO dodaniu kontrolek: wysokosc wiersza wychodzi z czcionki, a te
+        # kontrolka dziedziczy po oknie dopiero w chwili dodania.
+        $wysokoscWiersza = [int][math]::Ceiling($okno.Font.GetHeight()) + 2
+        $lista.Left      = $margines
+        $lista.Width     = $szerokosc - 2 * $margines
+        $lista.Top       = $margines
+        $lista.Height    = $pozycje.Count * $wysokoscWiersza
+
+        $btnAnuluj.Left  = $szerokosc - $margines - $szerokoscPrzycisku
+        $btnWybierz.Left = $btnAnuluj.Left - $odstepPrzyciskow - $szerokoscPrzycisku
+        $btnWybierz.Top  = $lista.Bottom + $margines
+        $btnAnuluj.Top   = $btnWybierz.Top
+
+        $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
+                               ($btnWybierz.Bottom + $margines))
+
+        # Dwuklik na liscie ma znaczyc to samo, co "Wybierz" - inaczej wybor dwoma
+        # klknieciami wygladalby na nieskuteczny. Procedura nie widzi zmiennych tej
+        # funkcji, wiec okno bierze sie z samej kontrolki.
+        $lista.Add_DoubleClick({
+            $this.FindForm().DialogResult = [System.Windows.Forms.DialogResult]::OK
+        })
+
+        $okno.AcceptButton = $btnWybierz
+        $okno.CancelButton = $btnAnuluj
+
+        $ciemny = ($Script:Motyw -eq 'Ciemny')
+        Set-JezykCiemnyPasekTytulu      $okno.Handle  -Ciemny:$ciemny
+        Set-JezykCiemnyPasekPrzewijania $lista.Handle -Ciemny:$ciemny
+
+        $odpowiedz = if ($Wlasciciel) { $okno.ShowDialog($Wlasciciel) } else { $okno.ShowDialog() }
+        if ($odpowiedz -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
+
+        $nr = [int]$lista.SelectedIndex
+        if ($nr -lt 0 -or $nr -ge $pozycje.Count) { return $null }
+        return $pozycje[$nr]
+    }
+    finally {
         if ($okno) { $okno.Dispose() }
     }
 }
