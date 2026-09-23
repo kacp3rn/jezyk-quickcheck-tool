@@ -1453,7 +1453,7 @@ function Set-JezykWidok {
 # czy skonczyla. Zegar, a nie BeginInvoke na kontrolce: zdarzenie zegara wykonuje sie NA
 # WATKU INTERFEJSU, wiec znika cala klasa bledow z dostepem z obcego watku.
 #
-# PIEC ZADAN, NIE JEDNO, i kazde z wlasnym LICZNIKIEM POKOLEN. Liczone razem oddawaly wynik
+# SZESC ZADAN, NIE JEDNO, i kazde z wlasnym LICZNIKIEM POKOLEN. Liczone razem oddawaly wynik
 # dopiero wtedy, gdy skonczyly wszystkie - data czekalaby na SCCM. Pokolenia odrzucaja wynik
 # starego zadania, ktory dotarl po przelaczeniu na inne konto: inaczej dane jednego
 # uzytkownika wpisalyby sie do okna opisujacego juz kogos innego.
@@ -1467,16 +1467,23 @@ function Set-JezykWidok {
 # klika "Szukaj" dwa razy pod rzad, a to zapytanie trwa najdluzej ze wszystkich, wiec
 # odpowiedz na PIERWSZY numer potrafi dojsc juz po wpisaniu drugiego i dokleilaby do listy
 # kogos, kogo nikt nie szukal.
+#
+# SZOSTE ZADANIE - POLACZENIE Z UDZIALEM DYSKOWYM - jest jedyne, ktorego odpowiedz potrafi
+# WROCIC PO WIECEJ: gdy poswiadczenia operatora nie wystarczaja, okno pyta o konto oknem
+# systemowym, a to rysuje sie wylacznie na watku interfejsu. W tle idzie wiec sama proba
+# cicha - i tylko po to, zeby okno nie stalo przez cala rozmowe z serwerem.
 $Script:PokolenieLogowania  = 0
 $Script:PokolenieKomputera  = 0
 $Script:PokolenieUzytkownika = 0
 $Script:PokoleniePingu      = 0
 $Script:PokolenieNumeru     = 0
+$Script:PokolenieDysku      = 0
 $Script:ZadanieLogowania    = $null
 $Script:ZadanieKomputera    = $null
 $Script:ZadanieUzytkownika  = $null
 $Script:ZadaniePingu        = $null
 $Script:ZadanieNumeru       = $null
+$Script:ZadanieDysku        = $null
 $Script:ZegarTla            = $null
 
 # Czy pole "Status:" niesie w tej chwili NOTKE O TRWAJACYM szukaniu po numerze, a nie
@@ -1501,6 +1508,18 @@ $Script:PolaCzekajaNaSccm   = $false
 # je w innej chwili niz zapytanie do SCCM. Jeden wspolny marker gasilby napis nad praca,
 # ktora jeszcze trwa - albo zostawialby go nad ta, ktora juz sie skonczyla.
 $Script:PoleCzekaNaLogowanie = $false
+
+# Czy pole "Status:" widoku komputera niesie w tej chwili NOTKE O TRWAJACYM laczeniu
+# z udzialem dyskowym, a nie odpowiedz. Powod jest ten sam, co przy dwoch markerach wyzej:
+# po samej tresci pola tego nie poznasz, a notka zostawiona po zakonczonej pracy klamie
+# dokladnie tak samo, jak zdanie nieprawdziwe - tylko odwrotnie w czasie.
+$Script:StatusCzekaNaDysk    = $false
+
+# Zdanie, ktore stalo w polu "Status:", ZANIM notka je zakryla. Potrzebne tylko na jednej
+# drodze - rezygnacji z okna poswiadczen: powodzenie i niepowodzenie maja wlasne komunikaty,
+# wiec zastepuja notke odpowiedzia i nie maja czego przywracac. Rezygnacja nie ma nic do
+# powiedzenia i pole musi wrocic tam, gdzie bylo, zamiast zostac z kropkami na zawsze.
+$Script:StatusPrzedLaczeniem = ''
 
 # Numer klatki animacji kropek - WSPOLNY dla obu notek, zeby kropki szly w oknie rownym
 # krokiem. Trzymany osobno od markerow, bo zegar podbija go w innym miejscu, niz notka
@@ -1630,7 +1649,7 @@ $Script:LogowaniePrzyblizone = $null
     musi byc PIERWSZA instrukcja skryptu.
 #>
 function New-JezykSkryptTla {
-    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer')][string]$Zadanie)
+    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer', 'Dysk')][string]$Zadanie)
 
     if ($Script:SkryptyTla.ContainsKey($Zadanie)) { return $Script:SkryptyTla[$Zadanie] }
 
@@ -1682,6 +1701,21 @@ function New-JezykSkryptTla {
 
         $naglowek  = 'param($Netbios)'
         $wywolanie = 'Get-JezykPingKomputera -Nazwa $Netbios'
+    }
+    elseif ($Zadanie -eq 'Dysk') {
+        # PROBA CICHA POLACZENIA Z UDZIALEM - bez pytania o konto, wiec nie ma tu czego
+        # rysowac i cala rozmowa z serwerem moze isc w tle. O to w tym zadaniu chodzi:
+        # dotad szla przez ShellExecute na watku interfejsu i okno stalo.
+        #
+        # Odpowiedz "potrzeba poswiadczen" wraca STAD NA WATEK INTERFEJSU i dopiero tam
+        # pada pytanie o konto - systemowe okno poswiadczen potrzebuje rodzica i petli
+        # komunikatow, a przestrzen w tle nie ma ani jednego, ani drugiego.
+        $funkcje = 'Test-JezykNazwaKonta', 'Get-JezykSciezkaUdzialu',
+                   'Get-JezykStanPolaczeniaUdzialu', 'Invoke-JezykPolaczenieUdzialu',
+                   'Connect-JezykUdzialDysku'
+
+        $naglowek  = 'param($Netbios, $Litera)'
+        $wywolanie = 'Connect-JezykUdzialDysku -Netbios $Netbios -Litera $Litera'
     }
     elseif ($Zadanie -eq 'Logowanie') {
         $funkcje = 'Test-JezykNazwaHosta', 'Test-JezykDn',
@@ -2005,6 +2039,61 @@ function Start-JezykZadanieNumeru {
     }
 }
 
+<#
+.SYNOPSIS
+    Uruchamia w tle ciche polaczenie z udzialem dyskowym maszyny.
+
+.DESCRIPTION
+    SZOSTE ZADANIE i jedyne, ktore nalezy do KLIKNIECIA - nie do pokazanego konta ani do
+    wyszukiwania. Wlasny licznik pokolen jest i tak konieczny: operator klika "Dyski" drugi
+    raz (choćby po to, zeby wybrac inna litere), a odpowiedz na pierwsza probe potrafi dojsc
+    juz po tym i otworzylaby udzial, ktorego nikt juz nie chce.
+
+    ODPOWIEDZ BYWA POL-ODPOWIEDZIA: "potrzeba poswiadczen" znaczy, ze pytanie trzeba zadac
+    jeszcze raz, tyle ze z watku interfejsu i oknem systemowym - patrz Update-JezykDyskWTle.
+#>
+function Start-JezykZadanieDysku {
+    param([string]$Netbios, [string]$Litera)
+
+    Stop-JezykZadanieDysku
+
+    # Bez maszyny albo bez litery zadanie nie ruszy WCALE, wiec notka o trwajacym laczeniu
+    # migalaby nad praca, ktorej nikt nie zaczal.
+    if (-not $Netbios -or -not $Litera) { Set-JezykNotkeLaczenia -Wylacz; return }
+
+    $Script:PokolenieDysku++
+    $mojePokolenie = $Script:PokolenieDysku
+
+    try {
+        $zegar = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $zadanie = New-JezykPrzestrzenTla (New-JezykSkryptTla 'Dysk')
+        [void]$zadanie.Ps.AddArgument($Netbios).AddArgument($Litera)
+
+        $Script:ZadanieDysku = [pscustomobject]@{
+            Ps          = $zadanie.Ps
+            Przestrzen  = $zadanie.Przestrzen
+            Uchwyt      = $zadanie.Ps.BeginInvoke()
+            Pokolenie   = $mojePokolenie
+            Przerwane   = $false
+            PorzuconeO  = $null
+        }
+
+        Add-JezykDiagnostyke 'uruchomienie zadania polaczenia z udzialem' $zegar.ElapsedMilliseconds
+
+        if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
+    }
+    catch {
+        # Nieudane URUCHOMIENIE to awaria tej drogi, a nie odmowa serwera. Idzie ta sama
+        # droga powrotu co odpowiedz, bo notke trzeba zgasic tak czy owak - zostawiona
+        # migalaby kropkami nad niczym do konca zycia okna.
+        Update-JezykDyskWTle -Wynik ([pscustomobject]@{
+            Stan = 'Blad'; Kod = $null; Sciezka = ''
+            Komunikat = 'Nie udało się zacząć łączenia z udziałem.'
+            Szczegoly = $_.Exception.Message })
+    }
+}
+
 # Odbiera wynik zadania daty logowania, jesli juz jest gotowy. Wynik z niezgodnego pokolenia
 # jest odrzucany - dotyczylby konta, ktorego nie ma juz na ekranie.
 function Receive-JezykZadanieLogowania {
@@ -2101,6 +2190,55 @@ function Receive-JezykZadanieNumeru {
         }
     }
     finally { Stop-JezykZadanieNumeru }
+}
+
+<#
+.SYNOPSIS
+    Odbiera odpowiedz cichej proby polaczenia z udzialem.
+
+.DESCRIPTION
+    ZADANIE ZDEJMUJEMY Z REJESTRU PRZED RENDEROWANIEM, inaczej niz w pozostalych pieciu -
+    i to nie jest kosmetyka. Ta odpowiedz potrafi postawic MODALNE okno poswiadczen, a ono
+    pompuje komunikaty watku, w tym takt zegara tla. Drugi takt wszedlby wiec tutaj jeszcze
+    raz, zawolal EndInvoke po raz kolejny na tym samym uchwycie i postawil DRUGIE okno
+    poswiadczen nad pierwszym. Zdjete z rejestru zadanie nie ma jak wpasc w ten cykl.
+
+    Wynik z niezgodnego pokolenia odrzucamy tak samo jak wszedzie - dotyczylby litery albo
+    maszyny, ktorej operator juz nie wybral. NOTKI WTEDY NIE GASIMY: nalezy juz do zadania,
+    ktore biegnie, a nie do tego, ktore wlasnie wrocilo.
+#>
+function Receive-JezykZadanieDysku {
+    $zadanie = $Script:ZadanieDysku
+    if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
+
+    $Script:ZadanieDysku = $null
+
+    $wynik = $null
+    try {
+        $dane = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))
+        if ($dane.Count -gt 0) { $wynik = $dane[0] }
+    }
+    catch {
+        $wynik = [pscustomobject]@{
+            Stan = 'Blad'; Kod = $null; Sciezka = ''
+            Komunikat = 'Łączenie z udziałem zawiodło.'
+            Szczegoly = $_.Exception.Message }
+    }
+
+    Stop-JezykZadanieTla $zadanie
+
+    if ($zadanie.Pokolenie -ne $Script:PokolenieDysku) { return }
+
+    # PUSTA ODPOWIEDZ TEZ JEST ODPOWIEDZIA. Zadanie, ktore nie oddalo nic, zostawiloby
+    # migajaca notke nad praca, ktora sie skonczyla - a operator czyta to pole raz.
+    if ($null -eq $wynik) {
+        $wynik = [pscustomobject]@{
+            Stan = 'Blad'; Kod = $null; Sciezka = ''
+            Komunikat = 'Łączenie z udziałem nie dało odpowiedzi.'
+            Szczegoly = 'Zadanie w tle zakończyło się, nie oddając wyniku.' }
+    }
+
+    Update-JezykDyskWTle -Wynik $wynik
 }
 
 <#
@@ -2277,6 +2415,13 @@ function Stop-JezykZadanieNumeru {
     Stop-JezykZadanieTla $zadanie
 }
 
+function Stop-JezykZadanieDysku {
+    if (-not $Script:ZadanieDysku) { return }
+    $zadanie = $Script:ZadanieDysku
+    $Script:ZadanieDysku = $null
+    Stop-JezykZadanieTla $zadanie
+}
+
 # Sprzatanie przy zamykaniu okna. Zatrzymanie zegara musi byc OSTATNIE: porzucenie
 # trwajacego zadania dopisuje je do listy i samo URUCHAMIA zegar, wiec zatrzymany najpierw
 # wstawalby z powrotem - w trakcie zamykania okna, gdy kontrolki sa juz zwalniane.
@@ -2286,6 +2431,7 @@ function Stop-JezykZadaniaTla {
     Stop-JezykZadanieUzytkownika
     Stop-JezykZadaniePingu
     Stop-JezykZadanieNumeru
+    Stop-JezykZadanieDysku
 
     # Ostatnie podejscie do porzuconych; reszta odchodzi razem z procesem.
     Clear-JezykZadaniaPorzucone
@@ -2623,7 +2769,7 @@ function Show-JezykGrupyAd {
 # jest STALA i celowo nie stoi w $Script:Ustawienia: tamten blok opisuje ADRESY POLACZEN -
 # domeny, kontrolery, serwer lokacji - czyli rzeczy, ktorych Jezyk nie ma prawa zgadywac.
 # Litera dysku adresem nie jest. Nie pytamy o nia takze samej maszyny: okno ma otwierac sie
-# od razu, a odpytanie o dyski byloby szostym zadaniem w tle - dla dwoch pozycji na liscie.
+# od razu, a odpytanie o dyski byloby siodmym zadaniem w tle - dla dwoch pozycji na liscie.
 $Script:LiteryDyskow = @('C', 'D')
 
 <#
@@ -3773,6 +3919,7 @@ function New-JezykForm {
         Receive-JezykZadanieUzytkownika
         Receive-JezykZadaniePingu
         Receive-JezykZadanieNumeru
+        Receive-JezykZadanieDysku
 
         # PO wszystkich Receive, nie przed nimi. Odpowiedz, ktora przyszla w tym takcie,
         # zdazyla juz zgasic notke - inaczej kolejna klatka kropek nadpisalaby wynik
@@ -3790,7 +3937,7 @@ function New-JezykForm {
         # uruchamia zadanie w tle, zegar rusza i przy pierwszym takcie je zwalnia.
         if (-not $Script:ZadanieLogowania -and -not $Script:ZadanieKomputera -and
             -not $Script:ZadanieUzytkownika -and -not $Script:ZadaniePingu -and
-            -not $Script:ZadanieNumeru -and
+            -not $Script:ZadanieNumeru -and -not $Script:ZadanieDysku -and
             @($Script:ZadaniaPorzucone).Count -eq 0) {
             $Script:ZegarTla.Stop()
         }

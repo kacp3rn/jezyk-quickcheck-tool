@@ -3279,27 +3279,18 @@ function Start-JezykRemoteControl {
 
 <#
 .SYNOPSIS
-    Otwiera udzial administracyjny wskazanej maszyny (\\NAZWA\C$) w Eksploratorze plikow.
+    Sklada sciezke do udzialu administracyjnego (\\NAZWA\C$) albo mowi, czemu sie nie da.
 
 .DESCRIPTION
-    NIE URUCHAMIAMY PROGRAMU - ODDAJEMY SCIEZKE POWLOCE. Start-Process dostaje sama sciezke
-    UNC, wiec otwiera ja ten program, ktory w systemie obsluguje katalogi - dokladnie tak,
-    jak wpisanie jej w pasku adresu Eksploratora. Droga przez explorer.exe bylaby czyms
-    INNYM: sama nazwa pliku jest szukana po PATH maszyny operatora (dlatego odrzuca ja
-    Test-JezykSciezkaProgramu), a pelna sciezka wymagalaby albo odpytania systemu o katalog
-    Windows, albo kolejnego ustawienia - a udzialy administracyjne system zaklada sam i nie
-    ma tu czego konfigurowac. Stad tez brak -ArgumentList: nie ma programu, ktoremu mozna
-    by cokolwiek podac.
+    JEDNO MIEJSCE NA OBIE ZAPORY I NA SAMA SCIEZKE, bo siegaja po nia dwie drogi:
+    zestawienie sesji (Connect-JezykUdzialDysku) i otwarcie udzialu w Eksploratorze
+    (Open-JezykUdzialDysku). Dwie kopie tych warunkow rozjechalyby sie przy pierwszej
+    zmianie, a rozjazd bylby widoczny dopiero na maszynie o nietypowej nazwie.
 
-    Zwraca ten sam ksztalt, co Start-JezykRemoteControl (Udane / Komunikat / Szczegoly),
-    i tak samo NIE RZUCA WYJATKIEM - wynik ma trafic do okna.
-
-.NOTES
-    Bez Test-Path przed otwarciem: na martwym udziale sieciowym potrafi on zawiesic watek
-    interfejsu, a nieistniejaca sciezka i tak konczy sie wyjatkiem albo komunikatem samego
-    Eksploratora. Bez -Wait z tego samego powodu, co przy zdalnej konsoli.
+    PUSTA SCIEZKA W WYNIKU ZNACZY ODMOWE - komunikat i szczegoly sa wtedy niepuste,
+    wiec wolajacy ma co pokazac bez zgadywania, ktora zapora zadzialala.
 #>
-function Open-JezykUdzialDysku {
+function Get-JezykSciezkaUdzialu {
     param([string]$Netbios, [string]$Litera)
 
     if ($null -eq $Netbios) { $Netbios = '' }
@@ -3307,10 +3298,10 @@ function Open-JezykUdzialDysku {
     $Netbios = $Netbios.Trim()
     $Litera  = $Litera.Trim()
 
-    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
+    $wynik = [pscustomobject]@{ Sciezka = ''; Komunikat = ''; Szczegoly = '' }
 
     # Ta sama biala lista, co przy zdalnej konsoli - tyle ze nazwa wchodzi tu W SRODEK
-    # napisu podawanego jako -FilePath, a nie osobnym elementem tablicy argumentow.
+    # napisu podawanego jako sciezka, a nie osobnym elementem tablicy argumentow.
     if (-not (Test-JezykNazwaKonta $Netbios)) {
         $wynik.Komunikat = 'Nie mam nazwy maszyny, której dyski można otworzyć.'
         $wynik.Szczegoly = 'Wartość "{0}" nie wygląda na nazwę komputera, więc nie została nikomu podana.' -f $Netbios
@@ -3328,7 +3319,55 @@ function Open-JezykUdzialDysku {
 
     # Sciezka skladana DO ZMIENNEJ, a nie wprost w argumencie: w wywolaniu metody .NET
     # przecinek nalezy do listy argumentow metody, a nie do tablicy dla operatora -f.
-    $sciezka = '\\{0}\{1}$' -f $Netbios, $Litera.ToUpper()
+    $wynik.Sciezka = '\\{0}\{1}$' -f $Netbios, $Litera.ToUpper()
+    return $wynik
+}
+
+<#
+.SYNOPSIS
+    Otwiera udzial administracyjny wskazanej maszyny (\\NAZWA\C$) w Eksploratorze plikow.
+
+.DESCRIPTION
+    NIE URUCHAMIAMY PROGRAMU - ODDAJEMY SCIEZKE POWLOCE. Start-Process dostaje sama sciezke
+    UNC, wiec otwiera ja ten program, ktory w systemie obsluguje katalogi - dokladnie tak,
+    jak wpisanie jej w pasku adresu Eksploratora. Droga przez explorer.exe bylaby czyms
+    INNYM: sama nazwa pliku jest szukana po PATH maszyny operatora (dlatego odrzuca ja
+    Test-JezykSciezkaProgramu), a pelna sciezka wymagalaby albo odpytania systemu o katalog
+    Windows, albo kolejnego ustawienia - a udzialy administracyjne system zaklada sam i nie
+    ma tu czego konfigurowac. Stad tez brak -ArgumentList: nie ma programu, ktoremu mozna
+    by cokolwiek podac.
+
+    Zwraca ten sam ksztalt, co Start-JezykRemoteControl (Udane / Komunikat / Szczegoly),
+    i tak samo NIE RZUCA WYJATKIEM - wynik ma trafic do okna.
+
+    SESJA STOI JUZ PRZED TYM WYWOLANIEM. Laczy sie z udzialem Connect-JezykUdzialDysku -
+    w tle albo, gdy trzeba poswiadczen, oknem systemowym - wiec ShellExecute ma tu do
+    zrobienia tylko tyle, co wpisanie gotowej sciezki w pasku adresu: wraca od razu.
+    Dopoki laczenie szlo tedy, to WLASNIE TO WYWOLANIE trzymalo watek interfejsu przez
+    cala rozmowe z serwerem, a przy braku uprawnien konczylo sie odmowa - bo okno
+    poswiadczen pokazuje Eksplorator przy swojej nawigacji, a nie ShellExecute.
+
+.NOTES
+    Bez Test-Path przed otwarciem: na martwym udziale sieciowym potrafi on zawiesic watek
+    interfejsu, a nieistniejaca sciezka i tak konczy sie wyjatkiem albo komunikatem samego
+    Eksploratora. Bez -Wait z tego samego powodu, co przy zdalnej konsoli.
+#>
+function Open-JezykUdzialDysku {
+    param([string]$Netbios, [string]$Litera)
+
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
+
+    # Obie zapory i sama sciezka stoja w JEDNYM miejscu - patrz Get-JezykSciezkaUdzialu.
+    # Tamtedy chodzi takze zestawienie sesji, wiec otwierana jest dokladnie ta sciezka,
+    # z ktora system sie przed chwila polaczyl.
+    $adres = Get-JezykSciezkaUdzialu -Netbios $Netbios -Litera $Litera
+    if (-not $adres.Sciezka) {
+        $wynik.Komunikat = $adres.Komunikat
+        $wynik.Szczegoly = $adres.Szczegoly
+        return $wynik
+    }
+
+    $sciezka = $adres.Sciezka
 
     try {
         Start-Process -FilePath $sciezka -ErrorAction Stop
@@ -3344,6 +3383,142 @@ function Open-JezykUdzialDysku {
     }
 
     return $wynik
+}
+
+<#
+.SYNOPSIS
+    Tlumaczy kod od WNetAddConnection3 na stan, ktorym okno umie pokierowac.
+
+.DESCRIPTION
+    PO KODZIE, A NIE PO TRESCI. Tresc komunikatu systemowego zalezy od jezyka systemu,
+    wiec dopasowanie do slow "odmowa dostepu" psuloby sie na kazdej instalacji w innym
+    jezyku - i to po cichu, bo warunek po prostu nigdy by nie pasowal.
+
+    CZTERY STANY, BO CZTERY ROZNE ZAKONCZENIA:
+      Ok            - sesja stoi, udzial mozna otwierac,
+      Poswiadczenia - to konto nie wystarcza, ale INNE moze wystarczyc: wolno zapytac,
+      Anulowano     - operator zamknal okno poswiadczen; to nie jest blad,
+      Blad          - reszta, w tym rzeczy, ktorych pytaniem o konto sie nie naprawi.
+
+    1219 JEST WLASNIE TAKA RZECZA i dlatego nie stoi przy poswiadczeniach: Windows nie
+    utrzymuje dwoch sesji do jednego serwera na roznych kontach, wiec okno poswiadczen
+    pytaloby o dane, ktorych i tak nie da sie uzyc. Recznie wpisana sciezka konczy sie
+    w tym miejscu tak samo.
+
+    KOD -1 NIE JEST SYSTEMOWY - oddaje go Invoke-JezykPolaczenieUdzialu, gdy nie ma czym
+    zapytac (nie powstal typ z funkcjami natywnymi). Kody systemowe sa nieujemne.
+#>
+function Get-JezykStanPolaczeniaUdzialu {
+    param([int]$Kod)
+
+    $wynik = [pscustomobject]@{ Stan = 'Blad'; Komunikat = ''; Szczegoly = '' }
+
+    if ($Kod -eq 0) {
+        $wynik.Stan = 'Ok'
+        return $wynik
+    }
+
+    # ERROR_ACCESS_DENIED, ERROR_INVALID_PASSWORD, ERROR_LOGON_FAILURE - trzy odpowiedzi
+    # znaczace to samo: TYM kontem nie wejdziesz. Udzialy administracyjne wymagaja praw
+    # administratora NA MASZYNIE DOCELOWEJ, wiec to jest zwykla, spodziewana odpowiedz.
+    if ($Kod -in @(5, 86, 1326)) {
+        $wynik.Stan      = 'Poswiadczenia'
+        $wynik.Komunikat = 'Do tego udziału potrzeba konta z prawami administratora na tej maszynie.'
+        $wynik.Szczegoly = 'System odmówił połączenia z udziałem (kod {0}).' -f $Kod
+        return $wynik
+    }
+
+    # ERROR_CANCELLED - operator zamknal okno poswiadczen. Rezygnacja nie jest bledem
+    # i ma sie skonczyc cisza, tak samo jak zamkniecie okna wyboru litery.
+    if ($Kod -eq 1223) {
+        $wynik.Stan      = 'Anulowano'
+        $wynik.Komunikat = 'Nie podano poświadczeń.'
+        return $wynik
+    }
+
+    # ERROR_SESSION_CREDENTIAL_CONFLICT - patrz opis wyzej: pytanie o konto tu nie pomoze.
+    if ($Kod -eq 1219) {
+        $wynik.Komunikat = 'Jest już połączenie z tą maszyną na inne konto.'
+        $wynik.Szczegoly = 'Windows utrzymuje do jednego serwera tylko jedną sesję na jedno konto (kod 1219). ' +
+                           'Zamknij otwarte okna Eksploratora i odłącz mapowane dyski tej maszyny, a potem spróbuj ponownie.'
+        return $wynik
+    }
+
+    # ERROR_BAD_NETPATH i ERROR_BAD_NET_NAME - maszyna milczy albo udzialu na niej nie ma.
+    # Udzialy administracyjne da sie wylaczyc politykami i wtedy wlasnie to tu przychodzi.
+    if ($Kod -in @(53, 67)) {
+        $wynik.Komunikat = 'Nie znaleziono tej maszyny albo udziału w sieci.'
+        $wynik.Szczegoly = 'Połączenie z udziałem zakończyło się kodem {0}. Maszyna może nie odpowiadać, ' -f $Kod
+        $wynik.Szczegoly += 'a udziały administracyjne bywają wyłączone politykami.'
+        return $wynik
+    }
+
+    if ($Kod -eq -1) {
+        $wynik.Komunikat = 'Nie udało się sięgnąć do funkcji systemowych.'
+        $wynik.Szczegoly = 'Połączenia z udziałem nie ma jak zamówić - nie powstały funkcje systemowe Jeżyka. ' +
+                           'Opis przyczyny trafia do pliku %TEMP%\Jezyk-konsola.txt.'
+        return $wynik
+    }
+
+    # KOD ZOSTAJE W TRESCI. Nieznany numer jest jedyna rzecza, ktora o takiej awarii
+    # wiadomo - bez niego pod "!" stalby komunikat nieodrozniajacy jej od zadnej innej.
+    $wynik.Komunikat = 'Nie udało się połączyć z udziałem.'
+    $wynik.Szczegoly = 'Połączenie z udziałem zakończyło się kodem systemowym {0}.' -f $Kod
+    return $wynik
+}
+
+<#
+.SYNOPSIS
+    Zestawia sesje z udzialem administracyjnym maszyny. NIE otwiera go w Eksploratorze.
+
+.DESCRIPTION
+    DWA KROKI ZAMIAST JEDNEGO - to jest sedno calej zmiany. Dotad udzial otwieralo wprost
+    Open-JezykUdzialDysku, czyli ShellExecute na watku interfejsu: rozmowa z serwerem szla
+    tamtedy (okno stalo nieruchomo), a przy niewystarczajacych prawach wracala odmowa.
+    Okno poswiadczen, ktore widac po recznym wpisaniu sciezki, pokazuje przy swojej
+    nawigacji EKSPLORATOR - z obcego procesu nie ma go skad wziac.
+
+    BEZ -Interaktywnie wolno to wykonac W TLE: nic nie rysuje, wiec okno chodzi przez caly
+    czas laczenia. Z -Interaktywnie rysuje SYSTEMOWE OKNO POSWIADCZEN i dlatego musi isc
+    z watku interfejsu, z uchwytem okna glownego w roli rodzica - inaczej okno potrafi
+    wstac za Jezykiem i wyglada, jakby program po prostu stanal.
+
+    Polaczenie jest BEZ LITERY DYSKU (lpLocalName null): zyje w sesji logowania operatora,
+    wiec Eksplorator - osobny proces tej samej sesji - korzysta z niego bez pytania
+    o cokolwiek, a w oknie "Ten komputer" nie przybywa zadnego dysku.
+
+    NIE RZUCA WYJATKIEM, jak cala ta warstwa: wynik ma trafic do okna.
+#>
+function Connect-JezykUdzialDysku {
+    param([string]$Netbios, [string]$Litera,
+          [IntPtr]$Uchwyt = [IntPtr]::Zero, [switch]$Interaktywnie)
+
+    # MASZYNA I LITERA WRACAJA W WYNIKU, a nie tylko zlozona z nich sciezka. Odpowiedz
+    # "potrzeba poswiadczen" znaczy, ze o to samo trzeba zapytac jeszcze raz - z watku
+    # interfejsu i oknem systemowym - a wtedy wolajacy ma czym, nie rozbierajac sciezki
+    # z powrotem na czesci ani nie odkladajac obok niej wlasnego stanu.
+    $maszyna = ([string]$Netbios).Trim()
+    $dysk    = ([string]$Litera).Trim().ToUpper()
+
+    $adres = Get-JezykSciezkaUdzialu -Netbios $Netbios -Litera $Litera
+    if (-not $adres.Sciezka) {
+        # Kod pusty, a nie -1: nikogo nie pytalismy, wiec zaden kod nie padl.
+        return [pscustomobject]@{ Stan = 'Blad'; Kod = $null; Sciezka = ''
+                                  Netbios = $maszyna; Litera = $dysk
+                                  Komunikat = $adres.Komunikat; Szczegoly = $adres.Szczegoly }
+    }
+
+    # CONNECT_INTERACTIVE (0x08) pozwala systemowi zapytac o konto, CONNECT_PROMPT (0x10)
+    # kaze pytac TAKZE wtedy, gdy ma juz cos zapamietanego - bez niego zapamietane, a nic
+    # niedajace poswiadczenia zamykalyby te droge bez jednego slowa.
+    $flagi = if ($Interaktywnie) { 0x18 } else { 0 }
+
+    $kod  = Invoke-JezykPolaczenieUdzialu -Sciezka $adres.Sciezka -Uchwyt $Uchwyt -Flagi $flagi
+    $opis = Get-JezykStanPolaczeniaUdzialu -Kod $kod
+
+    [pscustomobject]@{ Stan = $opis.Stan; Kod = $kod; Sciezka = $adres.Sciezka
+                       Netbios = $maszyna; Litera = $dysk
+                       Komunikat = $opis.Komunikat; Szczegoly = $opis.Szczegoly }
 }
 
 # Sprawdza komputer w AD po nazwie NetBIOS. Widok komputera jest celowo krotszy od widoku

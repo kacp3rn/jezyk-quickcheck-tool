@@ -25,8 +25,11 @@ trap { Register-JezykBladCzesci $_; continue }
 # SetCurrentProcessExplicitAppUserModelID odlacza okno od powershell.exe, dzieki czemu
 # pasek zadan uzywa ikony Jezyka, a nie ikony PowerShella. Musi paść przed pierwszym oknem.
 #
-# Calosc pod try, bo to wylacznie kosmetyka: gdyby kompilacja C# byla na stacji
-# zablokowana, narzedzie ma dalej dzialac - z widoczna konsola, ale sprawne.
+# Calosc pod try, bo konsola i pasek tytulu to wylacznie kosmetyka: gdyby kompilacja C#
+# byla na stacji zablokowana, narzedzie ma dalej dzialac - z widoczna konsola, ale sprawne.
+# JEDEN CZLONEK TEGO TYPU KOSMETYKA NIE JEST - PolaczUdzial zestawia sesje SMB pod
+# przyciskiem "Dyski". Jego brak nie moze przejsc bez slowa, wiec pyta o typ osobno
+# i oddaje wtedy wlasny kod - patrz Invoke-JezykPolaczenieUdzialu.
 
 # Opis awarii trafia do %TEMP%\Jezyk-konsola.txt WYLACZNIE gdy cos poszlo nie tak;
 # przy poprawnym uruchomieniu plik jest kasowany. Jego obecnosc jest wiec informacja.
@@ -73,6 +76,39 @@ public static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, strin
 [return: MarshalAs(UnmanagedType.Bool)]
 public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndAfter, int x, int y,
                                        int cx, int cy, uint flags);
+
+// --- POLACZENIE Z UDZIALEM SIECIOWYM -------------------------------------------------
+// WNetAddConnection3 to ta sama droga, ktora chodzi "net use" i Eksplorator plikow:
+// zestawia sesje SMB do udzialu, a z flagami interaktywnymi POKAZUJE SYSTEMOWE OKNO
+// POSWIADCZEN - z oknem podanym w hwndOwner w roli rodzica. Jedyne wywolanie natywne
+// w tym pliku, ktore NIE JEST kosmetyka: jego niepowodzenie operator ma zobaczyc.
+//
+// STRUKTURA ZOSTAJE PO STRONIE C#. Wypelnia ja metoda ponizej, wiec z PowerShella idzie
+// wylacznie sciezka i flagi - nie ma tu miejsca, w ktorym dalo by sie pomylic pole.
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+private struct NETRESOURCE
+{
+    public int dwScope;
+    public int dwType;
+    public int dwDisplayType;
+    public int dwUsage;
+    public string lpLocalName;
+    public string lpRemoteName;
+    public string lpComment;
+    public string lpProvider;
+}
+
+[DllImport("mpr.dll", CharSet = CharSet.Unicode)]
+private static extern int WNetAddConnection3(IntPtr hwndOwner, ref NETRESOURCE lpNetResource,
+                                             string lpPassword, string lpUserName, int dwFlags);
+
+public static int PolaczUdzial(IntPtr hwndOwner, string sciezka, int flagi)
+{
+    NETRESOURCE zasob = new NETRESOURCE();
+    zasob.dwType = 1;                        // RESOURCETYPE_DISK
+    zasob.lpRemoteName = sciezka;            // lpLocalName zostaje null: polaczenie BEZ litery
+    return WNetAddConnection3(hwndOwner, ref zasob, null, null, flagi);
+}
 '@
     }
 
@@ -203,6 +239,37 @@ function Set-JezykCiemnyPasekPrzewijania {
     }
     catch {
         $Script:BladKonsoli = "Ciemne paski przewijania: $($_.Exception.Message)"
+    }
+}
+
+<#
+.SYNOPSIS
+    Prosi system o polaczenie z udzialem sieciowym. Oddaje KOD systemowy, nic wiecej.
+
+.DESCRIPTION
+    CIENKA WARSTWA NAD JEDNYM WYWOLANIEM - to jest styk z systemem i jedyne miejsce,
+    ktore zestaw weryfikacyjny podmienia atrapa (tak samo jak przy ciemnym pasku tytulu).
+    Co dany kod znaczy, rozstrzyga Get-JezykStanPolaczeniaUdzialu w Jezyk-2-Logika.ps1.
+
+    FLAGI DECYDUJA O OKNIE POSWIADCZEN. Zero to proba cicha, ktora wolno wykonac w tle;
+    CONNECT_INTERACTIVE | CONNECT_PROMPT (0x18) kaze systemowi zapytac operatora o konto,
+    a wtedy wywolanie MUSI isc z watku interfejsu - rysuje okno i potrzebuje rodzica.
+
+    KOD -1 NIE POCHODZI OD SYSTEMU: znaczy "nie ma czym zapytac", czyli typ z funkcjami
+    natywnymi nie powstal albo samo wywolanie sie wywrocilo. Kody systemowe sa nieujemne,
+    wiec te dwie rzeczy nie maja jak sie pomylic.
+#>
+function Invoke-JezykPolaczenieUdzialu {
+    param([string]$Sciezka, [IntPtr]$Uchwyt = [IntPtr]::Zero, [int]$Flagi = 0)
+
+    if (-not ('Jezyk.Native' -as [type])) { return -1 }
+
+    try { return [Jezyk.Native]::PolaczUdzial($Uchwyt, $Sciezka, $Flagi) }
+    catch {
+        # Wyjatek z samego wywolania to awaria TEJ DROGI, a nie odpowiedz serwera - oddajemy
+        # go jako brak narzedzia, zeby okno nie nazwalo go odmowa dostepu.
+        $Script:BladKonsoli = "Polaczenie z udzialem: $($_.Exception.Message)"
+        return -1
     }
 }
 

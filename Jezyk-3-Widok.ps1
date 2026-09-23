@@ -371,6 +371,9 @@ function Clear-JezykKomputer {
 
     Stop-JezykZadanieUzytkownika
     Stop-JezykZadaniePingu
+    # Laczenie z udzialem nalezy do TEJ maszyny: porzucone otwieraloby dysk komputera,
+    # ktorego nikt juz nie oglada, a po drodze animowaloby pole opisujace inna maszyne.
+    Stop-JezykZadanieDysku
 
     foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny,
                         $k.TxtKomputerTworca, $k.TxtKomputerWlaczone, $k.TxtKomputerStatus,
@@ -380,8 +383,10 @@ function Clear-JezykKomputer {
 
     # Pola SCCM czyscimy tu wprost, z pominieciem funkcji, ktore normalnie gasza marker
     # kropek - wiec gasimy go osobno. Zostawiony animowalby napis nad polami, w ktorych
-    # nic juz nie stoi.
+    # nic juz nie stoi. To samo dotyczy notki laczenia z udzialem: pole Status: czyscimy
+    # nizej wprost, wiec kropki mialyby nad czym migac az do konca zycia okna.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
+    Set-JezykNotkeLaczenia -Wylacz
 
     # POLE KOLOROWANE CZYSCI SIE DWA RAZY: z tresci i z koloru. Sam tekst zdjety zostawia
     # czerwien na kontrolce, wiec pierwsze wylaczone konto zabarwiloby pole NA STALE
@@ -1111,6 +1116,49 @@ function Set-JezykNotkeSprawdzania {
 
 <#
 .SYNOPSIS
+    Zapala i gasi notke "Łączenie" w polu Status: widoku komputera.
+
+.DESCRIPTION
+    TRZECIA NOTKA, BO TRZECIE NIEZALEZNE ZADANIE - i jedyna, ktora ZAKRYWA ZDANIE
+    PRAWDZIWE. Tamte dwie stoja w polach czekajacych na swoja pierwsza odpowiedz, a to
+    pole niesie w tej chwili diagnostyke wyszukiwania. Dlatego notka musi miec z czego
+    odtworzyc stan sprzed siebie i dlatego zapamietanie zdania stoi TUTAJ, razem
+    z markerem i pierwsza klatka - rozpisane po miejscach wywolania rozjechaloby sie
+    przy pierwszej zmianie.
+
+    ZAPAMIETUJE WYLACZNIE PRZY PIERWSZYM ZAPALENIU. Drugie klikniecie "Dyski" trafia
+    w pole, w ktorym stoi juz "Łączenie.." - zapamietane wtedy, wrocilyby do niego wlasne
+    kropki zamiast zdania, ktore je poprzedzalo.
+
+    -Wylacz NIE RUSZA TRESCI POLA, tak samo jak przy notce sprawdzania: kazdy wolajacy
+    wpisuje zaraz potem zdanie prawdziwe, a czyszczenie tutaj dawaloby mrugniecie pustka.
+#>
+function Set-JezykNotkeLaczenia {
+    param([switch]$Wylacz)
+
+    if ($Wylacz) {
+        $Script:StatusCzekaNaDysk = $false
+        return
+    }
+
+    $pole = $Script:Kontrolki.TxtKomputerStatus
+    if (-not $Script:StatusCzekaNaDysk) {
+        $Script:StatusPrzedLaczeniem = if ($pole) { [string]$pole.Text } else { '' }
+    }
+
+    $Script:StatusCzekaNaDysk = $true
+
+    # Licznik klatek jest WSPOLNY z notka sprawdzania, zeby kropki w oknie szly rownym
+    # krokiem - zerujemy go przy zapalaniu, dokladnie tak samo jak tamta.
+    $Script:KlatkaKropek = 0
+
+    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara: polaczenie z maszyna stojaca
+    # w tej samej podsieci bywa krotsze niz cwierc sekundy.
+    Update-JezykKropkiSprawdzania
+}
+
+<#
+.SYNOPSIS
     Jedna klatka animowanych kropek w polach czekajacych na odpowiedz z tla.
 
 .DESCRIPTION
@@ -1128,7 +1176,8 @@ function Set-JezykNotkeSprawdzania {
     w zegarze PRZED ta funkcja, wiec klatka nie ma juz czego nadpisac.
 #>
 function Update-JezykKropkiSprawdzania {
-    if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie) { return }
+    if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie -and
+        -not $Script:StatusCzekaNaDysk) { return }
 
     $klatka = [int][math]::Floor($Script:KlatkaKropek / $Script:TaktowNaKlatkeKropek)
     $kropki = '.' * (1 + ($klatka % 3))
@@ -1154,6 +1203,13 @@ function Update-JezykKropkiSprawdzania {
     if ($Script:PoleCzekaNaLogowanie -and $k.TxtOstatnieLogowanie) {
         $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
                                                                -Trwa -Kropki $kropki
+    }
+
+    # JEDNO POLE, NIE SZESC: notka laczenia z udzialem stoi wylacznie w polu Status: widoku
+    # komputera. Na tym poleceniu konczy sie podobienstwo do dwoch powyzszych - tamte pisza
+    # do pol pustych, a to zakrywa zdanie, ktore trzeba pozniej odtworzyc.
+    if ($Script:StatusCzekaNaDysk -and $k.TxtKomputerStatus) {
+        $k.TxtKomputerStatus.Text = 'Łączenie' + $kropki
     }
 }
 
@@ -1659,26 +1715,86 @@ function Invoke-JezykPolacz {
 # takze po drugiej stronie okna, widok ma przyjsc TUTAJ parametrem - nigdy z listy trybu,
 # bo ta bywa przestawiona, zanim cokolwiek wroci.
 #
-# Okno wyboru jest modalne, wiec funkcja czeka na odpowiedz operatora i nie ma tu nic do
-# zrobienia w tle: samo otwarcie udzialu wraca natychmiast, a na zawartosc katalogu czeka
-# juz Eksplorator, a nie Jezyk.
+# Okno wyboru litery jest modalne, wiec funkcja czeka na odpowiedz operatora - ale na tym
+# jej praca sie KONCZY. Reszta, czyli rozmowa z serwerem, idzie w tle: to ona potrafi trwac
+# sekundy i to ona trzymala dotad watek interfejsu. Pusta odpowiedz z okna to rezygnacja,
+# a nie blad - nie zostawia sladu nigdzie.
 #
-# Wynik obslugujemy niesymetrycznie z tego samego powodu, co przy "Polacz": niepowodzenie
-# ma gdzie trafic, a powodzenie nie rusza niczego, bo otwarte okno Eksploratora jest samo
-# w sobie potwierdzeniem. Pusta odpowiedz z okna to rezygnacja, a nie blad.
+# DRUGIE KLIKNIECIE W TRAKCIE LACZENIA porzuca pierwsza probe i zaczyna od nowa, tak samo
+# jak dwa razy klikniety "Szukaj". Nie ma tu na to warunku, bo robi to Start-JezykZadanieDysku
+# - jak kazde inne zadanie w tle.
 function Invoke-JezykDyski {
-    $k = $Script:Kontrolki
     if (-not $Script:OstatniKomputer) { return }
 
     $litera = Show-JezykWyborDysku
     if (-not $litera) { return }
 
-    $wynik = Open-JezykUdzialDysku -Netbios $Script:OstatniKomputer -Litera $litera
+    # Notka PRZED uruchomieniem zadania: zapamietuje zdanie, ktore stoi teraz w polu, a tego
+    # nie da sie zrobic po tym, jak kropki juz je zakryly.
+    Set-JezykNotkeLaczenia
+    Start-JezykZadanieDysku -Netbios $Script:OstatniKomputer -Litera $litera
+}
 
-    if (-not $wynik.Udane) {
-        if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$wynik.Komunikat }
-        Set-JezykInfo 'StatusMaszyny' ([string]$wynik.Szczegoly)
+<#
+.SYNOPSIS
+    Rozstrzyga odpowiedz na probe polaczenia z udzialem - az do otwarcia go w Eksploratorze.
+
+.DESCRIPTION
+    CZTERY ZAKONCZENIA I KAZDE GASI NOTKE. Slowo "Łączenie" zostawione nad praca, ktora sie
+    skonczyla, klamie dokladnie tak samo jak zdanie nieprawdziwe - tylko odwrotnie w czasie.
+
+    PYTANIE O POSWIADCZENIA PADA WLASNIE TUTAJ i to jest cala przyczyna, dla ktorej
+    odpowiedz z tla wraca na watek interfejsu, zamiast konczyc sie w przestrzeni. Systemowe
+    okno poswiadczen rysuje sie tylko na tym watku i tylko tutaj ma rodzica; wywolane w tle
+    wstawaloby za Jezykiem albo nie wstawaloby wcale. Odpowiedz na nie jest juz ostateczna,
+    wiec petli nie ma - "potrzeba poswiadczen" nie moze przyjsc drugi raz.
+
+    POWODZENIE ZOSTAWIA ZDANIE, a nie cisze, i to jest zmiana wzgledem "Polacz". Pole Status:
+    niesie w tej chwili kropki, wiec jego dawna tresc i tak przepadla - i wlasnie dlatego "!"
+    tego panelu gasimy na tej sciezce JAWNIE: tlumaczyl komunikat, ktorego juz w polu nie ma.
+
+    Uchwyt okna czytamy przez PSObject.Properties, a nie po typie: [IntPtr]$null wywraca sie
+    na konwersji, a kontrolka w roli okna nie musi tej wlasciwosci miec.
+#>
+function Update-JezykDyskWTle {
+    param($Wynik)
+
+    $k = $Script:Kontrolki
+
+    if ($Wynik.Stan -eq 'Poswiadczenia') {
+        $uchwyt = [IntPtr]::Zero
+        $okno   = $k.Okno
+        if ($okno -and $okno.PSObject.Properties['Handle'] -and $null -ne $okno.Handle) {
+            $uchwyt = [IntPtr]$okno.Handle
+        }
+
+        $Wynik = Connect-JezykUdzialDysku -Netbios $Wynik.Netbios -Litera $Wynik.Litera `
+                                          -Uchwyt $uchwyt -Interaktywnie
     }
+
+    Set-JezykNotkeLaczenia -Wylacz
+
+    # REZYGNACJA NIE JEST BLEDEM - pole wraca tam, gdzie bylo, a "!" zostaje nietkniety.
+    # Ta sama zasada, co przy zamknieciu okna wyboru litery.
+    if ($Wynik.Stan -eq 'Anulowano') {
+        if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$Script:StatusPrzedLaczeniem }
+        return
+    }
+
+    if ($Wynik.Stan -ne 'Ok') {
+        if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$Wynik.Komunikat }
+        Set-JezykInfo 'StatusMaszyny' ([string]$Wynik.Szczegoly)
+        return
+    }
+
+    # SESJA JUZ STOI, wiec to wywolanie oddaje powloce gotowa sciezke i wraca od razu.
+    $otwarcie = Open-JezykUdzialDysku -Netbios $Wynik.Netbios -Litera $Wynik.Litera
+
+    if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$otwarcie.Komunikat }
+
+    # JEDNO WYWOLANIE NA OBIE SCIEZKI: przy powodzeniu szczegoly sa puste i "!" gasnie,
+    # przy niepowodzeniu niosa tresc wyjatku i wykrzyknik sie zapala.
+    Set-JezykInfo 'StatusMaszyny' ([string]$otwarcie.Szczegoly)
 }
 
 <#
