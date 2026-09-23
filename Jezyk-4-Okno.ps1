@@ -1,4 +1,4 @@
-﻿#  Jezyk-4-Okno - siatka okna, budowa kontrolek WinForms i zadania w tle.
+﻿# Jezyk-4-Okno - siatka okna, budowa kontrolek WinForms i zadania w tle.
 # TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM - oslania pierwsza instrukcje przed
 # zdublowanym znacznikiem BOM. Powod opisany w Kod-Jezyk.ps1.
 
