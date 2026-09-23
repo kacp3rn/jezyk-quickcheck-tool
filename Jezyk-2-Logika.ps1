@@ -249,6 +249,12 @@ function Confirm-JezykUstawienia {
         }
     }
 
+    foreach ($domena in @($Script:DomenyZDodawaniemDoGrup)) {
+        if ($domeny -notcontains $domena) {
+            $bledy += 'DomenyZDodawaniemDoGrup: "{0}" nie ma na liście Domeny - dodawanie do grup nie zadziała.' -f $domena
+        }
+    }
+
     foreach ($kontroler in @($Script:Ustawienia.Kontrolery)) {
         if (-not $kontroler) { continue }
         if (-not (Test-JezykNazwaWDomenach $kontroler $domeny)) {
@@ -2182,7 +2188,8 @@ function Get-JezykUzytkownikKomputera {
 
 <#
 .SYNOPSIS
-    Odblokowuje konto w AD. JEDYNA operacja ZAPISU w calym narzedziu.
+    Odblokowuje konto w AD. JEDNA Z DWOCH operacji ZAPISU w calym narzedziu (druga jest
+    Add-JezykKontoDoGrupy).
 
 .DESCRIPTION
     Obwarowana z dwoch stron: wolajacy sprawdza, czy domena jest dozwolona, i TUTAJ
@@ -2219,19 +2226,7 @@ function Unlock-JezykKonto {
 
     $parametry = $null
     try {
-        # Zapis idzie na EMULATOR PDC, bo to on jest autorytatywny dla blokad: nieudane
-        # uwierzytelnienia z kazdego kontrolera sa lancuchowo kierowane wlasnie tam.
-        # Zapis skierowany "gdziekolwiek" potrafi trafic na kontroler tylko do odczytu.
-        # Rozpoznanie emulatora jest opcjonalne - gdy sie nie uda, zapis idzie na domene.
-        $serwer = $Domena
-        $odczyt = @{ Identity = $Domena; Server = $Domena; ErrorAction = 'Stop' }
-        if ($Poswiadczenia) { $odczyt['Credential'] = $Poswiadczenia }
-        try {
-            $emulator = (Get-ADDomain @odczyt).PDCEmulator
-            if ($emulator -and (Test-JezykNazwaHosta $emulator)) { $serwer = $emulator }
-        }
-        catch { }
-        finally { $odczyt.Clear() }
+        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena -Poswiadczenia $Poswiadczenia
 
         # Poswiadczenia dokladane WARUNKOWO - bez nich zapis idzie na koncie, na ktorym
         # Jezyk dziala.
@@ -2274,6 +2269,271 @@ function Test-JezykWolnoOdblokowac {
     param([string]$Domena)
     if (-not $Domena) { return $false }
     return (@($Script:DomenyZOdblokowaniem) -contains $Domena.ToLower())
+}
+
+# Bliźniak powyzszego dla DRUGIEJ operacji zapisu. Osobna lista, bo odblokowanie konta
+# i zarzadzanie czlonkostwem grupy to w AD dwie niezalezne delegacje - wlaczenie jednej
+# nie moze po cichu wlaczac drugiej. Pusta lista znaczy "nigdzie" i jest wartoscia domyslna.
+function Test-JezykWolnoDodacDoGrupy {
+    param([string]$Domena)
+    if (-not $Domena) { return $false }
+    return (@($Script:DomenyZDodawaniemDoGrup) -contains $Domena.ToLower())
+}
+
+# KONTROLER, NA KTORY KIERUJEMY ZAPIS - wspolny dla obu operacji zapisu w narzedziu.
+#
+# Idzie na EMULATOR PDC. Dla blokad to on jest autorytatywny: nieudane uwierzytelnienia
+# z kazdego kontrolera sa lancuchowo kierowane wlasnie tam. Dla czlonkostwa w grupie
+# zadnego autorytetu nie ma, ale drugi powod zostaje ten sam - zapis skierowany
+# "gdziekolwiek" potrafi trafic na kontroler tylko do odczytu, ktory go nie przyjmie.
+#
+# Rozpoznanie jest OPCJONALNE: gdy sie nie uda albo nazwa nie przejdzie bialej listy,
+# oddajemy nazwe domeny i zapis idzie tam, gdzie szedlby bez tej funkcji. Nieudane
+# rozpoznanie nie ma prawa przesadzic o calej operacji - stad pusty catch, jedyny
+# dopuszczalny rodzaj: taki, ktorego wynik jest z gory nazwany wartoscia zapasowa.
+function Get-JezykSerwerDoZapisu {
+    param([string]$Domena,
+          [System.Management.Automation.PSCredential]$Poswiadczenia)
+
+    $odczyt = @{ Identity = $Domena; Server = $Domena; ErrorAction = 'Stop' }
+    if ($Poswiadczenia) { $odczyt['Credential'] = $Poswiadczenia }
+    try {
+        $emulator = (Get-ADDomain @odczyt).PDCEmulator
+        if ($emulator -and (Test-JezykNazwaHosta $emulator)) { return $emulator }
+    }
+    catch { }
+    finally { $odczyt.Clear() }
+
+    return $Domena
+}
+
+# Fraza od operatora idzie do FILTRA LDAP, czyli w miejsce, w ktorym tekst przestaje byc
+# tekstem i zaczyna byc skladnia. Metaznaki z RFC 4515 oslaniamy zapisem szesnastkowym,
+# a ODWROTNY UKOSNIK MUSI ISC PIERWSZY - inaczej oslonilibysmy wlasne oslony.
+#
+# Bialej listy znakow tu nie ma i byc nie moze: nazwy grup nosza spacje, polskie znaki
+# i nawiasy, wiec Test-JezykNazwaKonta odrzucilby wiekszosc poprawnych fraz. Zapora jest
+# inna i mocniejsza - ZAPIS NIE UZYWA TEGO TEKSTU WCALE. Do Add-JezykKontoDoGrupy wchodzi
+# nazwa wyrozniajaca oddana przez katalog, sprawdzona jeszcze raz przez Test-JezykDn.
+function Get-JezykFrazaLdap {
+    param([string]$Tekst)
+
+    $fraza = ([string]$Tekst).Trim()
+    if (-not $fraza) { return '' }
+    # 256 to duzo powyzej dlugosci nazwy grupy; chodzi o to, zeby absurdalnie dlugi tekst
+    # nie wedrowal do kontrolera.
+    if ($fraza.Length -gt 256) { return '' }
+    if ($fraza -match '[\x00-\x1F]') { return '' }
+
+    $fraza = $fraza.Replace('\', '\5c')
+    $fraza = $fraza.Replace('*', '\2a')
+    $fraza = $fraza.Replace('(', '\28')
+    $fraza = $fraza.Replace(')', '\29')
+    return $fraza
+}
+
+<#
+.SYNOPSIS
+    Rozpoznaje nazwe grupy w AD - to, co robi przycisk "Sprawdz nazwy" w oknie wyboru
+    obiektow AD.
+
+.DESCRIPTION
+    DWA PRZEBIEGI, drugi wylacznie wtedy, gdy pierwszy nic nie znalazl.
+
+    (1) anr= to ta sama droga, ktora idzie "Sprawdz nazwy": rozpoznanie niejednoznacznej
+        nazwy, w kontrolerze zoptymalizowane i oparte o indeks. Dopasowuje OD POCZATKU
+        wartosci.
+
+    (2) (cn=*fraza*) dopasowuje fragment w SRODKU nazwy. Nazwy grup zaczynaja sie od
+        przedrostka w rodzaju GG_ czy DL_, ktorego nikt nie przepisuje, zeby dojsc do
+        slowa niosacego sens - bez tego przebiegu "Kadry" nie znalazloby "GG_Kadry",
+        czyli przycisk nie dzialalby dokladnie tam, gdzie jest potrzebny.
+
+        TEN PRZEBIEG JEST DROGI i nie ma sensu udawac, ze nie jest: gwiazdka na poczatku
+        wartosci nie korzysta z indeksu, wiec kontroler idzie obiekt po obiekcie. Od
+        pulapki z numerem telefonu rozni go jedna rzecz - Get-ADGroup zawezą przeszukanie
+        do klasy group, a ta jest indeksowana, wiec mowa o tysiacach obiektow zamiast
+        dziesiatkach tysiecy. Prace kontrolera konczy -ResultPageSize rowny limitowi,
+        a nie licznik wynikow (-ResultSetSize ucina tylko odpowiedz).
+
+    Nieudane szukanie MUSI BYC ODROZNIALNE od pustego wyniku, a "jest ich za wielu" to
+    trzecia rzecz, nie odmiana zadnej z tamtych dwoch - stad Przerwane i ZaDuzo osobno.
+#>
+function Find-JezykGrupyPoNazwie {
+    param([string]$Fraza, [int]$Limit, [string]$Serwer)
+
+    $wynik = [pscustomobject]@{ Trafienia = @(); ZaDuzo = $false; Przerwane = $false; Powod = '' }
+
+    $szukana = Get-JezykFrazaLdap $Fraza
+    if (-not $szukana) { return $wynik }
+    if ($Limit -lt 1)  { return $wynik }
+
+    # Napisy skladane DO ZMIENNYCH: przecinek w argumencie metody nalezalby do listy
+    # argumentow, a nie do tablicy dla operatora -f.
+    $filtrAnr = '(anr={0})' -f $szukana
+    $filtrCn  = '(cn=*{0}*)' -f $szukana
+
+    foreach ($filtr in @($filtrAnr, $filtrCn)) {
+        # Limit + 1 po to, zeby odroznic "dokladnie tyle" od "wiecej niz tyle" - ta sama
+        # sztuczka, co przy wyszukiwaniu po numerze telefonu.
+        $zapytanie = @{ LDAPFilter = $filtr; Properties = 'Name'
+                        ResultPageSize = ($Limit + 1); ResultSetSize = ($Limit + 1)
+                        ErrorAction = 'Stop' }
+        if ($Serwer) { $zapytanie['Server'] = $Serwer }
+
+        try {
+            $znalezione = @(Get-ADGroup @zapytanie)
+        }
+        catch {
+            $opis = Get-JezykOpisBledu $_ 'Szukanie grupy w AD'
+            $wynik.Przerwane = $true
+            $wynik.Powod     = $opis.Krotki
+            return $wynik
+        }
+
+        $pozycje = @()
+        foreach ($grupa in $znalezione) {
+            $nazwa = [string]$grupa.Name
+            $dn    = [string]$grupa.DistinguishedName
+            # Pozycja bez nazwy rozjechalaby numeracje w oknie wyboru, a pozycja bez nazwy
+            # wyrozniajacej nie ma czego zapisac. Odsiew stoi TUTAJ, zeby wolajacy mogl
+            # mapowac zaznaczenie na liste wprost, indeks w indeks.
+            if (-not $nazwa -or -not $dn) { continue }
+            $pozycje += [pscustomobject]@{ Nazwa = $nazwa; Dn = $dn }
+        }
+
+        if ($pozycje.Count -eq 0) { continue }
+
+        if ($pozycje.Count -gt $Limit) {
+            $wynik.ZaDuzo    = $true
+            $wynik.Trafienia = @($pozycje[0..($Limit - 1)])
+        }
+        else {
+            $wynik.Trafienia = @($pozycje)
+        }
+        return $wynik
+    }
+
+    return $wynik
+}
+
+<#
+.SYNOPSIS
+    Dopisuje konto do grupy AD. DRUGA z dwoch operacji ZAPISU w calym narzedziu.
+
+.DESCRIPTION
+    Obwarowana tak samo jak odblokowanie: wolajacy sprawdza, czy domena jest dozwolona,
+    i TUTAJ sprawdzamy to ponownie - warunek "tylko ta domena" opiera sie na stanie
+    interfejsu, a stan interfejsu da sie rozspojnic.
+
+    GRUPE WSKAZUJE NAZWA WYROZNIAJACA ODDANA PRZEZ KATALOG, nigdy tekst wpisany przez
+    operatora. Tekst z pola sluzy wylacznie do szukania (Find-JezykGrupyPoNazwie); to,
+    co wchodzi do zapisu, Jezyk dostal z AD i sprawdza jeszcze raz przez Test-JezykDn.
+
+    Nie rzuca wyjatkiem: odmowa uprawnien i "konto juz jest w tej grupie" to normalne
+    odpowiedzi AD, nie awarie narzedzia.
+#>
+function Add-JezykKontoDoGrupy {
+    param([string]$Login, [string]$Dn, [string]$GrupaDn, [string]$Domena,
+          [System.Management.Automation.PSCredential]$Poswiadczenia)
+
+    # Ten sam ksztalt, co Unlock-JezykKonto - okno renderuje oba wyniki jedna droga.
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = '' }
+
+    # Najpierw ksztalt danych, potem uprawnienie: wartosc o zlym ksztalcie nie ma prawa
+    # dojsc nawet do sprawdzania listy domen.
+    if (-not (Test-JezykNazwaKonta $Login)) {
+        $wynik.Komunikat = 'Nieprawidłowa nazwa konta - dodanie do grupy przerwane.'
+        return $wynik
+    }
+
+    if (-not (Test-JezykNazwaHosta $Domena)) {
+        $wynik.Komunikat = 'Nieprawidłowa nazwa domeny - dodanie do grupy przerwane.'
+        return $wynik
+    }
+
+    if (-not (Test-JezykDn $GrupaDn)) {
+        $wynik.Komunikat = 'Nieprawidłowa nazwa wyróżniająca grupy - dodanie do grupy przerwane.'
+        return $wynik
+    }
+
+    if (-not (Test-JezykWolnoDodacDoGrupy $Domena)) {
+        $wynik.Komunikat = 'Dodawanie do grup nie jest dozwolone w domenie {0}.' -f $Domena
+        return $wynik
+    }
+
+    $parametry = $null
+    try {
+        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena -Poswiadczenia $Poswiadczenia
+
+        # Konto wskazujemy jego wlasna nazwa wyrozniajaca, gdy ja mamy: jest jednoznaczna
+        # i nie kaze kontrolerowi rozwiazywac nazwy. Login zostaje droga zapasowa, bo Dn
+        # bywa pusty na czesci sciezek odczytu.
+        $czlonek = if (Test-JezykDn $Dn) { $Dn } else { $Login }
+
+        # Poswiadczenia dokladane WARUNKOWO - bez nich zapis idzie na koncie, na ktorym
+        # Jezyk dziala.
+        $parametry = @{ Identity = $GrupaDn; Members = $czlonek; Server = $serwer
+                        Confirm = $false; ErrorAction = 'Stop' }
+        if ($Poswiadczenia) { $parametry['Credential'] = $Poswiadczenia }
+
+        Add-ADGroupMember @parametry
+
+        $wynik.Udane     = $true
+        $wynik.Serwer    = $serwer
+        $wynik.Komunikat = 'Konto "{0}" zostało dodane do grupy.' -f $Login
+        $wynik.Szczegoly = 'Zapis przyjął kontroler: {0}' -f $serwer
+    }
+    catch {
+        # Prawo zarzadzania czlonkostwem jest OSOBNE od prawa odczytu, a "konto juz jest
+        # w tej grupie" to odpowiedz, nie awaria - obie maja trafic do pola, a nie
+        # przewrocic okna.
+        $opis = Get-JezykOpisBledu $_ ('Dodanie konta {0} do grupy' -f $Login)
+        $wynik.Komunikat = $opis.Krotki
+        $wynik.Szczegoly = $opis.Szczegoly
+    }
+    finally {
+        if ($parametry) { $parametry.Clear() }
+
+        # Ten sam powod, co przy odblokowaniu: $Error trzyma rekord bledu razem
+        # z InvocationInfo.BoundParameters, czyli z obiektem PSCredential.
+        $Error.Clear()
+    }
+
+    return $wynik
+}
+
+# Ponowny odczyt czlonkostw PO ZAPISIE, z kontrolera, KTORY TEN ZAPIS PRZYJAL. Jedno
+# konto i jeden atrybut, wiec to najtansze zapytanie w narzedziu - a jest po co: lista
+# w oknie ma pokazywac stan katalogu, a nie zalozenie okna o tym, co przed chwila wyslalo.
+#
+# Nieudany odczyt NIE UNIEWAZNIA ZAPISU, wiec wychodzi osobnym polem: wolajacy musi umiec
+# powiedziec "grupa zostala dodana, ale listy nie udalo sie odswiezyc". Zgubienie tej
+# roznicy znaczyloby, ze operator dodaje te sama grupe drugi raz.
+function Get-JezykGrupyKonta {
+    param([string]$Login, [string]$Serwer)
+
+    $wynik = [pscustomobject]@{ Grupy = @(); Udane = $false; Szczegoly = '' }
+
+    if (-not (Test-JezykNazwaKonta $Login)) {
+        $wynik.Szczegoly = 'Nieprawidłowa nazwa konta - grup nie odczytano.'
+        return $wynik
+    }
+
+    $zapytanie = @{ Identity = $Login; Properties = 'MemberOf'; ErrorAction = 'Stop' }
+    if ($Serwer -and (Test-JezykNazwaHosta $Serwer)) { $zapytanie['Server'] = $Serwer }
+
+    try {
+        $konto = Get-ADUser @zapytanie
+        $wynik.Grupy = @(Get-JezykNazwyGrup $konto.MemberOf)
+        $wynik.Udane = $true
+    }
+    catch {
+        $opis = Get-JezykOpisBledu $_ ('Odczyt grup konta {0}' -f $Login)
+        $wynik.Szczegoly = $opis.Szczegoly
+    }
+
+    return $wynik
 }
 
 <#
