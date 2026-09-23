@@ -113,8 +113,13 @@ function Set-JezykKolorPola {
 function Clear-JezykKonto {
     $k = $Script:Kontrolki
 
+    # WYCZYSZCZONY WIDOK NIE WIE O KONCIE NIC - i werdykt ma to powiedziec wprost. Stal
+    # tu napis "Konto zablokowane": szary, wiec kolorem o niczym nieprzesadzajacy, ale
+    # nazywajacy JEDEN z mozliwych stanow konta, ktorego nikt jeszcze nie sprawdzal.
+    # Widac to bylo przy kazdej zmianie domeny i trybu - obie ida przez Set-JezykWidok,
+    # a ten czysci widok i nie wpisuje potem zadnego wyniku.
     $k.WerdyktBox.Checked   = $false
-    $k.Werdykt.Text         = 'Konto zablokowane'
+    $k.Werdykt.Text         = 'Nie sprawdzono'
     Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
     $k.ChkAktywne.Checked     = $false
