@@ -228,6 +228,13 @@ $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 # DPI 125-150%, tak samo jak dotad rosla komorka mapy.
 $Script:BokIkonyMotywu    = 18   # MINIMALNY bok ikonki - rosnie do wysokosci linii pisma
 
+# WYSOKOSC PASA PODPISU - wspolne pudelko ikonki motywu i obu napisow w dolnym rogu.
+# WARTOSC STARTOWA DLA ZWYKLEJ CZCIONKI, tak samo jak przy $Script:PanelBezListy wyzej:
+# New-JezykForm przelicza ja z faktycznej czcionki okna (wieksze z dwojga - bok ikonki
+# albo linia pisma). Stala musi tu stac, bo wysokosc okna liczy sie z niej jeszcze przed
+# zbudowaniem okna, a brak wartosci dalby w arytmetyce po cichu zero.
+$Script:WysokoscPasaPodpisu = $Script:BokIkonyMotywu
+
 # Przerwa miedzy pudelkiem ikonki a pudelkiem napisu z wersja. Widac wiecej: napis zaczyna
 # sie za wlasnym marginesem etykiety, a figura konczy przed krawedzia swojego kwadratu -
 # razem wychodzi okolo pieciu-szesciu pikseli, czyli mniej wiecej szerokosc spacji.
@@ -902,6 +909,55 @@ function Get-JezykPietroBezListy {
     $Script:MarginesGorny + $Script:PasekDomeny + $WysokoscPola + $Script:PrzerwaWierszy
 }
 
+<#
+.SYNOPSIS
+    Wysokosc obszaru roboczego okna dla panelu o podanej gornej krawedzi i wysokosci.
+
+.DESCRIPTION
+    JEDNA ARYTMETYKA NA OBA WIDOKI. Kazdy z paneli ma inna gorna krawedz (konto stoi pod
+    lista wyboru, komputer bez niej) i inna wysokosc, a okno konczy sie pod pasem podpisu,
+    ktory lezy PRZERWE WIERSZA pod ostatnim polem - tym samym odstepem, co miedzy wierszami.
+    Dotad ta liczba byla wpisana w New-JezykForm raz, dla widoku wyzszego; druga kopia dla
+    drugiego widoku rozjechalaby sie przy pierwszej zmianie siatki.
+
+    Koncowe "+ 2" to dolny margines pasa - ta sama dwojka, co przy stawianiu podpisu
+    w Set-JezykWysokoscOkna.
+#>
+function Get-JezykWysokoscOkna {
+    param([int]$GoraPanelu, [int]$WysokoscPanelu)
+
+    $GoraPanelu + $WysokoscPanelu + $Script:PrzerwaWierszy + $Script:WysokoscPasaPodpisu + 2
+}
+
+<#
+.SYNOPSIS
+    Przycina wysokosc okna do obszaru roboczego ekranu.
+
+.DESCRIPTION
+    Siatka rosnie razem ze skalowaniem DPI, wiec przy 150% i ekranie 1080p okno moze nie
+    zmiescic sie w obszarze roboczym - a wtedy dolne pola bylyby NIE DO OBEJRZENIA, bo
+    kontrolki stoja na sztywnych wspolrzednych. Zapora dziala w parze z $form.AutoScroll:
+    WinForms pokazuje pasek przewijania WYLACZNIE wtedy, gdy kontrolki wychodza poza obszar
+    roboczy okna, wiec okno trzeba przyciac, zeby pasek mial sie kiedy pojawic.
+
+    Zapas 60 px na ramke okna i pasek tytulu - ClientSize ich nie obejmuje.
+
+    CALOSC POD TRY, bo to zabezpieczenie, a nie warunek dzialania: gdyby odczyt rozmiaru
+    ekranu zawiodl, okno ma dostac wysokosc policzona z siatki. Ten sam catch przepuszcza
+    zestaw weryfikacyjny, ktory typow okienkowych nie ma wcale.
+#>
+function Get-JezykWysokoscWEkranie {
+    param([int]$Wysokosc)
+
+    try {
+        $maksWysokosc = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height - 60
+        if ($maksWysokosc -gt 200 -and $Wysokosc -gt $maksWysokosc) { return $maksWysokosc }
+    }
+    catch { }
+
+    $Wysokosc
+}
+
 # Wysokosc pola tekstowego przy podanej czcionce. Styk z systemem, tak jak
 # Get-JezykSzerokoscStrzalki: PreferredHeight liczy WinForms z czcionki i z grubosci ramki,
 # czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole. Od tej jednej
@@ -1407,6 +1463,44 @@ function Set-JezykPrzyciskPrzyEtykiecie {
     $Przycisk.Top  = $Etykieta.Top + [int](($wysokoscLinii - $Przycisk.Height) / 2)
 }
 
+<#
+.SYNOPSIS
+    Nadaje oknu wysokosc pokazanego panelu i stawia pod nim pas podpisu.
+
+.DESCRIPTION
+    OKNO KONCZY SIE POD TYM PANELEM, KTORY WIDAC. Dotad rozmiar byl staly i wymierzony
+    widokiem wyzszym, czyli kontem - w trybie komputera zostawalo pod polem "Status:"
+    kilkaset pikseli pustki, a podpis autora stal oderwany na samym dole.
+
+    RUSZAMY WYLACZNIE ClientSize, nigdy Location: gorna krawedz okna ma zostac tam, gdzie
+    byla, wiec przy zmianie trybu jedzie sama dolna. Inaczej pasek tytulu i oba gorne
+    wiersze skakalyby po ekranie przy kazdym przelaczeniu.
+
+    PAS PODPISU JEDZIE RAZEM Z DOLEM. Lezy POZA panelami, wiec widac go w obu trybach -
+    i w obu ma lezec dokladnie $Script:PrzerwaWierszy pod ostatnim polem. Jego pion liczy
+    sie TUTAJ i tylko tutaj: druga kopia wzoru rozjechalaby sie przy pierwszej zmianie
+    wysokosci pasa, a rozjazd o kilka pikseli na dole okna jest dokladnie tym, czego nikt
+    nie zauwazy w kodzie.
+
+    PODPIS LICZY SIE Z WYSOKOSCI NIEPRZYCIETEJ, a przyciecie do ekranu dotyczy samego
+    okna: przy oknie wyzszym od ekranu pas ma zostac pod panelem i dac sie doscrollowac,
+    a nie wskoczyc na pole "Status:".
+#>
+function Set-JezykWysokoscOkna {
+    param([int]$GoraPanelu, [int]$WysokoscPanelu)
+
+    $k        = $Script:Kontrolki
+    $wysokosc = Get-JezykWysokoscOkna $GoraPanelu $WysokoscPanelu
+
+    $goraPasa = $wysokosc - $Script:WysokoscPasaPodpisu - 2
+    $k.PodpisAutor.Top   = $goraPasa
+    $k.PodpisWersja.Top  = $goraPasa
+    $k.PrzyciskMotyw.Top = $goraPasa
+
+    $k.Okno.ClientSize = [System.Drawing.Size]::new($Script:SzerokoscOkna,
+                                                    (Get-JezykWysokoscWEkranie $wysokosc))
+}
+
 # Pokazuje widok wlasciwy dla wybranego trybu. Przy kazdej zmianie czyscimy OBA widoki -
 # bez tego po przejsciu z konta na komputer zostalyby dane poprzedniego wyszukania,
 # opisane etykietami z zupelnie innego widoku.
@@ -1435,12 +1529,17 @@ function Set-JezykWidok {
     $k.PanelKonto.Visible    = (-not $komputer)
     $k.PanelKomputer.Visible = $komputer
 
-    # Przesuwamy wylacznie panel. Rozmiaru okna NIE ruszamy - jest staly, ustalony raz
-    # w New-JezykForm, inaczej okno skakaloby wysokoscia przy kazdej zmianie trybu.
+    # PANEL I WYSOKOSC OKNA RAZEM. Panel komputera ma trzy wiersze mniej niz panel konta
+    # i stoi o pas listy wyboru wyzej, wiec okno wymierzone kontem zostawialo pod nim
+    # kilkaset pikseli pustki. Wysokosc bierzemy z KONTROLKI panelu, a nie liczymy drugi
+    # raz z wierszy - obie dostaly ja w New-JezykForm z tej samej siatki, a druga kopia
+    # arytmetyki rozjechalaby sie przy dolozeniu pola.
     if ($komputer) {
         $k.PanelKomputer.Location = [System.Drawing.Point]::new(0, $gora)
+        Set-JezykWysokoscOkna $gora $k.PanelKomputer.Height
     } else {
         $k.PanelKonto.Location = [System.Drawing.Point]::new(0, $gora)
+        Set-JezykWysokoscOkna $gora $k.PanelKonto.Height
     }
 }
 
@@ -2909,8 +3008,10 @@ function Show-JezykWyborDysku {
     Buduje okno, wypelnia rejestr kontrolek i podpina zdarzenia.
 
 .DESCRIPTION
-    Rozmiar okna jest STALY i wyliczany z wymiaru wyzszego z widokow - dzieki temu okno nie
-    skacze przy zmianie trybu. Widok komputera zostawia u dolu puste miejsce; to swiadoma cena.
+    Szerokosc okna jest stala, a WYSOKOSC IDZIE ZA POKAZANYM PANELEM - nadaje ja
+    Set-JezykWysokoscOkna, wolana i stad, i z kazdej zmiany trybu. Dotad rozmiar byl staly
+    i wymierzony widokiem wyzszym, czyli kontem; widok komputera zostawial u dolu kilkaset
+    pikseli pustki.
 #>
 function New-JezykForm {
 
@@ -2966,45 +3067,23 @@ function New-JezykForm {
     # o punkt mniejsza niz w oknie, a z dwojga - kwadrat ikonki motywu albo linia pisma -
     # bierzemy WIEKSZE: inaczej albo ikonka jest przyciasna, albo napis zostaje ucinany od
     # dolu przy DPI 125-150%, gdzie pismo rosnie, a wpisana na sztywno liczba by nie urosla.
-    $czcionkaPasa        = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
-    $wysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
-                                       [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
+    $czcionkaPasa               = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
+    $Script:WysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
+                                              [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
 
-    # PAS PODPISU LEZY DOKLADNIE $Script:PrzerwaWierszy POD OSTATNIM POLEM - tym samym
-    # odstepem, co miedzy wierszami. Dotad ta przerwa byla RESZTA dwoch niezaleznych
-    # arytmetyk: panel mial pod polem przerwe zapasu, a pas byl kotwiczony od DOLU okna
-    # (stala 22 px) i wypadal jeszcze szesc pikseli nizej, wiec nad podpisem stalo 14 px
-    # pustki i zadna liczba w kodzie tego nie nazywala. Koncowe "+ 2" to dolny margines
-    # pasa - ta sama dwojka, co w $lblAutor.Top nizej.
-    $wysokoscOkna   = $Script:PanelZListą + $wysokoscPanelu + $Script:PrzerwaWierszy +
-                      $wysokoscPasaPodpisu + 2
-    $form.ClientSize      = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscOkna)
-
-    # SIATKA JEST WYZSZA O JEDEN WIERSZ NIZ PRZED DOLOZENIEM ADRESU IP, a wspolrzedne rosna
-    # razem ze skalowaniem DPI. Przy 150% i ekranie 1080p okno moze nie zmiescic sie
-    # w obszarze roboczym - i wtedy dolne pola byly by NIE DO OBEJRZENIA, bo rozmiar jest
-    # staly, a kontrolki stoja na sztywnych wspolrzednych.
+    # WYSOKOSCI OKNA NIE MA TUTAJ - nadaje ja Set-JezykWysokoscOkna na koncu tej funkcji,
+    # tak samo jak przy kazdej pozniejszej zmianie trybu. Dwie arytmetyki wysokosci
+    # rozjechalyby sie przy pierwszej zmianie siatki, a okno wstawaloby w innym rozmiarze,
+    # niz dostaje po przelaczeniu na ten sam widok.
     #
-    # AutoScroll jest zapora na ten przypadek i nie kosztuje nic, gdy okno sie miesci:
-    # WinForms pokazuje pasek przewijania WYLACZNIE wtedy, gdy kontrolki wychodza poza
-    # obszar roboczy okna. Wysokosc przycinamy do obszaru roboczego ekranu, zeby pasek mial
-    # sie kiedy pojawic - bez tego okno po prostu wystawaloby poza ekran.
-    #
-    # Calosc pod try, bo to zabezpieczenie, nie warunek dzialania: gdyby odczyt rozmiaru
-    # ekranu zawiodl, okno ma wystartowac w rozmiarze policzonym z siatki.
+    # AutoScroll jest zapora na okno wyzsze od ekranu i nie kosztuje nic, gdy okno sie
+    # miesci: WinForms pokazuje pasek przewijania WYLACZNIE wtedy, gdy kontrolki wychodza
+    # poza obszar roboczy okna. Wysokosc przycina Get-JezykWysokoscWEkranie, zeby pasek
+    # mial sie kiedy pojawic - bez tego okno po prostu wystawaloby poza ekran.
     $form.AutoScroll = $true
-    try {
-        $obszarEkranu = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height
-        # Zapas na ramke okna i pasek tytulu - ClientSize ich nie obejmuje.
-        $maksWysokosc = $obszarEkranu - 60
-        if ($maksWysokosc -gt 200 -and $wysokoscOkna -gt $maksWysokosc) {
-            $form.ClientSize = [System.Drawing.Size]::new($Script:SzerokoscOkna, $maksWysokosc)
-        }
-    }
-    catch { }
 
-    # Staly rozmiar, bo kontrolki sa pozycjonowane na sztywno i przy rozciaganiu zostalyby
-    # w miejscu.
+    # Nierozciagliwa ramka, bo kontrolki sa pozycjonowane na sztywno i przy rozciaganiu
+    # zostalyby w miejscu. Wysokosc zmienia sam program, przy zmianie trybu.
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $form.MaximizeBox     = $false
     $form.MinimizeBox     = $true
@@ -3377,7 +3456,8 @@ function New-JezykForm {
     Set-JezykWyglad $pnlKomputer 'Okno' -Rejestruj
     # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
     # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
-    # zostac - okno ma staly rozmiar, a widok komputera odpowiada na mniej pytan.
+    # zostac - widok komputera odpowiada na mniej pytan, a okno kurczy sie razem z nim
+    # (Set-JezykWysokoscOkna czyta wysokosc wprost stad).
     # Bez zapasu pod ostatnim polem - ta sama arytmetyka, co w panelu konta wyzej.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
                                                      ($kompWiersz5 + $Script:OdstepPodEtykieta +
@@ -3501,12 +3581,16 @@ function New-JezykForm {
                                      $lblKompStatus, $txtKompStatus, $btnInfoStatusMaszyny))
 
     # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA. Wysokosc
-    # pasa ($wysokoscPasaPodpisu) i jego czcionka sa policzone NA POCZATKU tej funkcji,
-    # bo z tej samej liczby bierze sie wysokosc okna - dwie kopie rozjechalyby sie przy
-    # pierwszej zmianie i podpis wyladowalby obok dolnej krawedzi.
+    # pasa ($Script:WysokoscPasaPodpisu) i jego czcionka sa policzone NA POCZATKU tej
+    # funkcji, bo z tej samej liczby bierze sie wysokosc okna - dwie kopie rozjechalyby sie
+    # przy pierwszej zmianie i podpis wyladowalby obok dolnej krawedzi.
     # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
+    #
+    # PION ZEROWY, jak przy etykietach gornego pasa: dol okna zmienia sie razem z trybem,
+    # wiec pas podpisu dostaje wspolrzedna dopiero od Set-JezykWysokoscOkna - i tam stoi
+    # jedyna kopia tego wzoru.
     $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) `
-                                            $Script:Margines ($wysokoscOkna - $wysokoscPasaPodpisu - 2)
+                                            $Script:Margines 0
     Set-JezykKolorPola $lblAutor 'Nieznany'
     $lblAutor.Font      = $czcionkaPasa
 
@@ -3532,7 +3616,7 @@ function New-JezykForm {
     # BOK Z WYSOKOSCI PASA, nie ze stalej: pudelko ikonki ma byc takie samo, jak pudelko
     # obu napisow - inaczej nie da sie ich postawic na jednej linii pisma.
     $btnMotyw           = New-Object System.Windows.Forms.Button
-    $btnMotyw.Size      = [System.Drawing.Size]::new($wysokoscPasaPodpisu, $wysokoscPasaPodpisu)
+    $btnMotyw.Size      = [System.Drawing.Size]::new($Script:WysokoscPasaPodpisu, $Script:WysokoscPasaPodpisu)
     $btnMotyw.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $btnMotyw.FlatAppearance.BorderSize = 0
     $btnMotyw.TabStop   = $false
@@ -3581,8 +3665,8 @@ function New-JezykForm {
     #
     # Musi padac PRZED dosuwaniem do prawej: zdejmuje AutoSize i nadaje rozmiar, a
     # dosuwanie czyta juz Width.
-    Set-JezykSrodekTekstu $lblAutor  $wysokoscPasaPodpisu
-    Set-JezykSrodekTekstu $lblWersja $wysokoscPasaPodpisu
+    Set-JezykSrodekTekstu $lblAutor  $Script:WysokoscPasaPodpisu
+    Set-JezykSrodekTekstu $lblWersja $Script:WysokoscPasaPodpisu
 
     # Napis z wersja dosuwamy do prawego marginesu DOPIERO TUTAJ i z tego samego powodu,
     # ktory opisuje komentarz nad ta sekcja: New-JezykEtykieta wlacza AutoSize, a etykieta
@@ -3830,6 +3914,10 @@ function New-JezykForm {
         StrzalkaListyKont = $strzWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
+        # Pas podpisu - Set-JezykWysokoscOkna zjezdza z nim za dolna krawedzia okna przy
+        # kazdej zmianie trybu, wiec musi go widziec z rejestru.
+        PodpisAutor   = $lblAutor
+        PodpisWersja  = $lblWersja
         PrzyciskMotyw = $btnMotyw
 
         WerdyktBox        = $chkWerdykt
@@ -4028,6 +4116,13 @@ function New-JezykForm {
     foreach ($lista in @($cmbDomena, $cmbTryb, $cmbWynik)) {
         $lista.Add_SizeChanged({ Update-JezykOprawaList })
     }
+
+    # WYSOKOSC OKNA I PION PASA PODPISU - tym samym wywolaniem, co przy kazdej pozniejszej
+    # zmianie trybu, wiec okno wstaje dokladnie w tym rozmiarze, ktory dostaje po powrocie
+    # na ten sam widok. WIDOK PODAJEMY JAWNIE: startowym trybem jest konto, a wolajacy
+    # zawsze wie, czyj panel renderuje - zgadywanie ze stanu interfejsu jest tu pulapka
+    # opisana przy Set-JezykWidok.
+    Set-JezykWysokoscOkna $Script:PanelZListą $pnlKonto.Height
 
     # MOTYW NA SAMYM KONCU, gdy wszystkie kontrolki maja juz swoje role. Wczesniej czesc
     # z nich jeszcze nie istnieje, a nieprzemalowana kontrolka nie zglasza sie niczym -
