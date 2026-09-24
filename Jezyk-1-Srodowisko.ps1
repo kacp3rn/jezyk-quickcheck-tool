@@ -357,16 +357,21 @@ $Script:Ustawienia = @{
         'zolw.pl'
     )
 
-    # Domeny, w ktorych wolno DOPISAC KONTO DO GRUPY z okna "Grupy AD" - druga operacja
-    # ZAPISU. Pusta lista = wiersza dodawania nie ma w zadnej domenie i to jest wartosc
-    # domyslna.
+    # Domeny, w ktorych wolno ZARZADZAC CZLONKOSTWEM GRUP z okna "Grupy AD" - czyli
+    # dopisac konto do grupy i usunac je z grupy. Pusta lista = panelu zarzadzania nie ma
+    # w zadnej domenie.
     #
-    # OSOBNA LISTA, A NIE PONOWNE UZYCIE DomenyZOdblokowaniem. W AD odblokowanie konta
-    # i zarzadzanie czlonkostwem grupy to dwie niezalezne delegacje, nadawane osobno
-    # i czesto komu innemu. Jedna lista dla obu znaczylaby, ze wlaczenie jednej operacji
-    # po cichu wlacza druga - a przycisk obiecywalby prawo, ktorego konto operatora
-    # w tej domenie nie ma.
-    DomenyZDodawaniemDoGrup = @()
+    # JEDNA LISTA NA OBA KIERUNKI, bo w AD to jedno prawo: kto moze zmieniac atrybut
+    # member grupy, ten moze i dopisac, i usunac. Rozbicie na dwie listy obiecywaloby
+    # rozroznienie, ktorego katalog nie robi.
+    #
+    # OSOBNA OD DomenyZOdblokowaniem. Odblokowanie konta i zarzadzanie czlonkostwem to
+    # dwie niezalezne delegacje, nadawane osobno i czesto komu innemu. Jedna lista dla obu
+    # znaczylaby, ze wlaczenie jednej operacji po cichu wlacza druga - a przycisk
+    # obiecywalby prawo, ktorego konto operatora w tej domenie nie ma.
+    DomenyZZarzadzaniemGrupami = @(
+        'jezyk.pl'
+    )
 
     # Ogranicza obejscie kontrolerow do wypisanych maszyn. Pusta lista = Jezyk pyta o nie
     # samo AD. Kazda nazwa musi nalezec do jednej z domen wyzej.
@@ -422,7 +427,7 @@ $Script:Ustawienia = @{
 }
 
 # Normalizacja wszystkich trzech list: male litery i bez spacji na brzegach. Od tego zalezy
-# porownanie w Test-JezykWolnoOdblokowac i w Test-JezykWolnoDodacDoGrupy - bez niej wpis
+# porownanie w Test-JezykWolnoOdblokowac i w Test-JezykWolnoZarzadzacGrupami - bez niej wpis
 # "ZOLW.PL" nie zgadzalby sie z domena wybrana w oknie i przycisk po cichu przestalby
 # dzialac.
 $Script:Domeny = @($Script:Ustawienia.Domeny |
@@ -433,9 +438,9 @@ $Script:DomenyZOdblokowaniem = @($Script:Ustawienia.DomenyZOdblokowaniem |
                                  ForEach-Object { ([string]$_).Trim().ToLower() } |
                                  Where-Object { $_ })
 
-$Script:DomenyZDodawaniemDoGrup = @($Script:Ustawienia.DomenyZDodawaniemDoGrup |
-                                    ForEach-Object { ([string]$_).Trim().ToLower() } |
-                                    Where-Object { $_ })
+$Script:DomenyZZarzadzaniemGrupami = @($Script:Ustawienia.DomenyZZarzadzaniemGrupami |
+                                       ForEach-Object { ([string]$_).Trim().ToLower() } |
+                                       Where-Object { $_ })
 
 # Zadnej wartosci zapasowej: brak listy jest brakiem listy i konczy sie komunikatem.
 $Script:DomenaAD = if ($Script:Domeny.Count) { $Script:Domeny[0] } else { '' }
@@ -708,10 +713,10 @@ function Get-JezykOpisKonfiguracji {
         'Odblokowanie konta: wyłączone we wszystkich domenach'
     }
 
-    $wiersze += if (@($Script:DomenyZDodawaniemDoGrup).Count) {
-        'Dodawanie do grup AD dozwolone w: {0}' -f (@($Script:DomenyZDodawaniemDoGrup) -join ', ')
+    $wiersze += if (@($Script:DomenyZZarzadzaniemGrupami).Count) {
+        'Zarządzanie grupami AD dozwolone w: {0}' -f (@($Script:DomenyZZarzadzaniemGrupami) -join ', ')
     } else {
-        'Dodawanie do grup AD: wyłączone we wszystkich domenach'
+        'Zarządzanie grupami AD: wyłączone we wszystkich domenach'
     }
 
     $wiersze += if (@($Script:Ustawienia.Kontrolery).Count) {

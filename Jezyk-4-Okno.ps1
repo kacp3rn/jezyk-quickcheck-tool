@@ -2593,33 +2593,58 @@ function Get-JezykTytulGrup {
     FRAGMENT W DOWOLNYM MIEJSCU, a nie od poczatku nazwy. Nazwy grup zaczynaja sie od przedrostka
     typu "GG_" albo "DL_", ktorego nikt nie chce przepisywac, zeby dojsc do slowa niosacego sens.
 
-    NUMER LICZY SIE PO ODSIANIU, wiec widoczne pozycje zawsze ida 1, 2, 3... Ostatni numer jest
-    dzieki temu od razu liczba trafien. Numer z pelnej listy nie powiedzialby nic komus, kto tej
-    pelnej listy juz nie widzi.
+    ODDAJE PARY, A NIE GOTOWE NAPISY - i to jest tu rzecz najwazniejsza. Okno usuwa konto
+    z grupy ZAZNACZONEJ NA LISCIE, czyli odwzorowuje numer pozycji na grupe; gdyby ta funkcja
+    oddawala same napisy, wolajacy musialby odtworzyc to odwzorowanie drugi raz i przy
+    pierwszej zmianie filtra usunieto by konto z INNEJ grupy niz zaznaczona. Numeracja stoi
+    osobno, w Get-JezykWierszeGrup, i jedzie po TEJ SAMEJ tablicy.
 
-    ODSIEW PUSTYCH STOI TUTAJ, a nie u wolajacego. @($null) to w PowerShellu tablica
-    JEDNOELEMENTOWA, wiec pusty wpis dokladalby do listy ponumerowany, pusty wiersz.
+    ODSIEW PUSTYCH I NORMALIZACJA STOJA TUTAJ, a nie u wolajacego: Get-JezykParyGrup przyjmuje
+    i pary, i same nazwy, wiec ta sama droga obsluguje liste grup konta i trafienia z AD.
+    @($null) to w PowerShellu tablica JEDNOELEMENTOWA, wiec pusty wpis dokladalby do listy
+    ponumerowany, pusty wiersz.
 #>
 function Select-JezykGrupyDoPokazania {
-    param([string[]]$Grupy, [string]$Fraza)
+    param([object[]]$Grupy, [string]$Fraza)
 
     # JEDNA PISOWNIA - patrz Weryfikacja/spojnosc.ps1: $fraza i $Fraza to ta sama zmienna.
     $Fraza = ([string]$Fraza).Trim()
     $wynik = @()
-    $nr    = 0
 
-    foreach ($grupa in @($Grupy | Where-Object { $_ })) {
-        if ($Fraza -and ($grupa.IndexOf($Fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+    foreach ($grupa in @(Get-JezykParyGrup $Grupy)) {
+        $nazwa = [string]$grupa.Nazwa
+        if ($Fraza -and ($nazwa.IndexOf($Fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
             continue
         }
-        $nr++
-        $wynik += '{0}. {1}' -f $nr, $grupa
+        $wynik += $grupa
     }
 
     # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice w wyniku, wiec
     # przy zerze trafien nie wyjdzie stad nic (i @() u wolajacego da Count 0), a przy jednym -
-    # sam napis. Owiniecie @() musi stac na miejscu wywolania.
+    # sam obiekt. Owiniecie @() musi stac na miejscu wywolania.
     return @($wynik)
+}
+
+# NUMERACJA W JEDNYM MIEJSCU. Widoczne pozycje zawsze ida 1, 2, 3..., wiec ostatni numer jest
+# od razu liczba trafien; numer z pelnej listy nie powiedzialby nic komus, kto tej pelnej listy
+# juz nie widzi. Funkcja jest wspolna dla listy grup konta i dla okna wyboru grupy - druga
+# kopia numerowania rozjechalaby sie z pierwsza, a widac to dopiero na zawezonej liscie.
+#
+# KOLEJNOSC MUSI BYC TA SAMA, CO W TABLICY PODANEJ NA WEJSCIU: to po niej okno odnajduje
+# zaznaczona grupe (Get-JezykZaznaczonaGrupe), wiec przestawienie wierszy znaczy usuniecie
+# konta z innej grupy niz ta, ktora operator zobaczyl.
+function Get-JezykWierszeGrup {
+    param([object[]]$Grupy)
+
+    $wiersze = @()
+    $nr      = 0
+
+    foreach ($grupa in @(Get-JezykParyGrup $Grupy)) {
+        $nr++
+        $wiersze += '{0}. {1}' -f $nr, ([string]$grupa.Nazwa)
+    }
+
+    return @($wiersze)
 }
 
 <#
@@ -2714,22 +2739,34 @@ function Update-JezykFiltrGrup {
     $lista = $Pole.Tag
     if (-not $lista) { return }
 
-    $grupy   = @($lista.Tag)
-    $pozycje = @(Select-JezykGrupyDoPokazania -Grupy $grupy -Fraza $Pole.Text)
+    $grupy    = @($lista.Tag)
+    $widoczne = @(Select-JezykGrupyDoPokazania -Grupy $grupy -Fraza $Pole.Text)
+    $wiersze  = @(Get-JezykWierszeGrup $widoczne)
+
+    $okno = $Pole.FindForm()
+
+    # WIDOCZNE PARY ODKLADAMY Z TEJ SAMEJ TABLICY, z ktorej powstaly napisy, i PRZED
+    # narysowaniem listy. Stad Get-JezykZaznaczonaGrupe odwzorowuje SelectedIndex na grupe;
+    # gdyby to pole zostalo z poprzedniego filtra, "Usun z grupy" wypisalo by konto z grupy,
+    # ktorej na liscie juz nie ma - i nic by tego nie zglosilo.
+    if ($okno -and $okno.Tag) { $okno.Tag.WidoczneGrupy = $widoczne }
 
     $lista.BeginUpdate()
     try {
         $lista.Items.Clear()
-        if ($pozycje.Count -gt 0) { $lista.Items.AddRange([object[]]$pozycje) }
+        if ($wiersze.Count -gt 0) { $lista.Items.AddRange([object[]]$wiersze) }
         # Po zawezeniu listy poprzedni pierwszy wiersz wskazywalby poza jej koniec.
         $lista.TopIndex = 0
     }
     finally { $lista.EndUpdate() }
 
-    $okno = $Pole.FindForm()
     if (-not $okno) { return }
-    $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag.Podpis) -Ile $pozycje.Count `
+    $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag.Podpis) -Ile $widoczne.Count `
                                     -Wszystkich $grupy.Count
+
+    # Wyczyszczenie listy gasi zaznaczenie, a razem z nim powod, dla ktorego "Usun z grupy"
+    # bylo czynne. Bez tego przycisk zostaje zapalony nad pusta liscie.
+    Set-JezykPrzyciskUsunGrupe -Okno $okno
 }
 
 <#
@@ -2750,7 +2787,7 @@ function Update-JezykFiltrGrup {
     sa (Set-JezykPrzyciskGrupy), ale warunek sprawdzamy takze tutaj: puste okno z tytulem
     "(0)" nie mowiloby nic ponad to, co mowi wyszarzony przycisk.
 
-    Nazwy grup przychodza z logiki JUZ POSORTOWANE (Get-JezykNazwyGrup) - okno nie sortuje
+    Nazwy grup przychodza z logiki JUZ POSORTOWANE (Get-JezykCzlonkostwaGrup) - okno nie sortuje
     ich po raz drugi, bo dwa miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
 
     GEOMETRIA LICZY SIE PO DODANIU KONTROLEK DO OKNA. Wysokosc pola tekstowego i szerokosc
@@ -2767,8 +2804,10 @@ function Show-JezykGrupyAd {
     # dostepnosci przycisku - jedna funkcja na oba miejsca, zeby nie dalo sie ich rozjechac.
     if (-not (Test-JezykJestPoCoOtwieracGrupy $konto)) { return }
 
-    $grupy      = @($konto.Grupy | Where-Object { $_ })
-    $wolnoDodac = Test-JezykMoznaDodacKontoDoGrupy $konto
+    # PARY "nazwa + nazwa wyrozniajaca", a nie same nazwy: bez nazwy wyrozniajacej nie da
+    # sie usunac konta z grupy, a nazwa sama w sobie nie jest w domenie jednoznaczna.
+    $grupy          = @(Get-JezykParyGrup $konto.GrupyPelne)
+    $wolnoZarzadzac = Test-JezykMoznaZarzadzacGrupami $konto
 
     # Kontakt loginu nie ma, wiec podpis spada na nazwe obiektu - ta sama zasada, co przy
     # etykiecie pierwszego pola w oknie glownym ("Login:" kontra "Nazwa:").
@@ -2822,16 +2861,21 @@ function Show-JezykGrupyAd {
         # ucinac w polowie.
         $lista.HorizontalScrollbar = $true
         # Pelna lista wisi na kontrolce, bo to ona jest filtrowana, i ginie razem z oknem.
-        $lista.Tag = [string[]]$grupy
+        $lista.Tag = $grupy
         # Pole filtra musi trafic do swojej listy bez pomocy zmiennych lokalnych tej funkcji.
         $txtFiltr.Tag = $lista
 
-        # --- WIERSZ DODAWANIA ---------------------------------------------------------
-        # Caly wiersz istnieje WYLACZNIE w domenie z listy DomenyZDodawaniemDoGrup i tylko
-        # dla konta (nie dla kontaktu). Puste ustawienie ma CHOWAC, a nie zostawiac element
-        # wyszarzony: kontrolka, ktora w danym wdrozeniu nie zadziala nigdy, przestaje
-        # cokolwiek znaczyc - ta sama zasada, co przy przycisku "Polacz".
-        $lblDodaj = New-JezykEtykieta 'Dodaj do grupy:' $margines 0
+        # --- WIERSZE ZARZADZANIA -------------------------------------------------------
+        # Istnieja WYLACZNIE w domenie z listy DomenyZZarzadzaniemGrupami i tylko dla konta
+        # (nie dla kontaktu). Puste ustawienie ma CHOWAC, a nie zostawiac element wyszarzony:
+        # kontrolka, ktora w danym wdrozeniu nie zadziala nigdy, przestaje cokolwiek znaczyc -
+        # ta sama zasada, co przy przycisku "Polacz".
+        #
+        # DWA PRZYCISKI, DWA ZRODLA GRUPY, i to jest jedyna rzecz, ktorej z samego wygladu
+        # nie widac: "Dodaj" bierze nazwe Z POLA obok, a "Usun z grupy" - Z ZAZNACZENIA
+        # NA LISCIE. Rozroznienie niosa stany: pierwszy zapala sie po rozpoznaniu nazwy
+        # w AD, drugi po zaznaczeniu pozycji.
+        $lblNazwaGrupy = New-JezykEtykieta 'Nazwa grupy:' $margines 0
 
         $txtGrupa           = New-Object System.Windows.Forms.TextBox
         $txtGrupa.MaxLength = 256
@@ -2861,10 +2905,23 @@ function Show-JezykGrupyAd {
         # nazwy w AD.
         $btnDodaj.Enabled = $false
 
-        $lblDodaj.Visible   = $wolnoDodac
-        $txtGrupa.Visible   = $wolnoDodac
-        $btnSprawdz.Visible = $wolnoDodac
-        $btnDodaj.Visible   = $wolnoDodac
+        $btnUsun           = New-Object System.Windows.Forms.Button
+        $btnUsun.Text      = ''
+        $btnUsun.Tag       = 'Usuń z grupy'
+        $btnUsun.Size      = [System.Drawing.Size]::new(
+                                 (Get-JezykSzerokoscPrzycisku ([string]$btnUsun.Tag) $okno.Font),
+                                 $wysokoscPrzycisku)
+        $btnUsun.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+        Set-JezykWyglad $btnUsun 'Przycisk'
+        $btnUsun.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
+        # Stan poczatkowy: nic nie jest zaznaczone, wiec nie ma czego usuwac.
+        $btnUsun.Enabled = $false
+
+        $lblNazwaGrupy.Visible = $wolnoZarzadzac
+        $txtGrupa.Visible      = $wolnoZarzadzac
+        $btnSprawdz.Visible    = $wolnoZarzadzac
+        $btnDodaj.Visible      = $wolnoZarzadzac
+        $btnUsun.Visible       = $wolnoZarzadzac
 
         # --- NOTKA ---------------------------------------------------------------------
         # Pole "Status:" tego okna: odpowiedz "Sprawdz nazwy", wynik dodania i zdanie
@@ -2900,16 +2957,21 @@ function Show-JezykGrupyAd {
             Lista         = $lista
             PoleGrupy     = $txtGrupa
             PrzyciskDodaj = $btnDodaj
+            PrzyciskUsun  = $btnUsun
             Notka         = $txtNotka
             PrzyciskInfo  = $btnInfo
             Szczegoly     = ''
             Wybrana       = $null
+            # Pary widoczne TERAZ na liscie, w jej kolejnosci - stad Get-JezykZaznaczonaGrupe
+            # odwzorowuje SelectedIndex na grupe. Wypelnia je Update-JezykFiltrGrup.
+            WidoczneGrupy = @()
         }
 
         # Pole filtra jest PIERWSZA kontrolka, ktora przyjmuje fokus, wiec dostaje go samo -
         # pisac mozna od razu po otwarciu, bez osobnej procedury na Shown.
         $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista,
-                                  $lblDodaj, $txtGrupa, $btnSprawdz, $btnDodaj,
+                                  $lblNazwaGrupy, $txtGrupa, $btnSprawdz,
+                                  $btnUsun, $btnDodaj,
                                   $lblNotka, $txtNotka, $btnInfo, $btnZamknij))
 
         # SZEROKOSC OKNA LICZONA Z WIERSZA, KTORY JEJ NAPRAWDE POTRZEBUJE. Kolumna okna
@@ -2918,11 +2980,14 @@ function Show-JezykGrupyAd {
         # albo mniej niz zero - i NIKT BY TEGO NIE POLICZYL, bo szerokosc pola liczy sie
         # od sasiadow. Minimum pola bierzemy z napisu przycisku, zeby i ono skalowalo sie
         # z czcionka zamiast byc kolejna wpisana liczba.
-        if ($wolnoDodac) {
+        if ($wolnoZarzadzac) {
             $minimumPola = 2 * $btnSprawdz.Width
-            $potrzebne   = $margines + $lblDodaj.Width + $odstepEtykiety + $minimumPola +
-                           $odstepPrzyciskow + $btnSprawdz.Width +
-                           $odstepPrzyciskow + $btnDodaj.Width + $margines
+            $wierszPola  = $margines + $lblNazwaGrupy.Width + $odstepEtykiety + $minimumPola +
+                           $odstepPrzyciskow + $btnSprawdz.Width + $margines
+            # Drugi wiersz ma wlasne wymaganie: dwa przyciski obok siebie przy prawej krawedzi.
+            $wierszAkcji = $margines + $btnUsun.Width + $odstepPrzyciskow +
+                           $btnDodaj.Width + $margines
+            $potrzebne   = [Math]::Max($wierszPola, $wierszAkcji)
             if ($potrzebne -gt $szerokosc) { $szerokosc = $potrzebne }
         }
 
@@ -2933,29 +2998,40 @@ function Show-JezykGrupyAd {
 
         $lista.Left   = $margines
         $lista.Width  = $szerokosc - 2 * $margines
-        $lista.Top    = $txtFiltr.Bottom + $margines
+        # PRZERWA MIEDZY WIERSZAMI TA SAMA, CO W OKNIE GLOWNYM. Margines okna ($margines)
+        # opisuje ramke, a nie gestosc srodka - mieszanie obu zostawialo miedzy wierszami
+        # polowe wiersza pustki wiecej, niz trzeba.
+        $lista.Top    = $txtFiltr.Bottom + $Script:PrzerwaWierszy
         $lista.Height = $wysokoscListy
 
-        # Kazdy nastepny wiersz mierzy sie OD SASIADA. Gdy wiersza dodawania nie ma,
-        # notka siada wprost pod lista i okno jest o ten wiersz nizsze.
+        # Kazdy nastepny wiersz mierzy sie OD SASIADA. Gdy wierszy zarzadzania nie ma,
+        # notka siada wprost pod lista i okno jest o te dwa wiersze nizsze.
         $dolPoprzedniego = $lista.Bottom
 
-        if ($wolnoDodac) {
-            $btnDodaj.Left   = $szerokosc - $margines - $btnDodaj.Width
-            $btnSprawdz.Left = $btnDodaj.Left - $odstepPrzyciskow - $btnSprawdz.Width
-            $txtGrupa.Left   = $lblDodaj.Right + $odstepEtykiety
+        if ($wolnoZarzadzac) {
+            # Wiersz nazwy: pole ciagnie sie od etykiety do "Sprawdz nazwy" przy prawej krawedzi.
+            $btnSprawdz.Left = $szerokosc - $margines - $btnSprawdz.Width
+            $txtGrupa.Left   = $lblNazwaGrupy.Right + $odstepEtykiety
             $txtGrupa.Width  = $btnSprawdz.Left - $odstepPrzyciskow - $txtGrupa.Left
 
-            Set-JezykSrodekPionowy -Kontrolki @($lblDodaj, $txtGrupa, $btnSprawdz, $btnDodaj) `
-                                   -Srodek ($dolPoprzedniego + $margines +
+            Set-JezykSrodekPionowy -Kontrolki @($lblNazwaGrupy, $txtGrupa, $btnSprawdz) `
+                                   -Srodek ($dolPoprzedniego + $Script:PrzerwaWierszy +
                                             (Get-JezykPolowaWysokosci $txtGrupa.Height))
             $dolPoprzedniego = $txtGrupa.Bottom
+
+            # Wiersz akcji: oba przyciski przy prawej krawedzi. Wspolrzedne "Usun z grupy"
+            # brane OD SASIADA, zeby para jechala razem, a nie kazdy z wlasnej liczby.
+            $btnDodaj.Left = $szerokosc - $margines - $btnDodaj.Width
+            $btnUsun.Left  = $btnDodaj.Left - $odstepPrzyciskow - $btnUsun.Width
+            $btnDodaj.Top  = $dolPoprzedniego + $Script:PrzerwaWierszy
+            $btnUsun.Top   = $btnDodaj.Top
+            $dolPoprzedniego = $btnDodaj.Bottom
         }
 
         # Notka ma WLASNA ETYKIETE po to, zeby "!" stanal dokladnie tam, gdzie stoi w oknie
         # glownym: Set-JezykPrzyciskPrzyEtykiecie konczy go razem z prawa krawedzia POLA.
         $lblNotka.Left   = $margines
-        $lblNotka.Top    = $dolPoprzedniego + $margines
+        $lblNotka.Top    = $dolPoprzedniego + $Script:PrzerwaWierszy
         $txtNotka.Left   = $margines
         $txtNotka.Top    = $lblNotka.Top + $Script:OdstepPodEtykieta
         $txtNotka.Width  = $szerokosc - 2 * $margines
@@ -2965,7 +3041,7 @@ function Show-JezykGrupyAd {
         Set-JezykPrzyciskPrzyEtykiecie $btnInfo $lblNotka $txtNotka
 
         $btnZamknij.Left = $szerokosc - $margines - $szerokoscPrzycisku
-        $btnZamknij.Top  = $txtNotka.Bottom + $margines
+        $btnZamknij.Top  = $txtNotka.Bottom + $Script:PrzerwaWierszy
 
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnZamknij.Bottom + $margines))
@@ -2987,7 +3063,7 @@ function Show-JezykGrupyAd {
         # w ogole jest wlaczone, bo inaczej wiersza nie ma nikt i zdanie mylilo by tropy.
         $notka = ''
         if ($grupy.Count -eq 0) { $notka = 'To konto nie należy do żadnej grupy.' }
-        if ($konto.Status -eq 'Kontakt' -and (Test-JezykWolnoDodacDoGrupy $Script:Config.Domena)) {
+        if ($konto.Status -eq 'Kontakt' -and (Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena)) {
             $notka = 'Kontakt nie jest kontem w domenie - nie da się go dopisać do grupy.'
         }
         if ($notka) { Set-JezykNotkeGrup -Okno $okno -Tekst $notka }
@@ -2995,7 +3071,11 @@ function Show-JezykGrupyAd {
         $txtFiltr.Add_TextChanged({ Update-JezykFiltrGrup $this })
         $lista.Add_MouseWheel({ Set-JezykPrzewijanieListy $this $_ })
 
-        if ($wolnoDodac) {
+        # "Usun z grupy" dziala na ZAZNACZONEJ pozycji, wiec jego dostepnosc jest stanem
+        # zaznaczenia - a to zmienia sie takze bez udzialu myszy (strzalki, zawezenie filtra).
+        $lista.Add_SelectedIndexChanged({ Set-JezykPrzyciskUsunGrupe -Okno $this.FindForm() })
+
+        if ($wolnoZarzadzac) {
             # ZMIANA TEKSTU UNIEWAZNIA ROZPOZNANA GRUPE. Bez tego zapis poszedlby na nazwe
             # wyrozniajaca grupy, ktorej w polu juz nie ma - i nic by tego nie zdradzilo.
             $txtGrupa.Add_TextChanged({
@@ -3017,6 +3097,7 @@ function Show-JezykGrupyAd {
 
             $btnSprawdz.Add_Click({ Invoke-JezykSprawdzenieNazwyGrupy -Okno $this.FindForm() })
             $btnDodaj.Add_Click({   Invoke-JezykDodanieDoGrupy        -Okno $this.FindForm() })
+            $btnUsun.Add_Click({    Invoke-JezykUsuniecieZGrupy       -Okno $this.FindForm() })
         }
 
         # Pelna tresc pod "!" - wlasnym MessageBoxem, bo Show-JezykInformacja czyta
@@ -3049,10 +3130,10 @@ function Show-JezykGrupyAd {
     Pyta, ktora z rozpoznanych grup chodzilo - gdy "Sprawdz nazwy" trafilo w wiecej niz jedna.
 
 .DESCRIPTION
-    Ten sam szkielet, co Show-JezykWyborDysku. Pozycje sklada Select-JezykGrupyDoPokazania
-    z pusta fraza: numeracja i odsiew pustych sa juz tam, a zaznaczenie mapuje sie na liste
-    trafien INDEKS W INDEKS, bo Find-JezykGrupyPoNazwie odsiewa pozycje bez nazwy jeszcze
-    w logice.
+    Ten sam szkielet, co Show-JezykWyborDysku. Pozycje numeruje Get-JezykWierszeGrup - ta sama
+    funkcja, co liste grup konta, zeby dwie numeracje nie mogly sie rozjechac. Zaznaczenie
+    mapuje sie na liste trafien INDEKS W INDEKS, bo Find-JezykGrupyPoNazwie odsiewa pozycje
+    bez nazwy jeszcze w logice.
 
     WLASCICIELEM JEST OKNO GRUP, a nie okno glowne: to okno wstaje nad innym oknem modalnym,
     wiec podpiete pod glowne potrafiloby schowac sie za tym, z ktorego je otwarto.
@@ -3087,8 +3168,7 @@ function Show-JezykWyborGrupy {
         $lista.IntegralHeight      = $true
         $lista.HorizontalScrollbar = $true
 
-        $nazwy = @($pozycje | ForEach-Object { [string]$_.Nazwa })
-        foreach ($wiersz in @(Select-JezykGrupyDoPokazania -Grupy $nazwy -Fraza '')) {
+        foreach ($wiersz in @(Get-JezykWierszeGrup $pozycje)) {
             [void]$lista.Items.Add($wiersz)
         }
         # Pierwsza pozycja zaznaczona od razu, zeby Enter dzialal bez siegania po mysz.

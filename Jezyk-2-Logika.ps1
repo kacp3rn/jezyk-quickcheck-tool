@@ -249,9 +249,9 @@ function Confirm-JezykUstawienia {
         }
     }
 
-    foreach ($domena in @($Script:DomenyZDodawaniemDoGrup)) {
+    foreach ($domena in @($Script:DomenyZZarzadzaniemGrupami)) {
         if ($domeny -notcontains $domena) {
-            $bledy += 'DomenyZDodawaniemDoGrup: "{0}" nie ma na liście Domeny - dodawanie do grup nie zadziała.' -f $domena
+            $bledy += 'DomenyZZarzadzaniemGrupami: "{0}" nie ma na liście Domeny - zarządzanie grupami nie zadziała.' -f $domena
         }
     }
 
@@ -399,10 +399,15 @@ function New-JezykResult {
         [string]$TelefonKomorkowy = '',
         [string]$Menedzer = '',
 
-        # Nazwy grup gotowe do pokazania - patrz Get-JezykNazwyGrup. Tablica, a nie napis:
-        # okno stawia je jedna pod druga na liscie, a sklejenie ich tutaj kazaloby mu ten
-        # napis z powrotem rozebrac.
-        [string[]]$Grupy = @(),
+        # Grupy konta. Tablica, a nie napis: okno stawia je jedna pod druga na liscie,
+        # a sklejenie ich tutaj kazaloby mu ten napis z powrotem rozebrac.
+        #
+        # PRZYJMUJEMY PARY "nazwa + nazwa wyrozniajaca" (Get-JezykCzlonkostwaGrup) ALBO
+        # same nazwy. Normalizacja stoi TUTAJ, w jednym miejscu, i z niej powstaja OBA
+        # pola wyniku - nazwy do pokazania i nazwy wyrozniajace do zapisu. Dwie listy
+        # podane osobno rozjechalyby sie przy pierwszej zmianie, a objawem byloby
+        # usuniecie konta z INNEJ grupy niz zaznaczona na liscie.
+        [object[]]$Grupy = @(),
 
         [string]$Lokalizacja = '',
         $ZmianaHaslaWymuszona = $null,
@@ -421,6 +426,10 @@ function New-JezykResult {
 
         [string]$Szczegoly = ''
     )
+
+    # JEDNO WEJSCIE, DWA WIDOKI. Liczone raz, przed zlozeniem wyniku, zeby nazwy i nazwy
+    # wyrozniajace nie mogly opisywac czego innego.
+    $grupyPelne = @(Get-JezykParyGrup $Grupy)
 
     [pscustomobject]@{
         Login       = $Login
@@ -453,8 +462,15 @@ function New-JezykResult {
         # ODSIANIE PUSTYCH JEST WARUNKIEM POPRAWNOSCI, A NIE PORZADKAMI. @($null) to
         # w PowerShellu tablica JEDNOELEMENTOWA, wiec konto bez grup przyszlo by tu
         # z Count = 1 - przycisk "Grupy AD" zapalalby sie przy KAZDYM koncie i otwieral
-        # liste z jedna pusta pozycja. Filtr gwarantuje, ze Count niesie liczbe grup.
-        Grupy = @($Grupy | Where-Object { $_ })
+        # liste z jedna pusta pozycja. Odsiew robi Get-JezykParyGrup, wiec Count niesie
+        # tu liczbe grup.
+        Grupy = @($grupyPelne | ForEach-Object { $_.Nazwa })
+
+        # TO SAMO Z NAZWAMI WYROZNIAJACYMI. Przy zapisie grupe wskazuje wylacznie nazwa
+        # wyrozniajaca oddana przez katalog: Remove-ADGroupMember -Identity nie przyjmuje
+        # nazwy zwyklej (CN), tylko sAMAccountName, SID, GUID albo wlasnie DN - a CN
+        # i sAMAccountName grupy nie musza byc takie same.
+        GrupyPelne = $grupyPelne
 
         Lokalizacja = $Lokalizacja
 
@@ -2189,7 +2205,7 @@ function Get-JezykUzytkownikKomputera {
 <#
 .SYNOPSIS
     Odblokowuje konto w AD. JEDNA Z DWOCH operacji ZAPISU w calym narzedziu (druga jest
-    Add-JezykKontoDoGrupy).
+    Set-JezykCzlonkostwoGrupy - dodanie i usuniecie z grupy).
 
 .DESCRIPTION
     Obwarowana z dwoch stron: wolajacy sprawdza, czy domena jest dozwolona, i TUTAJ
@@ -2271,13 +2287,15 @@ function Test-JezykWolnoOdblokowac {
     return (@($Script:DomenyZOdblokowaniem) -contains $Domena.ToLower())
 }
 
-# Bliźniak powyzszego dla DRUGIEJ operacji zapisu. Osobna lista, bo odblokowanie konta
-# i zarzadzanie czlonkostwem grupy to w AD dwie niezalezne delegacje - wlaczenie jednej
-# nie moze po cichu wlaczac drugiej. Pusta lista znaczy "nigdzie" i jest wartoscia domyslna.
-function Test-JezykWolnoDodacDoGrupy {
+# Blizniak powyzszego dla DRUGIEJ operacji zapisu, czyli dla zarzadzania czlonkostwem
+# grup - w OBIE strony naraz, bo w AD to jedno prawo: kto moze zmieniac atrybut member,
+# ten moze i dopisac, i usunac. Osobna lista od odblokowania, bo tamto jest niezalezna
+# delegacja i wlaczenie jednej operacji nie moze po cichu wlaczac drugiej. Pusta lista
+# znaczy "nigdzie" i jest wartoscia domyslna.
+function Test-JezykWolnoZarzadzacGrupami {
     param([string]$Domena)
     if (-not $Domena) { return $false }
-    return (@($Script:DomenyZDodawaniemDoGrup) -contains $Domena.ToLower())
+    return (@($Script:DomenyZZarzadzaniemGrupami) -contains $Domena.ToLower())
 }
 
 # KONTROLER, NA KTORY KIERUJEMY ZAPIS - wspolny dla obu operacji zapisu w narzedziu.
@@ -2313,7 +2331,7 @@ function Get-JezykSerwerDoZapisu {
 #
 # Bialej listy znakow tu nie ma i byc nie moze: nazwy grup nosza spacje, polskie znaki
 # i nawiasy, wiec Test-JezykNazwaKonta odrzucilby wiekszosc poprawnych fraz. Zapora jest
-# inna i mocniejsza - ZAPIS NIE UZYWA TEGO TEKSTU WCALE. Do Add-JezykKontoDoGrupy wchodzi
+# inna i mocniejsza - ZAPIS NIE UZYWA TEGO TEKSTU WCALE. Do Set-JezykCzlonkostwoGrupy wchodzi
 # nazwa wyrozniajaca oddana przez katalog, sprawdzona jeszcze raz przez Test-JezykDn.
 function Get-JezykFrazaLdap {
     param([string]$Tekst)
@@ -2419,85 +2437,97 @@ function Find-JezykGrupyPoNazwie {
 
 <#
 .SYNOPSIS
-    Dopisuje konto do grupy AD. DRUGA z dwoch operacji ZAPISU w calym narzedziu.
+    Dopisuje konto do grupy AD albo je z niej usuwa. Druga z dwoch operacji ZAPISU
+    w calym narzedziu.
 
 .DESCRIPTION
+    JEDNA FUNKCJA NA OBA KIERUNKI, a nie dwie kopie. Rozni je wylacznie polecenie i slowo
+    w komunikacie; cztery bramki, kontroler zapisu, wskazanie konta i obsluga bledu sa te
+    same, wiec dwie kopie rozjechalyby sie przy pierwszej zmianie - a objawem byloby to,
+    ze jeden kierunek ma zapore, ktorej drugi nie ma. To ta sama zasada, co przy -Widok
+    w funkcjach obslugujacych obie polowy okna glownego.
+
     Obwarowana tak samo jak odblokowanie: wolajacy sprawdza, czy domena jest dozwolona,
     i TUTAJ sprawdzamy to ponownie - warunek "tylko ta domena" opiera sie na stanie
     interfejsu, a stan interfejsu da sie rozspojnic.
 
-    GRUPE WSKAZUJE NAZWA WYROZNIAJACA ODDANA PRZEZ KATALOG, nigdy tekst wpisany przez
-    operatora. Tekst z pola sluzy wylacznie do szukania (Find-JezykGrupyPoNazwie); to,
-    co wchodzi do zapisu, Jezyk dostal z AD i sprawdza jeszcze raz przez Test-JezykDn.
+    GRUPE WSKAZUJE NAZWA WYROZNIAJACA ODDANA PRZEZ KATALOG - nigdy tekst wpisany przez
+    operatora ani nazwa przeczytana z listy. Remove-ADGroupMember -Identity nie przyjmuje
+    zwyklej nazwy (CN), tylko sAMAccountName, SID, GUID albo wlasnie DN, a CN
+    i sAMAccountName grupy NIE MUSZA byc takie same.
+
+    ZAPIS IDZIE NA KONCIE, NA KTORYM JEZYK DZIALA - o poswiadczenia nie pytamy. Prawo do
+    zarzadzania czlonkostwem jest w tym wdrozeniu nadane temu samemu kontu, ktore czyta
+    katalog, wiec okno logowania pytaloby o to, co juz mamy. Potwierdzeniem operacji jest
+    osobne pytanie w oknie - i ono zostaje, bo usuniecie z grupy jest nieodwracalne
+    jednym klknieciem.
 
     Nie rzuca wyjatkiem: odmowa uprawnien i "konto juz jest w tej grupie" to normalne
     odpowiedzi AD, nie awarie narzedzia.
 #>
-function Add-JezykKontoDoGrupy {
+function Set-JezykCzlonkostwoGrupy {
     param([string]$Login, [string]$Dn, [string]$GrupaDn, [string]$Domena,
-          [System.Management.Automation.PSCredential]$Poswiadczenia)
+          [ValidateSet('Dodaj', 'Usun')][string]$Akcja = 'Dodaj')
 
     # Ten sam ksztalt, co Unlock-JezykKonto - okno renderuje oba wyniki jedna droga.
     $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = '' }
 
+    # Nazwa czynnosci skladana RAZ, zeby kazda galaz mowila o tej samej rzeczy.
+    $czynnosc = if ($Akcja -eq 'Usun') { 'usunięcie z grupy' } else { 'dodanie do grupy' }
+
     # Najpierw ksztalt danych, potem uprawnienie: wartosc o zlym ksztalcie nie ma prawa
     # dojsc nawet do sprawdzania listy domen.
     if (-not (Test-JezykNazwaKonta $Login)) {
-        $wynik.Komunikat = 'Nieprawidłowa nazwa konta - dodanie do grupy przerwane.'
+        $wynik.Komunikat = 'Nieprawidłowa nazwa konta - {0} przerwane.' -f $czynnosc
         return $wynik
     }
 
     if (-not (Test-JezykNazwaHosta $Domena)) {
-        $wynik.Komunikat = 'Nieprawidłowa nazwa domeny - dodanie do grupy przerwane.'
+        $wynik.Komunikat = 'Nieprawidłowa nazwa domeny - {0} przerwane.' -f $czynnosc
         return $wynik
     }
 
     if (-not (Test-JezykDn $GrupaDn)) {
-        $wynik.Komunikat = 'Nieprawidłowa nazwa wyróżniająca grupy - dodanie do grupy przerwane.'
+        $wynik.Komunikat = 'Nieprawidłowa nazwa wyróżniająca grupy - {0} przerwane.' -f $czynnosc
         return $wynik
     }
 
-    if (-not (Test-JezykWolnoDodacDoGrupy $Domena)) {
-        $wynik.Komunikat = 'Dodawanie do grup nie jest dozwolone w domenie {0}.' -f $Domena
+    if (-not (Test-JezykWolnoZarzadzacGrupami $Domena)) {
+        $wynik.Komunikat = 'Zarządzanie grupami nie jest dozwolone w domenie {0}.' -f $Domena
         return $wynik
     }
 
-    $parametry = $null
     try {
-        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena -Poswiadczenia $Poswiadczenia
+        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena
 
         # Konto wskazujemy jego wlasna nazwa wyrozniajaca, gdy ja mamy: jest jednoznaczna
         # i nie kaze kontrolerowi rozwiazywac nazwy. Login zostaje droga zapasowa, bo Dn
         # bywa pusty na czesci sciezek odczytu.
         $czlonek = if (Test-JezykDn $Dn) { $Dn } else { $Login }
 
-        # Poswiadczenia dokladane WARUNKOWO - bez nich zapis idzie na koncie, na ktorym
-        # Jezyk dziala.
         $parametry = @{ Identity = $GrupaDn; Members = $czlonek; Server = $serwer
                         Confirm = $false; ErrorAction = 'Stop' }
-        if ($Poswiadczenia) { $parametry['Credential'] = $Poswiadczenia }
 
-        Add-ADGroupMember @parametry
+        if ($Akcja -eq 'Usun') { Remove-ADGroupMember @parametry }
+        else                   { Add-ADGroupMember    @parametry }
 
-        $wynik.Udane     = $true
-        $wynik.Serwer    = $serwer
-        $wynik.Komunikat = 'Konto "{0}" zostało dodane do grupy.' -f $Login
+        $wynik.Udane  = $true
+        $wynik.Serwer = $serwer
+        $wynik.Komunikat = if ($Akcja -eq 'Usun') {
+            'Konto "{0}" zostało usunięte z grupy.' -f $Login
+        } else {
+            'Konto "{0}" zostało dodane do grupy.' -f $Login
+        }
         $wynik.Szczegoly = 'Zapis przyjął kontroler: {0}' -f $serwer
     }
     catch {
         # Prawo zarzadzania czlonkostwem jest OSOBNE od prawa odczytu, a "konto juz jest
-        # w tej grupie" to odpowiedz, nie awaria - obie maja trafic do pola, a nie
-        # przewrocic okna.
-        $opis = Get-JezykOpisBledu $_ ('Dodanie konta {0} do grupy' -f $Login)
+        # w tej grupie" (albo juz go w niej nie ma) to odpowiedz, nie awaria - obie maja
+        # trafic do pola, a nie przewrocic okna.
+        $czego = if ($Akcja -eq 'Usun') { 'Usunięcie konta {0} z grupy' } else { 'Dodanie konta {0} do grupy' }
+        $opis  = Get-JezykOpisBledu $_ ($czego -f $Login)
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = $opis.Szczegoly
-    }
-    finally {
-        if ($parametry) { $parametry.Clear() }
-
-        # Ten sam powod, co przy odblokowaniu: $Error trzyma rekord bledu razem
-        # z InvocationInfo.BoundParameters, czyli z obiektem PSCredential.
-        $Error.Clear()
     }
 
     return $wynik
@@ -2506,6 +2536,9 @@ function Add-JezykKontoDoGrupy {
 # Ponowny odczyt czlonkostw PO ZAPISIE, z kontrolera, KTORY TEN ZAPIS PRZYJAL. Jedno
 # konto i jeden atrybut, wiec to najtansze zapytanie w narzedziu - a jest po co: lista
 # w oknie ma pokazywac stan katalogu, a nie zalozenie okna o tym, co przed chwila wyslalo.
+#
+# W polu Grupy jada PARY "nazwa + nazwa wyrozniajaca" (Get-JezykCzlonkostwaGrup), a nie
+# same nazwy: po odswiezeniu listy da sie z niej od razu usuwac, bez drugiego zapytania.
 #
 # Nieudany odczyt NIE UNIEWAZNIA ZAPISU, wiec wychodzi osobnym polem: wolajacy musi umiec
 # powiedziec "grupa zostala dodana, ale listy nie udalo sie odswiezyc". Zgubienie tej
@@ -2525,7 +2558,7 @@ function Get-JezykGrupyKonta {
 
     try {
         $konto = Get-ADUser @zapytanie
-        $wynik.Grupy = @(Get-JezykNazwyGrup $konto.MemberOf)
+        $wynik.Grupy = @(Get-JezykCzlonkostwaGrup $konto.MemberOf)
         $wynik.Udane = $true
     }
     catch {
@@ -2630,27 +2663,63 @@ function Get-JezykPodpisMenedzera {
     Sortujemy tutaj, bo memberOf przychodzi w kolejnosci dowolnej, a okno ma tylko
     pokazac gotowa liste - formatowanie po stronie widoku nie ma tu czego rozstrzygac.
 #>
-function Get-JezykNazwyGrup {
+function Get-JezykCzlonkostwaGrup {
     param($Czlonkostwa)
 
-    $nazwy = @()
+    $pary = @()
     foreach ($dn in @($Czlonkostwa)) {
         $tekst = ([string]$dn).Trim()
         if (-not $tekst) { continue }
 
+        # Nazwa siedzi w PIERWSZYM czlonie nazwy wyrozniajacej, wiec nie ma po co pytac
+        # o kazda grupe z osobna - to bylyby kilkadziesiat podrozy po sieci po wartosc,
+        # ktora juz mamy w reku. Odwrotny ukosnik oslania w LDAP przecinek w nazwie.
+        $nazwa = $tekst
         if ($tekst -match '^\s*CN=((?:[^,\\]|\\.)+)') {
-            $nazwy += ($Matches[1] -replace '\\(.)', '$1').Trim()
-        } else {
-            $nazwy += $tekst
+            $nazwa = ($Matches[1] -replace '\\(.)', '$1').Trim()
         }
+        if (-not $nazwa) { continue }
+
+        $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = $tekst }
     }
 
+    # SORTOWANIE I ODSIEW POWTORZEN PO NAZWIE, bo to nazwa stoi na liscie w oknie.
+    # Kolejnosc ustala sie TUTAJ i tylko tutaj - memberOf przychodzi w dowolnej, a dwa
+    # miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
+    #
     # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice oddawana
-    # z funkcji: przy zerze grup wolajacy dostaje $null, a przy jednej sam napis, a nie
-    # tablice jednoelementowa. Dlatego kazde wywolanie owija sie w @() NA MIEJSCU WYWOLANIA
-    # - ta sama konwencja, co przy @(Confirm-JezykUstawienia) - a New-JezykResult odsiewa
-    # jeszcze puste pozycje, bo @($null) to tablica JEDNOELEMENTOWA.
-    return @($nazwy | Sort-Object -Unique)
+    # z funkcji: przy zerze grup wolajacy dostaje $null, a przy jednej sam obiekt, a nie
+    # tablice jednoelementowa. Dlatego kazde wywolanie owija sie w @() NA MIEJSCU
+    # WYWOLANIA - ta sama konwencja, co przy @(Confirm-JezykUstawienia).
+    return @($pary | Sort-Object -Property Nazwa -Unique)
+}
+
+# Sprowadza liste grup do jednej postaci: par "nazwa + nazwa wyrozniajaca". Na wejsciu
+# przyjmuje pary z Get-JezykCzlonkostwaGrup albo same nazwy - ta druga postac zostaje,
+# bo nie kazda sciezka odczytu ma nazwy wyrozniajace pod reka, a nazwa wystarcza, zeby
+# grupe POKAZAC. Do ZAPISU nie wystarcza i dlatego pozycja bez Dn nie da sie usunac.
+#
+# Odsiew pustych stoi tutaj, czyli tam, gdzie zapada decyzja - a nie u wolajacego:
+# @($null) ma w PowerShellu JEDEN element i bez tego konto bez grup zapalaloby przycisk.
+function Get-JezykParyGrup {
+    param([object[]]$Grupy)
+
+    $pary = @()
+    foreach ($grupa in @($Grupy)) {
+        if (-not $grupa) { continue }
+
+        if ($grupa -is [string]) {
+            $nazwa = ([string]$grupa).Trim()
+            if ($nazwa) { $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = '' } }
+            continue
+        }
+
+        $nazwa = ([string]$grupa.Nazwa).Trim()
+        if (-not $nazwa) { continue }
+        $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = ([string]$grupa.Dn).Trim() }
+    }
+
+    return @($pary)
 }
 
 <#
@@ -2768,7 +2837,7 @@ function Get-JezykUserStatus {
         # Grupy przychodza W TYM SAMYM ZAPYTANIU, co reszta konta - memberOf jest zwyklym
         # atrybutem obiektu, wiec nie kosztuje ani jednej dodatkowej podrozy po sieci.
         # Nie ma tu drugiego odczytu ani zadania w tle, bo nie ma na co czekac.
-        $grupy = @(Get-JezykNazwyGrup $user.MemberOf)
+        $grupy = @(Get-JezykCzlonkostwaGrup $user.MemberOf)
 
         # pwdLastSet rowne zero to sposob, w jaki AD zapisuje "uzytkownik musi zmienic haslo
         # przy nastepnym logowaniu".
@@ -3266,7 +3335,7 @@ function Get-JezykKontaktStatus {
                                -Email ([string]$kontakt.mail) `
                                -TelefonGlowny $telefonGlowny `
                                -TelefonKomorkowy $telefonKomorkowy `
-                               -Grupy @(Get-JezykNazwyGrup $kontakt.memberOf) `
+                               -Grupy @(Get-JezykCzlonkostwaGrup $kontakt.memberOf) `
                                -Lokalizacja $lokalizacja `
                                -KontoUtworzono $utworzono `
                                -Dn ([string]$kontakt.DistinguishedName) `

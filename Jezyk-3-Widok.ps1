@@ -1834,25 +1834,26 @@ function Set-JezykPrzyciskGrupy {
     $przycisk.Enabled = Test-JezykJestPoCoOtwieracGrupy $Result
 }
 
-# Czy TO konto da sie w TEJ domenie dopisac do grupy. Trzy warunki, kazdy z innego powodu:
-# domena z listy DomenyZDodawaniemDoGrup (fakt o wdrozeniu), pozycja bedaca kontem (kontakt
-# nie jest podmiotem zabezpieczen, wiec Add-ADGroupMember go nie przyjmie) i login, ktorym
-# to konto da sie wskazac.
+# Czy czlonkostwem TEGO konta wolno w TEJ domenie zarzadzac - dopisywac i usuwac. Trzy
+# warunki, kazdy z innego powodu: domena z listy DomenyZZarzadzaniemGrupami (fakt
+# o wdrozeniu), pozycja bedaca kontem (kontakt nie jest podmiotem zabezpieczen, wiec
+# Add-ADGroupMember go nie przyjmie) i login, ktorym to konto da sie wskazac.
 #
-# JEDNO MIEJSCE Z TA DECYZJA: pyta o nia i dostepnosc przycisku w oknie glownym, i widocznosc
-# calego wiersza dodawania w oknie grup. Rozpisana po obu rozjechalaby sie przy pierwszej
-# zmianie, a objawem bylby wiersz, ktory jest, i przycisk, ktory nic nie robi.
-function Test-JezykMoznaDodacKontoDoGrupy {
+# JEDNO MIEJSCE Z TA DECYZJA: pytaja o nia dostepnosc przycisku w oknie glownym, widocznosc
+# panelu zarzadzania w oknie grup i przycisk "Usun z grupy". Rozpisana po nich rozjechalaby
+# sie przy pierwszej zmianie, a objawem bylby panel, ktory jest, i przycisk, ktory nic
+# nie robi.
+function Test-JezykMoznaZarzadzacGrupami {
     param($Result)
 
     if (-not $Result) { return $false }
     if ($Result.Status -ne 'Ok') { return $false }
     if (-not [bool]$Result.Login) { return $false }
-    return (Test-JezykWolnoDodacDoGrupy $Script:Config.Domena)
+    return (Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena)
 }
 
 # Czy okno grup ma co pokazac ALBO co zrobic. Dwa powody, by je otwierac: sa grupy do
-# przeczytania, albo wolno dopisac pierwsza. Konto bez grup w domenie bez dodawania zostaje
+# przeczytania, albo wolno dopisac pierwsza. Konto bez grup w domenie bez zarzadzania zostaje
 # wyszarzone - otwieraloby puste okno bez jednej czynnej kontrolki.
 #
 # Warunek stoi TUTAJ, a nie osobno przy przycisku i osobno w strazy Show-JezykGrupyAd:
@@ -1866,10 +1867,10 @@ function Test-JezykJestPoCoOtwieracGrupy {
 
     # FILTR, A NIE SAMO @().Count. W PowerShellu @($null) to tablica JEDNOELEMENTOWA,
     # wiec licznik bez odsiania pustych zapalalby przycisk przy koncie bez grup - czyli
-    # tam, gdzie o otwarciu ma decydowac dopiero prawo dopisywania.
+    # tam, gdzie o otwarciu ma decydowac dopiero prawo zarzadzania grupami.
     if (@($Result.Grupy | Where-Object { $_ }).Count -gt 0) { return $true }
 
-    return (Test-JezykMoznaDodacKontoDoGrupy $Result)
+    return (Test-JezykMoznaZarzadzacGrupami $Result)
 }
 
 # Notka w oknie "Grupy AD" i jej wlasny przycisk "!". Set-JezykInfo tu NIE ZADZIALA:
@@ -1895,17 +1896,23 @@ function Set-JezykNotkeGrup {
 # przelicza przycisk w oknie glownym. Rozpisane po miejscach wywolania rozjechalyby sie
 # przy pierwszej zmianie: okno pokazywaloby nowa grupe, a przycisk liczylby stare.
 function Update-JezykGrupyWOknie {
-    param($Okno, [string[]]$Grupy)
+    param($Okno, [object[]]$Grupy)
 
     if (-not $Okno) { return }
     $stan = $Okno.Tag
     if (-not $stan) { return }
 
-    $nowe = @($Grupy | Where-Object { $_ })
+    # JEDNO WEJSCIE, DWA WIDOKI - dokladnie ta sama normalizacja, co w New-JezykResult.
+    # Na liscie wisza PARY, bo z zaznaczonej pozycji trzeba umiec wziac nazwe wyrozniajaca
+    # do usuniecia; same nazwy kazalyby pytac o nie AD drugi raz.
+    $nowe = @(Get-JezykParyGrup $Grupy)
 
-    if ($Script:OstatnieKonto) { $Script:OstatnieKonto.Grupy = $nowe }
-    if ($stan.Lista)           { $stan.Lista.Tag = [string[]]$nowe }
-    if ($stan.PoleFiltra)      { Update-JezykFiltrGrup $stan.PoleFiltra }
+    if ($Script:OstatnieKonto) {
+        $Script:OstatnieKonto.GrupyPelne = $nowe
+        $Script:OstatnieKonto.Grupy      = @($nowe | ForEach-Object { $_.Nazwa })
+    }
+    if ($stan.Lista)      { $stan.Lista.Tag = $nowe }
+    if ($stan.PoleFiltra) { Update-JezykFiltrGrup $stan.PoleFiltra }
 
     Set-JezykPrzyciskGrupy $Script:OstatnieKonto
 }
@@ -1997,21 +2004,135 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
     Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst
 }
 
+# Grupa zaznaczona na liscie. Zaznaczenie wskazuje pozycje WIDOCZNA, czyli juz po filtrze -
+# stad osobna lista $stan.WidoczneGrupy, wypelniana w tym samym przebiegu, co pozycje listy.
+# Odczytywanie nazwy z napisu pozycji ("3. GG_Kadry") byloby rozbieraniem tego, co przed
+# chwila zlozylismy - i nie dawaloby nazwy wyrozniajacej, bez ktorej usunac sie nie da.
+function Get-JezykZaznaczonaGrupe {
+    param($Okno)
+
+    if (-not $Okno) { return $null }
+    $stan = $Okno.Tag
+    if (-not $stan -or -not $stan.Lista) { return $null }
+
+    $widoczne = @($stan.WidoczneGrupy)
+    $nr = [int]$stan.Lista.SelectedIndex
+    if ($nr -lt 0 -or $nr -ge $widoczne.Count) { return $null }
+    return $widoczne[$nr]
+}
+
+# Przycisk "Usun z grupy" jest czynny dokladnie wtedy, gdy jest co usunac I wolno to zrobic.
+# Warunek stoi w JEDNYM miejscu, a wola sie i ze zmiany zaznaczenia, i z kazdego przebudowania
+# listy: filtr kasuje zaznaczenie, a przycisk zostawiony czynny odnosilby sie do pozycji,
+# ktorej juz nie ma na liscie.
+function Set-JezykPrzyciskUsunGrupe {
+    param($Okno)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan -or -not $stan.PrzyciskUsun) { return }
+
+    $grupa = Get-JezykZaznaczonaGrupe -Okno $Okno
+    $stan.PrzyciskUsun.Enabled = ([bool]$grupa -and [bool]$grupa.Dn -and
+                                  (Test-JezykMoznaZarzadzacGrupami $Script:OstatnieKonto))
+}
+
 <#
 .SYNOPSIS
-    Dopisuje pokazane konto do rozpoznanej grupy - obsluga przycisku "Dodaj".
+    Pyta, czy na pewno zmienic czlonkostwo. Odpowiedz domyslna to NIE.
 
 .DESCRIPTION
-    Ta sama droga, co przy odblokowaniu: konto bierzemy z ostatniego odczytu z AD, a nie
-    z kontrolki; okno logowania jest zarazem POTWIERDZENIEM operacji i nazywa konto, grupe
-    i domene; anulowanie jest cisza; poswiadczenia ida wylacznie do tego jednego wywolania
-    i gina w finally.
+    POTWIERDZENIE ZOSTAJE, MIMO ZE O POSWIADCZENIA JUZ NIE PYTAMY. Przy odblokowaniu role
+    potwierdzenia pelni okno logowania - tutaj nie ma go wcale, wiec bez tego pytania
+    usuniecie z grupy bylo by nieodwracalne jednym ruchem myszy, na pozycji zaznaczonej
+    przez przypadek. Tresc nazywa konto, grupe i domene, czyli wszystko, co ma sie zgadzac.
+#>
+function Confirm-JezykZmianyCzlonkostwa {
+    param($Okno, [string]$Login, [string]$Grupa, [string]$Domena,
+          [ValidateSet('Dodaj', 'Usun')][string]$Akcja)
+
+    # Napis skladany DO ZMIENNEJ: w argumencie metody przecinki naleza do listy argumentow
+    # metody, a nie do tablicy dla operatora -f.
+    $tresc = if ($Akcja -eq 'Usun') {
+        'Usunąć konto "{0}" z grupy "{1}" w domenie {2}?' -f $Login, $Grupa, $Domena
+    } else {
+        'Dodać konto "{0}" do grupy "{1}" w domenie {2}?' -f $Login, $Grupa, $Domena
+    }
+
+    $odpowiedz = [System.Windows.Forms.MessageBox]::Show(
+        $Okno, $tresc, 'Jeżyk - Grupy AD',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question,
+        [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+
+    return ($odpowiedz -eq [System.Windows.Forms.DialogResult]::Yes)
+}
+
+<#
+.SYNOPSIS
+    Wspolny ogon obu zmian czlonkostwa: potwierdzenie, zapis, ponowny odczyt, odswiezenie.
+
+.DESCRIPTION
+    JEDNA DROGA DLA OBU KIERUNKOW. Dopisanie i usuniecie roznia sie wylacznie tym, SKAD
+    bierze sie grupa - z rozpoznanej nazwy albo z zaznaczenia na liscie. Wszystko dalej
+    jest identyczne, wiec dwie kopie rozjechalyby sie przy pierwszej zmianie: jeden
+    kierunek dostalby potwierdzenie albo odswiezenie, a drugi nie.
 
     Po udanym zapisie lista odswieza sie ODCZYTEM Z KONTROLERA, KTORY TEN ZAPIS PRZYJAL -
-    jedno zrodlo prawdy zamiast dopisywania pozycji z pamieci okna. Gdy odczyt zawiedzie,
-    POWODZENIA ZAPISU NIE WOLNO ZGUBIC: bez tego zdania operator dopisuje te sama grupe
-    drugi raz.
+    jedno zrodlo prawdy zamiast przestawiania pozycji z pamieci okna. Gdy odczyt zawiedzie,
+    POWODZENIA ZAPISU NIE WOLNO ZGUBIC: bez tego zdania operator powtarza operacje, ktora
+    juz sie udala.
+
+    Oddaje $true, gdy ZAPIS sie powiodl - takze wtedy, gdy ponowny odczyt zawiodl. Wolajacy
+    sprzata po sobie (pole nazwy, zapamietany wybor) wylacznie po udanym zapisie.
 #>
+function Invoke-JezykZapisCzlonkostwa {
+    param($Okno, $Grupa, [ValidateSet('Dodaj', 'Usun')][string]$Akcja)
+
+    if (-not $Okno -or -not $Grupa) { return $false }
+
+    # KONTO Z OBIEKTU WYNIKU, NIE Z KONTROLKI - zrodlem prawdy dla operacji zapisu jest
+    # ostatni odczyt z AD.
+    if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return $false }
+    $login = [string]$Script:OstatnieKonto.Login
+    if (-not $login) { return $false }
+
+    $domena = [string]$Script:Config.Domena
+
+    # Potwierdzenie PRZED zapisem. Rezygnacja jest cisza: zadnego zapisu, zadnego bledu.
+    $zgoda = Confirm-JezykZmianyCzlonkostwa -Okno $Okno -Login $login `
+                                            -Grupa ([string]$Grupa.Nazwa) -Domena $domena -Akcja $Akcja
+    if (-not $zgoda) { return $false }
+
+    $Okno.UseWaitCursor = $true
+    try {
+        $wynik = Set-JezykCzlonkostwoGrupy -Login $login -Dn ([string]$Script:OstatnieKonto.Dn) `
+                                           -GrupaDn ([string]$Grupa.Dn) -Domena $domena -Akcja $Akcja
+    }
+    finally { $Okno.UseWaitCursor = $false }
+
+    # Niepowodzenie konczy sie tutaj: nie ma czego odswiezac, a powod odmowy jest jedyna
+    # rzecza, ktora ma zostac na ekranie.
+    if (-not $wynik.Udane) {
+        Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat) `
+                           -Szczegoly ([string]$wynik.Szczegoly)
+        return $false
+    }
+
+    $odczyt = Get-JezykGrupyKonta -Login $login -Serwer ([string]$wynik.Serwer)
+
+    if (-not $odczyt.Udane) {
+        $tekst = '{0} Nie udało się jednak odświeżyć listy - zamknij i otwórz okno grup.' -f $wynik.Komunikat
+        Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst -Szczegoly ([string]$odczyt.Szczegoly)
+        return $true
+    }
+
+    Update-JezykGrupyWOknie -Okno $Okno -Grupy @($odczyt.Grupy)
+    Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat)
+    return $true
+}
+
+# Obsluga przycisku "Dodaj": grupa bierze sie z rozpoznanej nazwy ("Sprawdz nazwy").
 function Invoke-JezykDodanieDoGrupy {
     param($Okno)
 
@@ -2022,68 +2143,33 @@ function Invoke-JezykDodanieDoGrupy {
     $wybrana = $stan.Wybrana
     if (-not $wybrana) { return }
 
-    # KONTO Z OBIEKTU WYNIKU, NIE Z KONTROLKI - zrodlem prawdy dla operacji zapisu jest
-    # ostatni odczyt z AD.
-    if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return }
-    $login = [string]$Script:OstatnieKonto.Login
-    if (-not $login) { return }
+    if (-not (Invoke-JezykZapisCzlonkostwa -Okno $Okno -Grupa $wybrana -Akcja 'Dodaj')) { return }
 
-    $domena = [string]$Script:Config.Domena
+    # Zapis sie udal - pole czyscimy, zeby zostawiona nazwa nie wygladala na gotowa do
+    # uzycia, a drugie klikniecie nie dopisywalo tego samego czlonkostwa. Czyszczenie budzi
+    # TextChanged, wiec przy okazji gasi "Dodaj" i zeruje wybor.
+    if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = '' }
+    $stan.Wybrana = $null
+    if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
+}
 
-    $poswiadczenia = $null
-    try {
-        try {
-            $poswiadczenia = Get-Credential -Message (
-                'Konto z prawem dopisywania do grup w domenie {0}. Konto {1} zostanie dodane do grupy {2}.' -f $domena, $login, $wybrana.Nazwa)
-        }
-        catch {
-            $opis = Get-JezykOpisBledu $_ 'Okno logowania'
-            Set-JezykNotkeGrup -Okno $Okno -Tekst $opis.Krotki -Szczegoly $opis.Szczegoly
-            return
-        }
+# Obsluga przycisku "Usun z grupy": grupa bierze sie z zaznaczenia na liscie.
+function Invoke-JezykUsuniecieZGrupy {
+    param($Okno)
 
-        # Anulowanie okna logowania: zadnego zapisu, zadnego bledu.
-        if (-not $poswiadczenia) { return }
+    $grupa = Get-JezykZaznaczonaGrupe -Okno $Okno
+    if (-not $grupa) { return }
 
-        $Okno.UseWaitCursor = $true
-        try {
-            $wynik = Add-JezykKontoDoGrupy -Login $login -Dn ([string]$Script:OstatnieKonto.Dn) `
-                                           -GrupaDn ([string]$wybrana.Dn) -Domena $domena `
-                                           -Poswiadczenia $poswiadczenia
-        }
-        finally { $Okno.UseWaitCursor = $false }
-
-        # Niepowodzenie konczy sie tutaj: nie ma czego odswiezac, a powod odmowy jest
-        # jedyna rzecza, ktora ma zostac na ekranie. Wybor zostaje, zeby dalo sie
-        # sprobowac ponownie innym kontem.
-        if (-not $wynik.Udane) {
-            Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat) `
-                               -Szczegoly ([string]$wynik.Szczegoly)
-            return
-        }
-
-        # Zapis sie udal. Pole czyscimy JUZ TERAZ - zostawiona nazwa wygladalaby na gotowa
-        # do uzycia i drugie kliniecie dopisywaloby to samo czlonkostwo. Czyszczenie budzi
-        # TextChanged, wiec przy okazji gasi "Dodaj" i zeruje wybor.
-        if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = '' }
-        $stan.Wybrana = $null
-        if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
-
-        $odczyt = Get-JezykGrupyKonta -Login $login -Serwer ([string]$wynik.Serwer)
-
-        if (-not $odczyt.Udane) {
-            $tekst = '{0} Nie udało się jednak odświeżyć listy - zamknij i otwórz okno grup.' -f $wynik.Komunikat
-            Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst -Szczegoly ([string]$odczyt.Szczegoly)
-            return
-        }
-
-        Update-JezykGrupyWOknie -Okno $Okno -Grupy @($odczyt.Grupy)
-        Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat)
+    # POZYCJA BEZ NAZWY WYROZNIAJACEJ nie da sie usunac - i trzeba to powiedziec. Milczace
+    # klikniecie wygladaloby na usterke, a nie na brak danych. Dzis taka pozycja moze wyjsc
+    # wylacznie z wpisu memberOf, ktory nie zaczyna sie od CN=.
+    if (-not $grupa.Dn) {
+        Set-JezykNotkeGrup -Okno $Okno `
+                           -Tekst 'Tej pozycji nie da się usunąć - katalog nie podał nazwy wyróżniającej grupy.'
+        return
     }
-    finally {
-        # Niszczymy haslo, a nie "zapominamy referencje" - tak samo jak przy odblokowaniu.
-        if ($poswiadczenia -and $poswiadczenia.Password) { $poswiadczenia.Password.Dispose() }
-    }
+
+    [void](Invoke-JezykZapisCzlonkostwa -Okno $Okno -Grupa $grupa -Akcja 'Usun')
 }
 
 <#
