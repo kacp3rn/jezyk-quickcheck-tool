@@ -287,12 +287,19 @@ function Set-JezykResult {
             # Dwa wolne pola, dwa NIEZALEZNE zadania w tle. Data nie czeka nawet na wlasne
             # zadanie: wartosc przyblizona przyszla razem z reszta konta, wiec pokazujemy ja
             # od razu, a tlo tylko ja uscisli. Komputer czekac musi - AD nie wie o nim nic.
+            #
+            # KOMPUTER TYLKO W DOMENIE ZNANEJ SCCM. Poza nia jego pola sa schowane
+            # (Set-JezykUkladSccm), wiec zapytanie pytaloby o konto obce dla serwera,
+            # a jego odpowiedz - takze blad pod "!" - nie mialaby gdzie sie pokazac.
+            # Notka SCCM gasnie z tego samego powodu: zapalona czekalaby na zadanie,
+            # ktorego nie ma.
+            $zSccm = Test-JezykDomenaZSccm $Script:Config.Domena
             $Script:LogowaniePrzyblizone   = $Result.OstatnieLogowaniePrzyblizone
-            Set-JezykNotkeSprawdzania
+            Set-JezykNotkeSprawdzania -Notka $(if ($zSccm) { 'Obie' } else { 'Logowanie' })
             Set-JezykInfo 'Komputer'              ''
             Set-JezykInfo 'KomputerWspoldzielony' ''
             Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
-            Start-JezykZadanieKomputera -Login ([string]$Result.Login)
+            if ($zSccm) { Start-JezykZadanieKomputera -Login ([string]$Result.Login) }
 
             $k.TxtKatalog.Text = [string]$Result.Lokalizacja
 
@@ -465,16 +472,23 @@ function Set-JezykComputerResult {
         # nie wiadomo", ktory Clear-JezykKomputer wyzej wlasnie odlozyl.
         Set-JezykPrzyciskiZdalne $Script:OstatniKomputer -Widok Maszyna
 
-        # Kropki zamiast napisu nieruchomego: trzy pola czekaja teraz na to samo zapytanie
-        # (uzytkownik, adres IP, adres MAC), a napis nieruchomy nie odroznia trwajacej
-        # pracy od zawieszonej.
-        Set-JezykNotkeSprawdzania -Notka 'Sccm'
-        Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
+        # CALY ZESTAW SIECIOWY TYLKO W DOMENIE ZNANEJ SCCM - zapytanie o uzytkownika i sonda
+        # razem. Poza nia oba wiersze, ktore je pokazuja, sa schowane (Set-JezykUkladSccm):
+        # uzytkownika SCCM nie zna, a wynik sondy nie mialby gdzie sie pokazac. Bez sondy
+        # $Script:MaszynaOdpowiada zostaje "nie wiadomo", wiec "Polacz" i "Dyski" nie
+        # zapala sie same - Set-JezykPrzyciskiZdalne wymaga potwierdzonej odpowiedzi.
+        if (Test-JezykDomenaZSccm $Script:Config.Domena) {
+            # Kropki zamiast napisu nieruchomego: trzy pola czekaja teraz na to samo zapytanie
+            # (uzytkownik, adres IP, adres MAC), a napis nieruchomy nie odroznia trwajacej
+            # pracy od zawieszonej.
+            Set-JezykNotkeSprawdzania -Notka 'Sccm'
+            Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
 
-        # ZADANIE SCCM BYWA NIEURUCHOMIONE - bez ustawien wraca, zanim cokolwiek zbuduje.
-        # Dostepnosc maszyny jest wtedy nadal odpowiedzia, bo ICMP nie potrzebuje SCCM do
-        # niczego; bez tego sonda "automatyczna" nie odbylaby sie w takim wdrozeniu ani raz.
-        if (-not $Script:ZadanieUzytkownika) { Invoke-JezykPing -Widok Maszyna }
+            # ZADANIE SCCM BYWA NIEURUCHOMIONE - bez ustawien wraca, zanim cokolwiek zbuduje.
+            # Dostepnosc maszyny jest wtedy nadal odpowiedzia, bo ICMP nie potrzebuje SCCM do
+            # niczego; bez tego sonda "automatyczna" nie odbylaby sie w takim wdrozeniu ani raz.
+            if (-not $Script:ZadanieUzytkownika) { Invoke-JezykPing -Widok Maszyna }
+        }
 
         if ($k.TxtKomputerTworca) {
             $k.TxtKomputerTworca.Text = Get-JezykOpisTworcy $Result.Tworca $Result.Utworzono

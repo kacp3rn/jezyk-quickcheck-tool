@@ -411,6 +411,23 @@ $Script:Ustawienia = @{
     # $false = probujemy wylacznie protokolu z SccmProtokol.
     SccmProtokolZapasowy = $true
 
+    # Domeny, ktorych konta i komputery zna serwer SCCM wyzej. Poza nimi okno NIE POKAZUJE
+    # niczego, co bierze sie z SCCM albo z maszyny wskazanej przez SCCM: pol "Ostatnio
+    # uzywany komputer", "Ostatnio zalogowany uzytkownik", "Adres IP" i "Adres MAC" ani
+    # przyciskow "Pinguj", "Polacz" i "Dyski" - a oba panele zsuwaja sie o te wiersze.
+    #
+    # Po co: serwer lokacji inwentaryzuje maszyny swojej domeny, a konta pozostalych sa dla
+    # niego obce - pola mowilyby tam zawsze "brak danych", a kazde wyszukanie pytaloby SCCM
+    # o cos, czego nie wie. Adres IP i przyciski znikaja razem z nimi: w widoku konta nazwe
+    # maszyny do sprawdzenia podaje wlasnie SCCM, a do domen spoza tej listy siega sie
+    # wylacznie przez AD.
+    #
+    # Pusta lista = pol SCCM nie ma w zadnej domenie - ta sama konwencja, co przy obu listach
+    # zapisu wyzej. Kazda domena musi byc tez na liscie Domeny.
+    DomenyZSccm = @(
+        'jezyk.pl'
+    )
+
     # PELNA sciezka do CmRcViewer.exe - zdalnej konsoli z ConfigMgr. Uruchamia ja przycisk
     # "Polacz", ktory pojawia sie nad "Pinguj" wtedy i tylko wtedy, gdy SCCM podal nazwe
     # maszyny, A TA SCIEZKA JEST WYPELNIONA. PUSTE = przycisku nie ma i to jest wartosc
@@ -426,8 +443,9 @@ $Script:Ustawienia = @{
     SciezkaRemoteControl = ''
 }
 
-# Normalizacja wszystkich trzech list: male litery i bez spacji na brzegach. Od tego zalezy
-# porownanie w Test-JezykWolnoOdblokowac i w Test-JezykWolnoZarzadzacGrupami - bez niej wpis
+# Normalizacja wszystkich czterech list: male litery i bez spacji na brzegach. Od tego zalezy
+# porownanie w Test-JezykWolnoOdblokowac, Test-JezykWolnoZarzadzacGrupami
+# i Test-JezykDomenaZSccm - bez niej wpis
 # "ZOLW.PL" nie zgadzalby sie z domena wybrana w oknie i przycisk po cichu przestalby
 # dzialac.
 $Script:Domeny = @($Script:Ustawienia.Domeny |
@@ -441,6 +459,10 @@ $Script:DomenyZOdblokowaniem = @($Script:Ustawienia.DomenyZOdblokowaniem |
 $Script:DomenyZZarzadzaniemGrupami = @($Script:Ustawienia.DomenyZZarzadzaniemGrupami |
                                        ForEach-Object { ([string]$_).Trim().ToLower() } |
                                        Where-Object { $_ })
+
+$Script:DomenyZSccm = @($Script:Ustawienia.DomenyZSccm |
+                        ForEach-Object { ([string]$_).Trim().ToLower() } |
+                        Where-Object { $_ })
 
 # Zadnej wartosci zapasowej: brak listy jest brakiem listy i konczy sie komunikatem.
 $Script:DomenaAD = if ($Script:Domeny.Count) { $Script:Domeny[0] } else { '' }
@@ -739,6 +761,12 @@ function Get-JezykOpisKonfiguracji {
             $(if ($Script:Ustawienia.SccmProtokolZapasowy) { ' (przy braku połączenia próbuje drugiego protokołu)' } else { '' })
     } else {
         'SCCM: nieskonfigurowany - pole "Ostatnio używany komputer" pozostaje puste'
+    }
+
+    $wiersze += if (@($Script:DomenyZSccm).Count) {
+        'Pola SCCM i adresy maszyny widoczne w: {0}' -f (@($Script:DomenyZSccm) -join ', ')
+    } else {
+        'Pola SCCM i adresy maszyny: ukryte we wszystkich domenach'
     }
 
     $wiersze += if ($Script:Ustawienia.SciezkaRemoteControl) {

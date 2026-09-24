@@ -255,6 +255,12 @@ function Confirm-JezykUstawienia {
         }
     }
 
+    foreach ($domena in @($Script:DomenyZSccm)) {
+        if ($domeny -notcontains $domena) {
+            $bledy += 'DomenyZSccm: "{0}" nie ma na liście Domeny - pola SCCM nie pojawią się w niej nigdy.' -f $domena
+        }
+    }
+
     foreach ($kontroler in @($Script:Ustawienia.Kontrolery)) {
         if (-not $kontroler) { continue }
         if (-not (Test-JezykNazwaWDomenach $kontroler $domeny)) {
@@ -2296,6 +2302,17 @@ function Test-JezykWolnoZarzadzacGrupami {
     param([string]$Domena)
     if (-not $Domena) { return $false }
     return (@($Script:DomenyZZarzadzaniemGrupami) -contains $Domena.ToLower())
+}
+
+# Czy SCCM zna konta i komputery tej domeny - jedno miejsce tej decyzji dla obu stron okna:
+# widok pyta tu, czy uruchomic zapytania do SCCM, a uklad, czy pokazac pola, ktore te
+# zapytania wypelniaja. Dwie kopie rozjechalyby sie przy pierwszej zmianie i okno albo
+# pytaloby SCCM o konto, ktorego nie zna, albo chowalo pola, ktore wlasnie sie wypelniaja.
+# Pusta lista znaczy "nigdzie", tak samo jak przy obu listach wyzej.
+function Test-JezykDomenaZSccm {
+    param([string]$Domena)
+    if (-not $Domena) { return $false }
+    return (@($Script:DomenyZSccm) -contains $Domena.ToLower())
 }
 
 # KONTROLER, NA KTORY KIERUJEMY ZAPIS - wspolny dla obu operacji zapisu w narzedziu.

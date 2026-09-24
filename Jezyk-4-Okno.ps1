@@ -1550,6 +1550,93 @@ function Set-JezykWysokoscOkna {
                                                     (Get-JezykWysokoscWEkranie $wysokosc))
 }
 
+# Wiersze obu paneli zasilane przez SCCM - opis zaklada New-JezykForm, patrz
+# Set-JezykUkladSccm. Uklad startowy jest PELNY, bo tak panele buduje New-JezykForm.
+$Script:WierszeSccm      = @()
+$Script:UkladBezSccm     = $false
+# Pary "kontrolka + wlasciwosc + o ile pojechala" - powrot cofa dokladnie te liczby.
+$Script:PrzesunieciaSccm = @()
+
+<#
+.SYNOPSIS
+    Chowa wiersze zasilane przez SCCM i zsuwa pod nimi reszte panelu - albo cofa to co do piksela.
+
+.DESCRIPTION
+    DOMENA DECYDUJE, a nie wynik wyszukania: poza domenami z DomenyZSccm te pola nie
+    wypelnia sie NIGDY, dopoki ktos nie zmieni konfiguracji - ta sama zasada, co przy
+    "Odblokuj konto". Pusty wiersz w srodku panelu wygladalby jak nieudany odczyt, wiec
+    reszta panelu jedzie w gore, a okno kurczy sie razem z nim: Set-JezykWidok czyta
+    wysokosc panelu PO tej funkcji.
+
+    KAZDA KONTROLKA PANELU, A NIE LISTA. Jedzie o tyle skokow wiersza, ile usunietych
+    wierszy lezy nad nia. Lista przesuwanych kontrolek rozjechalaby sie przy pierwszym
+    nowym polu - zapomniane zostaloby na starym miejscu i weszlo na sasiada, bez zadnego
+    komunikatu.
+
+    PROGIEM JEST POLE USUNIETEGO WIERSZA. Wszystko z wierszy ponizej lezy nizej niz ono -
+    takze przycisk "!", ktory stoi do dwoch pikseli NAD swoja etykieta
+    (Set-JezykPrzyciskPrzyEtykiecie) - a wszystko z wierszy powyzej lezy wyzej, bo skok to
+    etykieta, pole i przerwa.
+
+    PRZESUNIECIA ZAPISANE, A NIE LICZONE DRUGI RAZ. Powrot odejmuje dokladnie to, co dodalo
+    zsuniecie - dzieki temu sklada sie z poprawka motywu (Set-JezykWyrownaniePol), ktora
+    takze przesuwa pola, a kolejne przelaczenia domeny wracaja na te same liczby, zamiast
+    je sumowac. Z tego samego powodu progi sa czytane z BIEZACEGO Top pol, a nie z siatki.
+
+    WRACA WIDOCZNOSC TYLKO STALYCH. Etykiety, pola i "Pinguj" sa widoczne zawsze, gdy jest
+    ich wiersz. Przyciski "!", "Polacz" i "Dyski" maja wlasnych wlascicieli (Set-JezykInfo,
+    Set-JezykPrzyciskiZdalne) i zostaja schowane: pokazane tutaj zapalilyby sie bez
+    powodu, a Clear-JezykKonto i Clear-JezykKomputer ustawily je przed chwila tak, jak trzeba.
+
+    Bez zmiany stanu nie robi nic - Set-JezykWidok wola ja przy KAZDEJ zmianie trybu.
+#>
+function Set-JezykUkladSccm {
+    param([bool]$ZSccm)
+
+    $bezSccm = -not $ZSccm
+    if ($bezSccm -eq $Script:UkladBezSccm) { return }
+
+    if ($bezSccm) {
+        foreach ($opis in @($Script:WierszeSccm)) {
+            $progi  = @($opis.Wiersze | ForEach-Object { $_.Top })
+            $ukryte = @($opis.Stale) + @($opis.Zmienne)
+
+            foreach ($kontrolka in $ukryte) { $kontrolka.Visible = $false }
+
+            foreach ($kontrolka in @($opis.Panel.Controls)) {
+                if ($ukryte -contains $kontrolka) { continue }
+
+                $wierszy = @($progi | Where-Object { $_ -lt $kontrolka.Top }).Count
+                if ($wierszy -eq 0) { continue }
+
+                $piksele = $wierszy * $Script:SkokWiersza
+                $kontrolka.Top = $kontrolka.Top - $piksele
+                $Script:PrzesunieciaSccm += [pscustomobject]@{
+                    Kontrolka = $kontrolka; Wlasciwosc = 'Top'; Piksele = $piksele }
+            }
+
+            $piksele = $progi.Count * $Script:SkokWiersza
+            $opis.Panel.Height = $opis.Panel.Height - $piksele
+            $Script:PrzesunieciaSccm += [pscustomobject]@{
+                Kontrolka = $opis.Panel; Wlasciwosc = 'Height'; Piksele = $piksele }
+        }
+    }
+    else {
+        foreach ($przesuniecie in @($Script:PrzesunieciaSccm)) {
+            $kontrolka  = $przesuniecie.Kontrolka
+            $wlasciwosc = $przesuniecie.Wlasciwosc
+            $kontrolka.$wlasciwosc = $kontrolka.$wlasciwosc + $przesuniecie.Piksele
+        }
+        $Script:PrzesunieciaSccm = @()
+
+        foreach ($opis in @($Script:WierszeSccm)) {
+            foreach ($kontrolka in @($opis.Stale)) { $kontrolka.Visible = $true }
+        }
+    }
+
+    $Script:UkladBezSccm = $bezSccm
+}
+
 # Pokazuje widok wlasciwy dla wybranego trybu. Przy kazdej zmianie czyscimy OBA widoki -
 # bez tego po przejsciu z konta na komputer zostalyby dane poprzedniego wyszukania,
 # opisane etykietami z zupelnie innego widoku.
@@ -1572,6 +1659,12 @@ function Set-JezykWidok {
     # Widok i lista wlasnie zniknely, wiec jez z jablkiem opowiadalby o wyniku, ktorego
     # nikt juz nie widzi. Wolane takze przy starcie okna - stad stan poczatkowy.
     Set-JezykStanJeza 'Ukryty'
+
+    # WIERSZE SCCM PRZED WYSOKOSCIA OKNA - zsuniecie zmienia wysokosc paneli, a ta jest
+    # czytana nizej wprost z kontrolki. Zmiana domeny idzie wlasnie tedy, wiec innego
+    # miejsca, ktore by uklad przeliczalo, nie ma. Po obu Clear-: przyciski, ktorych ta
+    # funkcja nie pokazuje, maja juz stan wlasciwy dla pustego widoku.
+    Set-JezykUkladSccm (Test-JezykDomenaZSccm $Script:Config.Domena)
 
     $gora = if ($zListą) { $Script:PanelZListą } else { $Script:PanelBezListy }
 
@@ -4363,6 +4456,36 @@ function New-JezykForm {
     # stoi po lewej.
     Set-JezykPonizejPola @($btnKompDyski, $btnKompPolacz, $btnKompPinguj) `
                          $txtKompWlaczone $odstepPionowyPolacz
+
+    # --- WIERSZE ZASILANE PRZEZ SCCM -------------------------------------------------
+    # Co znika w domenie spoza DomenyZSccm - chowa i zsuwa Set-JezykUkladSccm. Opis stoi
+    # PO wyrownaniu tylko dla porzadku: funkcja trzyma kontrolki, a nie ich wspolrzedne.
+    #
+    #   Wiersze - pola wierszy znikajacych W CALOSCI; od nich liczy sie zsuniecie. Wiersz
+    #             e-maila w widoku konta nie znika, bo lewa polowa zostaje.
+    #   Stale   - widoczne zawsze, gdy jest ich wiersz; powrot pokazuje je z powrotem.
+    #   Zmienne - widocznosc ustawia kto inny ("!", "Polacz", "Dyski"); tu sa tylko chowane.
+    #
+    # NOWA KONTROLKA W TYCH WIERSZACH MUSI TU TRAFIC. Pominieta zostanie widoczna w domenie
+    # bez SCCM - na miejscu wiersza, ktory wlasnie zniknal, czyli na polu, ktore tam wjechalo.
+    #
+    # POZA $Script:Kontrolki: rejestr trzyma kontrolki, a zestaw weryfikacyjny zaklada
+    # atrape kontrolki pod kazdym kluczem, ktory widzi w kodzie.
+    $Script:WierszeSccm = @(
+        [pscustomobject]@{
+            Panel   = $pnlKonto
+            Wiersze = @($txtKomputerMac)
+            Stale   = @($lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnPinguj,
+                        $lblKomputerMac, $txtKomputerMac, $lblKomputerIp, $txtKomputerIp)
+            Zmienne = @($btnPolacz, $btnInfoKomputer, $btnInfoKomputerWspoldzielony, $btnInfoMac)
+        },
+        [pscustomobject]@{
+            Panel   = $pnlKomputer
+            Wiersze = @($txtKompUzytkownik, $txtKompMac)
+            Stale   = @($lblKompUzytkownik, $txtKompUzytkownik,
+                        $lblKompMac, $txtKompMac, $lblKompIp, $txtKompIp, $btnKompPinguj)
+            Zmienne = @($btnInfoUzytkownik, $btnInfoMacMaszyny, $btnKompPolacz, $btnKompDyski)
+        })
 
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
