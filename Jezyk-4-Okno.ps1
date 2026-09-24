@@ -3788,8 +3788,9 @@ function New-JezykForm {
     Set-JezykWyglad $pnlKonto 'Okno' -Rejestruj
     $pnlKonto.Size = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscPanelu)
 
-    # Werdykt: napis na tle zaleznym od stanu konta - i jedyna kontrolka, ktorej tresc tez
-    # od niego zalezy. Wspolrzedna pionowa ustawiana jest przez wyrownanie na koncu tej funkcji.
+    # Werdykt: jedyny NAPIS w oknie, ktorego kolor zalezy od stanu konta (pola niosa stan
+    # tlem), i jedyna kontrolka, ktorej tresc tez od niego zalezy. Wspolrzedna pionowa
+    # ustawiana jest przez wyrownanie na koncu tej funkcji.
     $chkWerdykt           = New-JezykCheckbox '' $Script:Margines 0 18
     # Lewa wspolrzedna napisu tez z wyrownania - liczy sie od kwadratu, jak we flagach.
     # Napis startowy jest NEUTRALNY, a nie przykladowy. Szerokosc etykiety mierzy sie
@@ -3800,11 +3801,12 @@ function New-JezykForm {
     # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
     # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
-    # ROLA "Okno" PRZED KOLOREM. Etykieta lezy na panelu, wiec jej tlem spoczynkowym jest
-    # tlo okna, a nie pola - Set-JezykKolorPola wraca do niego w stanie neutralnym wlasnie
-    # po tej rejestracji. Bez niej werdykt "Nie sprawdzono" stalby w bialym prostokacie.
+    # ROLA "Okno" PRZED KOLOREM. Po tej rejestracji Set-JezykKolorPola poznaje, ze to
+    # etykieta lezaca na panelu, a nie pole: stan konta maluje jej NAPIS, a tlem zostaje tlo
+    # okna. Bez niej werdykt dostalby kolorowe tlo jak pole tekstowe - zielony albo czerwony
+    # prostokat posrodku panelu.
     Set-JezykWyglad    $lblWerdykt 'Okno' -Rejestruj
-    Set-JezykKolorPola $lblWerdykt 'Tekstu'
+    Set-JezykKolorPola $lblWerdykt 'Nieznany'
 
     # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu. Widoczny
     # wylacznie w domenie z odblokowaniem - widocznosc i dostepnosc ustawia jedno miejsce,

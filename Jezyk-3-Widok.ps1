@@ -96,49 +96,58 @@ function Get-JezykTelefony {
 
 <#
 .SYNOPSIS
-    Nadaje polu kolor TLA wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
+    Nadaje kontrolce kolor wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
 
 .DESCRIPTION
-    ZNACZENIE NIESIE TLO, A NAPIS ZOSTAJE W KOLORZE TEKSTU. Zielony i czerwony napis czytalo
-    sie gorzej niz ten sam napis na zielonym i czerwonym tle - kolor ma byc widac, a tresc
-    czytac tak samo jak w kazdym innym polu okna. Stad ForeColor ustawiany zawsze na
-    KolorTekstu: pole wracajace ze stanu pokolorowanego sprzed tej zmiany nie moze zostac
-    z kolorowym napisem.
+    ZNACZENIE NIESIE TLO POLA ALBO NAPIS ETYKIETY - nigdy jedno i drugie naraz:
+      pole tekstowe  kolorowe TLO, napis w kolorze tekstu. Zielony i czerwony napis w polu
+                     czytalo sie gorzej niz ten sam napis na kolorowym tle - kolor ma byc
+                     widac, a tresc czytac tak samo jak w kazdym innym polu okna.
+      werdykt        kolorowy NAPIS, tlo okna. Etykieta lezaca na panelu nie ma wlasnego
+                     pudelka, wiec kolorowe tlo robilo z niej kolorowy prostokat posrodku
+                     panelu - a werdykt ma sie czytac jak zdanie, nie jak pole.
+    Rozstrzyga rola wygladu zarejestrowana przez Set-JezykWyglad ("Okno"), a nie typ
+    kontrolki - ten zamknalby funkcje przed zestawem weryfikacyjnym. Etykieta pokolorowana
+    ta funkcja BEZ takiej rejestracji dostalaby kolorowe tlo jak pole.
+
+    OBA KOLORY USTAWIANE ZAWSZE, w kazdym stanie: kontrolka wracajaca ze stanu
+    pokolorowanego nie moze zostac ani z kolorowym napisem, ani z kolorowym tlem.
 
     Paleta zmienia sie w trakcie dzialania okna (przycisk motywu w prawym dolnym rogu), wiec
-    odcien zapisany na kontrolce przestaje po przelaczeniu cokolwiek znaczyc: jasne tlo
-    dobrane pod czarny tekst pod bialym tekstem ciemnego motywu jest nieczytelne,
-    a nieczytelny werdykt to werdykt, ktorego nie ma. Przemalowac da sie tylko to, o czym
-    wiadomo, CO mialo znaczyc - stad rola zamiast koloru.
+    odcien zapisany na kontrolce przestaje po przelaczeniu cokolwiek znaczyc: zielen dobrana
+    pod jasne okno na ciemnym jest nieczytelna, a nieczytelny werdykt to werdykt, ktorego
+    nie ma. Przemalowac da sie tylko to, o czym wiadomo, CO mialo znaczyc - stad rola
+    zamiast koloru.
 
     Rola trafia do $Script:RoleKolorow, skad czyta ja Set-JezykMotyw. Kluczem jest SAMA
     KONTROLKA, a nie jej nazwa z rejestru: pola sondy przychodza z Get-JezykPolaSondy juz
     jako obiekty i nazwy przy sobie nie maja.
 
-    "Tekstu" to stan neutralny - nie "brak koloru", tylko tlo spoczynkowe tej kontrolki
-    z biezacej palety. DWA ROZNE TLA SPOCZYNKOWE: pole tekstowe ma wlasne (KolorTla),
-    a etykieta werdyktu lezy na panelu i jej tlem jest tlo okna. Rozstrzyga rola wygladu
-    zarejestrowana przez Set-JezykWyglad ("Okno"), a nie typ kontrolki - ten zamknalby
-    funkcje przed zestawem weryfikacyjnym. Etykieta pokolorowana ta funkcja BEZ takiej
-    rejestracji wrocilaby do stanu neutralnego jako bialy prostokat.
+    "Tekstu" to stan neutralny - nie "brak koloru", tylko spoczynkowy wyglad kontrolki
+    z biezacej palety. "Nieznany" to szary napis werdyktu, ktory nie ma czego oceniac;
+    w polu tekstowym znaczy to samo, co "Tekstu".
 
-    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: tlo zostaje na kontrolce po
+    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: kolor zostaje na kontrolce po
     zdjeciu tresci, wiec zerowanie NIE JEST kosmetyka.
 #>
 function Set-JezykKolorPola {
-    param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem')][string]$Rola)
+    param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem', 'Nieznany')][string]$Rola)
 
     if (-not $Pole) { return }
 
     $Script:RoleKolorow[$Pole] = $Rola
+
+    if ($Script:KontrolkiMotywu[$Pole] -eq 'Okno') {
+        $Pole.BackColor = $Script:Config.KolorOkna
+        $Pole.ForeColor = $Script:Config['Kolor' + $Rola]
+        return
+    }
+
     $Pole.ForeColor = $Script:Config.KolorTekstu
     $Pole.BackColor = switch ($Rola) {
         'Ok'      { $Script:Config.KolorPolaOk }
         'Problem' { $Script:Config.KolorPolaProblem }
-        default   {
-            if ($Script:KontrolkiMotywu[$Pole] -eq 'Okno') { $Script:Config.KolorOkna }
-            else                                           { $Script:Config.KolorTla }
-        }
+        default   { $Script:Config.KolorTla }
     }
 }
 
@@ -152,7 +161,7 @@ function Clear-JezykKonto {
     # a ten czysci widok i nie wpisuje potem zadnego wyniku.
     $k.WerdyktBox.Checked   = $false
     $k.Werdykt.Text         = 'Nie sprawdzono'
-    Set-JezykKolorPola $k.Werdykt 'Tekstu'
+    Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
     $k.ChkAktywne.Checked     = $false
     $k.ChkZablokowane.Checked = $false
@@ -348,11 +357,11 @@ function Set-JezykResult {
 
         'Kontakt' {
             # Kontakt nie ma stanu konta, wiec werdykt nie ma o czym orzekac - mowi wprost,
-            # z jakim rodzajem pozycji ma sie do czynienia. Tlo neutralne, bo tu nie ma
+            # z jakim rodzajem pozycji ma sie do czynienia. Kolor nieznany, bo tu nie ma
             # ani problemu, ani jego braku.
             $k.WerdyktBox.Checked = $false
             $k.Werdykt.Text       = 'Pozycja typu Kontakt - to nie jest konto'
-            Set-JezykKolorPola $k.Werdykt 'Tekstu'
+            Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
             $k.TxtImieNazwisko.Text = Get-JezykWartoscPola (Get-JezykOsoba ([string]$Result.DisplayName) `
                                                      ([string]$Result.Imie) ([string]$Result.Nazwisko))
@@ -1559,7 +1568,7 @@ function Update-JezykNumerWTle {
                 # doklejamy - razem z werdyktem.
                 $k.TxtStatus.Text     = $zaWielu
                 $k.Werdykt.Text       = 'Numer należy do wielu osób'
-                Set-JezykKolorPola $k.Werdykt 'Tekstu'
+                Set-JezykKolorPola $k.Werdykt 'Nieznany'
             }
             else {
                 # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
