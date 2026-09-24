@@ -2053,11 +2053,14 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
     $stan.Wybrana = $wybrana
     if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $true }
 
-    $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Nazwa
+    # POLE DOSTAJE NAZWE, A NOTKA PODPIS. Nazwy szuka sie w AD, wiec to ona stoi w polu;
+    # podpis dokleja folder, gdy wsrod trafien byla druga grupa o tej samej nazwie - i tylko
+    # on mowi operatorowi, ktora z nich rozpoznano.
+    $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Podpis
     if ($wynik.ZaDuzo) {
         # Zdanie, ktore UNIEWAZNIA poprzednie, ma je ZASTAPIC, a nie stanac za nim
         # w kolejce - w polu o dwoch wierszach druga polowy i tak nie byloby widac.
-        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $ile, $wybrana.Nazwa
+        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $ile, $wybrana.Podpis
     }
     Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst
 }
@@ -2103,11 +2106,12 @@ function Set-JezykPrzyciskUsunGrupe {
     POTWIERDZENIE ZOSTAJE, MIMO ZE O POSWIADCZENIA JUZ NIE PYTAMY. Przy odblokowaniu role
     potwierdzenia pelni okno logowania - tutaj nie ma go wcale, wiec bez tego pytania
     usuniecie z grupy bylo by nieodwracalne jednym ruchem myszy, na pozycji zaznaczonej
-    przez przypadek. Tresc nazywa konto, grupe i domene, czyli wszystko, co ma sie zgadzac.
+    przez przypadek. Tresc nazywa konto, grupe, domene i folder grupy, czyli wszystko, co
+    ma sie zgadzac.
 #>
 function Confirm-JezykZmianyCzlonkostwa {
     param($Okno, [string]$Login, [string]$Grupa, [string]$Domena,
-          [ValidateSet('Dodaj', 'Usun')][string]$Akcja)
+          [ValidateSet('Dodaj', 'Usun')][string]$Akcja, [string]$Folder = '')
 
     # Napis skladany DO ZMIENNEJ: w argumencie metody przecinki naleza do listy argumentow
     # metody, a nie do tablicy dla operatora -f.
@@ -2116,6 +2120,12 @@ function Confirm-JezykZmianyCzlonkostwa {
     } else {
         'Dodać konto "{0}" do grupy "{1}" w domenie {2}?' -f $Login, $Grupa, $Domena
     }
+
+    # FOLDER GRUPY W KAZDYM PYTANIU, a nie tylko przy nazwie powtorzonej na liscie. To
+    # ostatnia chwila przed zapisem, a nazwa grupy nie jest w domenie jednoznaczna: grupa
+    # o tej samej nazwie mogla sie nie zmiescic w limicie podpowiedzi, wiec lista nie zawsze
+    # pokaze, ze w ogole jest.
+    if ($Folder) { $tresc = "{0}`n`nFolder grupy w AD: {1}" -f $tresc, $Folder }
 
     $odpowiedz = [System.Windows.Forms.MessageBox]::Show(
         $Okno, $tresc, 'Jeżyk - Grupy AD',
@@ -2159,7 +2169,8 @@ function Invoke-JezykZapisCzlonkostwa {
 
     # Potwierdzenie PRZED zapisem. Rezygnacja jest cisza: zadnego zapisu, zadnego bledu.
     $zgoda = Confirm-JezykZmianyCzlonkostwa -Okno $Okno -Login $login `
-                                            -Grupa ([string]$Grupa.Nazwa) -Domena $domena -Akcja $Akcja
+                                            -Grupa ([string]$Grupa.Nazwa) -Domena $domena -Akcja $Akcja `
+                                            -Folder (Get-JezykFolderAd ([string]$Grupa.Dn))
     if (-not $zgoda) { return $false }
 
     $Okno.UseWaitCursor = $true

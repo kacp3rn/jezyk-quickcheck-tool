@@ -2746,6 +2746,8 @@ function Select-JezykGrupyDoPokazania {
     $wynik = @()
 
     foreach ($grupa in @(Get-JezykParyGrup $Grupy)) {
+        # PO NAZWIE, A NIE PO PODPISIE: grupy o tej samej nazwie zostaja albo znikaja RAZEM,
+        # wiec zawezenie nie zostawi jednej bez drugiej, a folder z podpisu trafieniem nie jest.
         $nazwa = [string]$grupa.Nazwa
         if ($Fraza -and ($nazwa.IndexOf($Fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
             continue
@@ -2767,6 +2769,10 @@ function Select-JezykGrupyDoPokazania {
 # KOLEJNOSC MUSI BYC TA SAMA, CO W TABLICY PODANEJ NA WEJSCIU: to po niej okno odnajduje
 # zaznaczona grupe (Get-JezykZaznaczonaGrupe), wiec przestawienie wierszy znaczy usuniecie
 # konta z innej grupy niz ta, ktora operator zobaczyl.
+#
+# WIERSZ NIESIE PODPIS, A NIE SAMA NAZWE (Get-JezykPodpisyGrup): dwie grupy o tej samej
+# nazwie z dwoch OU dostaja w nim folder AD. Bez tego to dwa identyczne wiersze, a wybor
+# jednego z nich - zgadywanie, ktore konczy sie zapisem w nie tej grupie.
 function Get-JezykWierszeGrup {
     param([object[]]$Grupy)
 
@@ -2775,7 +2781,7 @@ function Get-JezykWierszeGrup {
 
     foreach ($grupa in @(Get-JezykParyGrup $Grupy)) {
         $nr++
-        $wiersze += '{0}. {1}' -f $nr, ([string]$grupa.Nazwa)
+        $wiersze += '{0}. {1}' -f $nr, ([string]$grupa.Podpis)
     }
 
     return @($wiersze)

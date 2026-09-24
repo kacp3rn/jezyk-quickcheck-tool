@@ -2440,12 +2440,13 @@ function Find-JezykGrupyPoNazwie {
         if ($pozycje.Count -eq 0) { continue }
 
         if ($pozycje.Count -gt $Limit) {
-            $wynik.ZaDuzo    = $true
-            $wynik.Trafienia = @($pozycje[0..($Limit - 1)])
+            $wynik.ZaDuzo = $true
+            $pozycje      = @($pozycje[0..($Limit - 1)])
         }
-        else {
-            $wynik.Trafienia = @($pozycje)
-        }
+        # Podpis liczony na liscie, KTORA ZOBACZY OPERATOR - po przycieciu do limitu. Grupa
+        # o tej samej nazwie, ktora sie w nim nie zmiescila, nie jest na liscie z kim mylona;
+        # jej folder i tak pokaze pytanie Tak/Nie.
+        $wynik.Trafienia = @(Get-JezykPodpisyGrup $pozycje)
         return $wynik
     }
 
@@ -2530,10 +2531,18 @@ function Set-JezykCzlonkostwoGrupy {
 
         $wynik.Udane  = $true
         $wynik.Serwer = $serwer
+
+        # KOMUNIKAT NAZYWA GRUPE, KTORA NAPRAWDE ZAPISANO - z nazwy wyrozniajacej, ktora poszla
+        # do zapisu, a nie z listy. Nazwa grupy nie jest w domenie jednoznaczna: po usunieciu
+        # jednej z dwoch grup "GG_Kadry" druga zostaje na liscie, a zdanie bez folderu
+        # wygladaloby przy niej jak nieudany zapis.
+        $grupa  = '"{0}"' -f (Get-JezykNazwaZDn $GrupaDn)
+        $folder = Get-JezykFolderAd $GrupaDn
+        if ($folder) { $grupa = '{0} ({1})' -f $grupa, $folder }
         $wynik.Komunikat = if ($Akcja -eq 'Usun') {
-            'Konto "{0}" zostało usunięte z grupy.' -f $Login
+            'Konto "{0}" zostało usunięte z grupy {1}.' -f $Login, $grupa
         } else {
-            'Konto "{0}" zostało dodane do grupy.' -f $Login
+            'Konto "{0}" zostało dodane do grupy {1}.' -f $Login, $grupa
         }
         $wynik.Szczegoly = 'Zapis przyjął kontroler: {0}' -f $serwer
     }
@@ -2658,17 +2667,120 @@ function Get-JezykPodpisMenedzera {
     catch { return $zapasowy }
 }
 
+# Nazwa obiektu z jego nazwy wyrozniajacej: pierwszy czlon, bez "CN=" i bez odwrotnych
+# ukosnikow, ktorymi LDAP oslania przecinki w nazwie ("CN=Dzial IT\, Warszawa") - inaczej
+# bylyby widoczne w oknie. Wzorzec jest ten sam, co przy podpisie zapasowym
+# w Get-JezykPodpisMenedzera: ten sam problem ma miec jedna odpowiedz.
+#
+# Zapis, ktory nie zaczyna sie od CN=, oddajemy w CALOSCI - lepiej pokazac nazwe
+# wyrozniajaca niz zgubic obiekt, o ktorego istnieniu operator ma sie dowiedziec.
+function Get-JezykNazwaZDn {
+    param([string]$Dn)
+
+    $tekst = ([string]$Dn).Trim()
+    if ($tekst -match '^\s*CN=((?:[^,\\]|\\.)+)') {
+        return ($Matches[1] -replace '\\(.)', '$1').Trim()
+    }
+    return $tekst
+}
+
 <#
 .SYNOPSIS
-    Zamienia liste czlonkostw z memberOf na nazwy grup.
+    Folder obiektu AD z jego nazwy wyrozniajacej - tak, jak pokazuje go konsola AD
+    ("jezyk.pl/Warszawa/Grupy").
+
+.DESCRIPTION
+    Ta sama postac, co kolumna folderu w zakladce "Czlonek grupy" konsoli AD i atrybut
+    canonicalName: domena z czlonow DC, pod nia kontenery OD GORY - odwrotnie niz w nazwie
+    wyrozniajacej, ktora idzie od obiektu w gore. Ukosnik w nazwie kontenera jest oslaniany
+    ("Kadry\/Place"), inaczej wygladalby na dwa poziomy.
+
+    ZADNEGO ZAPYTANIA DO AD - folder siedzi w nazwie wyrozniajacej, tak samo jak nazwa.
+
+    Czlony rozdziela przecinek NIEOSLONIETY - ten sam wzorzec, co przy nazwie, wiec przecinek
+    w nazwie grupy ("CN=Dzial IT\, Warszawa") nie rozcina jej na dwa czlony folderu.
+#>
+function Get-JezykFolderAd {
+    param([string]$Dn)
+
+    $czlony = @([regex]::Matches(([string]$Dn).Trim(), '(?:[^,\\]|\\.)+') |
+                ForEach-Object { $_.Value.Trim() })
+    if ($czlony.Count -lt 2) { return '' }
+
+    $domena  = @()
+    $foldery = @()
+    foreach ($czlon in $czlony[1..($czlony.Count - 1)]) {
+        if ($czlon -notmatch '^([A-Za-z0-9.-]+)\s*=(.*)$') { return '' }
+        $wartosc = ($Matches[2] -replace '\\(.)', '$1').Trim()
+        if ($Matches[1] -eq 'DC') { $domena += $wartosc; continue }
+        # Nazwa wyrozniajaca idzie od obiektu w gore, a folder - od gory w dol.
+        $foldery = @($wartosc.Replace('/', '\/')) + $foldery
+    }
+
+    $czesci = @()
+    if ($domena.Count -gt 0) { $czesci += ($domena -join '.') }
+    $czesci += $foldery
+    return ($czesci -join '/')
+}
+
+<#
+.SYNOPSIS
+    Dokleja do par "nazwa + nazwa wyrozniajaca" podpis, ktory rozroznia je na liscie.
+
+.DESCRIPTION
+    NAZWA GRUPY NIE JEST W DOMENIE JEDNOZNACZNA. CN jest unikalny tylko w swoim kontenerze,
+    wiec konto potrafi nalezec do dwoch grup "GG_Kadry" z dwoch roznych OU, a wyszukiwanie
+    potrafi obie zwrocic. Dwa wiersze "GG_Kadry" sa dla operatora jednym - dlatego nazwa,
+    ktora na liscie sie POWTARZA, dostaje w podpisie folder AD:
+    "GG_Kadry (jezyk.pl/Warszawa/Grupy)". Nazwa niepowtorzona zostaje sama: folder przy
+    kazdej z kilkudziesieciu grup bylby szumem, a ma sie rzucic w oczy wtedy, gdy jest
+    potrzebny.
+
+    PODPIS LICZY SIE RAZ, NA CALEJ LISCIE - tam, gdzie lista powstaje z odpowiedzi AD
+    (Get-JezykCzlonkostwaGrup, Find-JezykGrupyPoNazwie). Dalej tylko jedzie razem z para
+    (Get-JezykParyGrup); przeliczany po drodze, na liscie po filtrze, zalezalby od tego,
+    co akurat widac.
+
+    Porownanie BEZ wielkosci liter - tak porownuje nazwy AD i tak czyta je czlowiek. Klucze
+    @{} wielkosci liter nie rozrozniaja, i tu wlasnie o to chodzi.
+#>
+function Get-JezykPodpisyGrup {
+    param([object[]]$Grupy)
+
+    $ile = @{}
+    foreach ($grupa in @($Grupy)) {
+        if (-not $grupa) { continue }
+        $klucz = ([string]$grupa.Nazwa).Trim()
+        $ile[$klucz] = 1 + [int]$ile[$klucz]
+    }
+
+    $wynik = @()
+    foreach ($grupa in @($Grupy)) {
+        if (-not $grupa) { continue }
+        $nazwa  = ([string]$grupa.Nazwa).Trim()
+        $dn     = ([string]$grupa.Dn).Trim()
+        $podpis = $nazwa
+        if ($ile[$nazwa] -gt 1) {
+            $folder = Get-JezykFolderAd $dn
+            if ($folder) { $podpis = '{0} ({1})' -f $nazwa, $folder }
+        }
+        $wynik += [pscustomobject]@{ Nazwa = $nazwa; Dn = $dn; Podpis = $podpis }
+    }
+
+    # Owiniecie @() musi stac NA MIEJSCU WYWOLANIA - PowerShell rozwija tablice oddawana
+    # z funkcji.
+    return @($wynik)
+}
+
+<#
+.SYNOPSIS
+    Zamienia liste czlonkostw z memberOf na pary "nazwa + nazwa wyrozniajaca" z podpisem.
 
 .DESCRIPTION
     Atrybut memberOf niesie NAZWY WYROZNIAJACE grup ("CN=GG_Kadry_Odczyt,OU=Grupy,
-    DC=jezyk,DC=pl"), a nie nazwy - tak samo jak Manager przy przelozonym. Bierzemy
-    pierwszy czlon i zdejmujemy odwrotne ukosniki, ktorymi LDAP oslania przecinki
-    w nazwie ("CN=Dzial IT\, Warszawa") - inaczej byly by widoczne w oknie. Wzorzec
-    jest ten sam, co przy podpisie zapasowym w Get-JezykPodpisMenedzera: ten sam
-    problem ma miec jedna odpowiedz.
+    DC=jezyk,DC=pl"), a nie nazwy - tak samo jak Manager przy przelozonym. Nazwe wyciaga
+    z nich Get-JezykNazwaZDn, a podpis rozrozniajacy grupy o tej samej nazwie -
+    Get-JezykPodpisyGrup.
 
     ZADNEGO ZAPYTANIA DO AD. Nazwa grupy siedzi w jej wlasnej nazwie wyrozniajacej,
     wiec odczyt kazdej grupy z osobna bylby N podrozami po sieci po wartosc, ktora
@@ -2690,34 +2802,41 @@ function Get-JezykCzlonkostwaGrup {
 
         # Nazwa siedzi w PIERWSZYM czlonie nazwy wyrozniajacej, wiec nie ma po co pytac
         # o kazda grupe z osobna - to bylyby kilkadziesiat podrozy po sieci po wartosc,
-        # ktora juz mamy w reku. Odwrotny ukosnik oslania w LDAP przecinek w nazwie.
-        $nazwa = $tekst
-        if ($tekst -match '^\s*CN=((?:[^,\\]|\\.)+)') {
-            $nazwa = ($Matches[1] -replace '\\(.)', '$1').Trim()
-        }
+        # ktora juz mamy w reku.
+        $nazwa = Get-JezykNazwaZDn $tekst
         if (-not $nazwa) { continue }
 
         $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = $tekst }
     }
 
-    # SORTOWANIE I ODSIEW POWTORZEN PO NAZWIE, bo to nazwa stoi na liscie w oknie.
+    # ODSIEW POWTORZEN PO NAZWIE WYROZNIAJACEJ, NIE PO NAZWIE. Nazwa grupy jest unikalna
+    # tylko w swoim kontenerze: odsiew po niej zostawial z dwoch grup "GG_Kadry" z dwoch OU
+    # jedna, DOWOLNA, a "Usun z grupy" usuwal konto z tej, ktora przetrwala - bez sladu, ze
+    # byla druga. Kazde czlonkostwo to osobna pozycja, a rozroznia je podpis z folderem AD.
+    #
     # Kolejnosc ustala sie TUTAJ i tylko tutaj - memberOf przychodzi w dowolnej, a dwa
-    # miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
+    # miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie. Grupy o tej samej
+    # nazwie stoja obok siebie, uporzadkowane po folderze.
     #
     # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice oddawana
     # z funkcji: przy zerze grup wolajacy dostaje $null, a przy jednej sam obiekt, a nie
     # tablice jednoelementowa. Dlatego kazde wywolanie owija sie w @() NA MIEJSCU
     # WYWOLANIA - ta sama konwencja, co przy @(Confirm-JezykUstawienia).
-    return @($pary | Sort-Object -Property Nazwa -Unique)
+    $unikalne = @($pary | Sort-Object -Property Dn -Unique)
+    return @(Get-JezykPodpisyGrup $unikalne | Sort-Object -Property Nazwa, Podpis)
 }
 
-# Sprowadza liste grup do jednej postaci: par "nazwa + nazwa wyrozniajaca". Na wejsciu
-# przyjmuje pary z Get-JezykCzlonkostwaGrup albo same nazwy - ta druga postac zostaje,
-# bo nie kazda sciezka odczytu ma nazwy wyrozniajace pod reka, a nazwa wystarcza, zeby
-# grupe POKAZAC. Do ZAPISU nie wystarcza i dlatego pozycja bez Dn nie da sie usunac.
+# Sprowadza liste grup do jednej postaci: par "nazwa + nazwa wyrozniajaca" z podpisem. Na
+# wejsciu przyjmuje pary z Get-JezykCzlonkostwaGrup albo same nazwy - ta druga postac
+# zostaje, bo nie kazda sciezka odczytu ma nazwy wyrozniajace pod reka, a nazwa wystarcza,
+# zeby grupe POKAZAC. Do ZAPISU nie wystarcza i dlatego pozycja bez Dn nie da sie usunac.
 #
 # Odsiew pustych stoi tutaj, czyli tam, gdzie zapada decyzja - a nie u wolajacego:
 # @($null) ma w PowerShellu JEDEN element i bez tego konto bez grup zapalaloby przycisk.
+#
+# PODPIS JEDZIE, A NIE LICZY SIE TUTAJ - patrz Get-JezykPodpisyGrup. Ta funkcja bywa wolana
+# na liscie po filtrze, a podpis policzony na niej zalezalby od tego, co akurat widac. Para,
+# ktora podpisu nie ma, dostaje sama nazwe.
 function Get-JezykParyGrup {
     param([object[]]$Grupy)
 
@@ -2727,13 +2846,15 @@ function Get-JezykParyGrup {
 
         if ($grupa -is [string]) {
             $nazwa = ([string]$grupa).Trim()
-            if ($nazwa) { $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = '' } }
+            if ($nazwa) { $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = ''; Podpis = $nazwa } }
             continue
         }
 
         $nazwa = ([string]$grupa.Nazwa).Trim()
         if (-not $nazwa) { continue }
-        $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = ([string]$grupa.Dn).Trim() }
+        $podpis = ([string]$grupa.Podpis).Trim()
+        if (-not $podpis) { $podpis = $nazwa }
+        $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = ([string]$grupa.Dn).Trim(); Podpis = $podpis }
     }
 
     return @($pary)
