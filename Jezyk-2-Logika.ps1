@@ -2430,9 +2430,9 @@ function Find-JezykGrupyPoNazwie {
         foreach ($grupa in $znalezione) {
             $nazwa = [string]$grupa.Name
             $dn    = [string]$grupa.DistinguishedName
-            # Pozycja bez nazwy rozjechalaby numeracje w oknie wyboru, a pozycja bez nazwy
-            # wyrozniajacej nie ma czego zapisac. Odsiew stoi TUTAJ, zeby wolajacy mogl
-            # mapowac zaznaczenie na liste wprost, indeks w indeks.
+            # Pozycja bez nazwy nie ma czego pokazac, a pozycja bez nazwy wyrozniajacej nie ma
+            # czego zapisac. Numeracji okna wyboru ten odsiew NIE pilnuje - Show-JezykWyborGrupy
+            # numeruje i zwraca z jednej tablicy, po Get-JezykParyGrup.
             if (-not $nazwa -or -not $dn) { continue }
             $pozycje += [pscustomobject]@{ Nazwa = $nazwa; Dn = $dn }
         }

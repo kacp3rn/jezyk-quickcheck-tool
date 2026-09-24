@@ -3348,7 +3348,11 @@ function Show-JezykGrupyAd {
 function Show-JezykWyborGrupy {
     param($Trafienia, $Wlasciciel)
 
-    $pozycje = @($Trafienia)
+    # WIERSZE I ZWRACANA POZYCJA Z JEDNEJ TABLICY. Get-JezykWierszeGrup numeruje po
+    # Get-JezykParyGrup, ktory odsiewa nazwy z samych bialych znakow; indeks zaznaczenia
+    # odniesiony do surowych trafien przesuwalby sie o jeden za kazda odsiana pozycja,
+    # czyli "Dodaj" trafialoby w grupe z wiersza wyzej niz klikniety.
+    $pozycje = @(Get-JezykParyGrup $Trafienia)
     if ($pozycje.Count -eq 0) { return $null }
 
     $margines           = $Script:Margines
