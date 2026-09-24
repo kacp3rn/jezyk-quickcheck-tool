@@ -1,39 +1,26 @@
-﻿# Jezyk-2-Logika - odpytanie Active Directory i SCCM. Zero kodu interfejsu.
-# TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM - oslania pierwsza instrukcje przed
-# zdublowanym znacznikiem BOM. Powod opisany w Kod-Jezyk.ps1.
+﻿# Jezyk-2-Logika - odpytanie AD i SCCM, sprawdzanie wartosci, zapis do AD. Zero kodu interfejsu.
+# Linia 1 musi zostac zwyklym komentarzem - oslania pierwsza instrukcje przed zdublowanym BOM.
 
-# Wlasny trap w kazdej czesci: trap wznawia prace w zakresie, w ktorym go zdefiniowano,
-# wiec bez tego blad w linii 1 porzucilby caly ten plik.
+# Wlasny trap kazdej czesci - trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
 
 
 #region SEKCJA 2 - LOGIKA
 
 # --- SPRAWDZANIE WARTOSCI, KTORE STAJA SIE TOZSAMOSCIA ALBO ADRESEM -------------------
-# Biala lista, nie czarna: wypisujemy znaki DOZWOLONE, bo ich lista jest krotka
-# i zamknieta, a lista niebezpiecznych nigdy nie jest kompletna. Sprawdzamy kazda granice,
-# na ktorej tekst przestaje byc tekstem i staje sie nazwa konta, nazwa serwera albo
-# sciezka LDAP.
-#
-# Poza tymi regulami jest CELOWO pole wyszukiwania - wpisuje sie w nie imiona i nazwiska,
-# wiec spacje i polskie znaki sa tam normalne. Tamta sciezka broni sie inaczej, patrz
-# Find-JezykUsers.
+# Biale listy znakow tam, gdzie tekst staje sie nazwa konta, serwera albo sciezka LDAP.
 
-# Nazwa konta albo komputera (sAMAccountName). Znaki o znaczeniu skladniowym w LDAP
-# ( * ( ) \ ) i w WQL ( ' " % ) nie mieszcza sie w tym zestawie. Pierwszy znak osobno:
-# wartosc zaczynajaca sie od myslnika wyglada jak przelacznik, a AD i tak takiej nazwy
-# nie utworzy.
+# Nazwa konta albo komputera: bez znakow skladniowych LDAP i WQL, bez myslnika na poczatku.
 function Test-JezykNazwaKonta {
     param([string]$Nazwa)
 
     if ([string]::IsNullOrWhiteSpace($Nazwa)) { return $false }
-    # 256 to duzo powyzej limitu AD; chodzi o to, zeby absurdalnie dlugi tekst nie wedrowal dalej.
+    # 256 - duzo powyzej limitu AD; odcina absurdalnie dlugi tekst.
     if ($Nazwa.Length -gt 256) { return $false }
     return ($Nazwa -match '^[A-Za-z0-9_][A-Za-z0-9._$-]*$')
 }
 
-# Nazwa hosta albo domeny - trafia do parametru -Server oraz do sciezki LDAP://serwer/...
-# Etykiety oddzielone kropkami, bez myslnika na brzegach.
+# Nazwa hosta albo domeny (etykiety DNS) - trafia do -Server i do sciezki LDAP.
 function Test-JezykNazwaHosta {
     param([string]$Nazwa)
 
@@ -42,8 +29,7 @@ function Test-JezykNazwaHosta {
     return ($Nazwa -match '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$')
 }
 
-# DistinguishedName - doklejany do sciezki LDAP://kontroler/DN. Nie sprawdzamy pelnej
-# skladni RFC 4514, tylko czy w ogole wyglada jak DN i czy nie niesie znakow sterujacych.
+# Czy tekst wyglada jak DN (bez znakow sterujacych) - bez pelnej skladni RFC 4514.
 function Test-JezykDn {
     param([string]$Dn)
 
@@ -53,49 +39,22 @@ function Test-JezykDn {
     return ($Dn -match '^[A-Za-z]+=..*' -and $Dn -match '(?i)DC=')
 }
 
-# Sciezka do programu uruchamianego przez przycisk "Polacz" - jedyne miejsce w Jezyku,
-# w ktorym cokolwiek startuje jako osobny proces. Zadanie tej zapory jest wezsze niz
-# "czy plik istnieje": ma NIE PRZEPUSCIC sciezki, ktora system musialby dopiero gdzies
-# odszukac. Sama nazwa pliku ("CmRcViewer.exe") poszlaby po PATH, a sciezka wzgledna po
-# biezacym katalogu - w obu przypadkach o tym, co sie uruchomi, decydowalaby maszyna
-# operatora, a nie konfiguracja (twarda zasada nr 1).
-#
-# KSZTALT SPRAWDZAMY WLASNYM WZORCEM, A NIE [System.IO.Path]::IsPathRooted. Tamta metoda
-# odpowiada na INNE PYTANIE niz nasze: mowi, czy sciezka jest zakotwiczona wedlug regul
-# platformy, na ktorej akurat pracuje. My pytamy wezej i konkretnie - czy to PELNA SCIEZKA
-# WINDOWSOWA, czyli litera dysku albo UNC, bo tylko taka ma tu sens. Regula wpisana wprost
-# nie zalezy od niczego poza soba i mowi dokladnie to, co sprawdza.
-#
-# Istnienia pliku NIE sprawdzamy tutaj: Test-Path na martwym udziale sieciowym potrafi
-# stanac na dlugo, a te funkcje wola sie z watku interfejsu. Brakujacy plik i tak zglosi
-# sie wyjatkiem przy uruchomieniu - i tam ma nazwe, ktora da sie pokazac operatorowi.
+# Czy sciezka dla "Polacz" to pelna sciezka windowsowa do .exe.
+# Wlasny wzorzec, nie IsPathRooted - README: Kod > Jezyk-2-Logika.
 function Test-JezykSciezkaProgramu {
     param([string]$Sciezka)
 
     if ([string]::IsNullOrWhiteSpace($Sciezka)) { return $false }
     if ($Sciezka.Length -gt 260) { return $false }
-    # Znaki sterujace i cudzyslow - to drugie dlatego, ze wartosc trafia do wiersza
-    # polecen tworzonego procesu, gdzie cudzyslow ma znaczenie skladniowe.
+    # Cudzyslow ma znaczenie w wierszu polecen procesu.
     if ($Sciezka -match '["\x00-\x1F]') { return $false }
     if (-not $Sciezka.EndsWith('.exe', [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
 
-    # Litera dysku (C:\...) albo UNC (\\serwer\...). Nic innego nie jest sciezka pelna.
+    # Litera dysku albo UNC.
     return ($Sciezka -match '^(?:[A-Za-z]:\\|\\\\[^\\])')
 }
 
-<#
-.SYNOPSIS
-    Poddrzewo przeszukania po numerze dla WYBRANEJ domeny - puste, gdy jej nie wymieniono.
-
-.DESCRIPTION
-    Osobna funkcja, a nie wartosc policzona raz przy starcie: domena zmienia sie w trakcie
-    pracy okna, a nazwa wyrozniajaca konczy sie skladnikami DC tej jednej domeny. Wartosc
-    zapamietana przy starcie obowiazywalaby po przelaczeniu domeny nadal - i wskazywalaby
-    poddrzewo, ktorego w nowej domenie nie ma.
-
-    Normalizacja kluczy siedzi w Jezyk-1-Srodowisko.ps1, przy $Script:SzukajOd - tak samo
-    jak przy obu listach domen, ktorych uzywa Test-JezykWolnoOdblokowac.
-#>
+# Poddrzewo przeszukania po numerze dla wybranej domeny (liczone przy kazdym wywolaniu) albo puste.
 function Get-JezykSzukajOd {
     param([string]$Domena)
 
@@ -106,15 +65,7 @@ function Get-JezykSzukajOd {
     return ''
 }
 
-<#
-.SYNOPSIS
-    Czy nazwa hosta nalezy do ktorejs ze wskazanych domen?
-
-.DESCRIPTION
-    Sam ksztalt nazwy nie wystarcza: "obcy.host.example" wyglada nienagannie, a trafialby
-    do -ComputerName sesji WMI albo do sciezki LDAP. Tutaj pytamy o POCHODZENIE.
-    Sprawdzenie jest czysto tekstowe - zadnego odpytywania sieci.
-#>
+# Czy nazwa hosta nalezy do ktorejs z domen - sprawdzenie pochodzenia, czysto tekstowe.
 function Test-JezykNazwaWDomenach {
     param([string]$Nazwa, [string[]]$Domeny)
 
@@ -125,10 +76,7 @@ function Test-JezykNazwaWDomenach {
         if (-not $domena) { continue }
         $d = ([string]$domena).Trim().ToLower()
         if (-not $d) { continue }
-        # Kropka przed sufiksem jest konieczna, bez niej "zlyjezyk.pl" przeszloby jako
-        # nalezace do "jezyk.pl". ORDINAL, a nie porownanie domyslne: porownanie wedlug
-        # kultury pomija niektore znaki jako nieistotne (choćby miekki dywiz), wiec nazwa
-        # spreparowana z takim znakiem moglaby dopasowac sie do obcego sufiksu.
+        # Uwaga: kropka przed sufiksem i porownanie Ordinal (README: Konfiguracja > Sprawdzenie przy starcie).
         if ($mala -eq $d -or $mala.EndsWith('.' + $d, [System.StringComparison]::Ordinal)) {
             return $true
         }
@@ -136,18 +84,8 @@ function Test-JezykNazwaWDomenach {
     return $false
 }
 
-<#
-.SYNOPSIS
-    Zostawia z tekstu SAME CYFRY. Podstawa calego porownywania numerow telefonu.
-
-.DESCRIPTION
-    Numery sa w AD zapisane, jak kto lubi: "+48123456789", "123456789", "+48 12 345 67 89",
-    "12-345-67-89". LDAP nie umie ich znormalizowac przed porownaniem, wiec robimy to sami
-    - po obu stronach, i dopiero wtedy porownujemy.
-
-    Klasa [^0-9], a nie \D: \d w .NET obejmuje takze cyfry spoza alfabetu lacinskiego,
-    wiec \D przepuscilaby je do wzorca zapytania.
-#>
+# Zostawia z tekstu same cyfry - podstawa porownywania numerow telefonu.
+# Klasa [^0-9], nie \D - \d w .NET obejmuje tez cyfry spoza alfabetu lacinskiego.
 function Get-JezykCyfry {
     param([string]$Tekst)
 
@@ -155,28 +93,12 @@ function Get-JezykCyfry {
     return ($Tekst -replace '[^0-9]', '')
 }
 
-<#
-.SYNOPSIS
-    Czy wpisany tekst to numer telefonu, a nie login ani nazwisko?
-
-.DESCRIPTION
-    Od tej odpowiedzi zalezy, czy do wyszukiwania dolozy sie zapytanie po numerze. Musi
-    wiec byc WASKA: gdyby przepuszczala zwykle wpisy, kazde wyszukanie po nazwisku
-    ciagneloby za soba dodatkowe, kosztowne przeszukanie katalogu bez indeksu.
-
-    Poza cyframi dopuszczamy WYLACZNIE znaki, ktorymi ludzie rozdzielaja numer. Login,
-    nazwisko i adres e-mail maja litery, wiec odpadaja od razu.
-
-    Dolna granica szesciu cyfr odsiewa numery wewnetrzne i przypadkowe ciagi ("2024"),
-    gorna pietnastu jest granica z normy E.164 - dluzszy ciag numerem juz nie jest.
-#>
+# Czy wpis to numer telefonu (6-15 cyfr, znaki rozdzielajace) - waska, bo wlacza drogie zapytanie.
 function Test-JezykWygladaNaTelefon {
     param([string]$Tekst)
 
     if ($null -eq $Tekst) { return $false }
-    # JEDNA PISOWNIA. $tekst i $Tekst to dla PowerShella ta sama zmienna, wiec dwie pisownie
-    # nie znacza dwoch wartosci - znacza tylko, ze czytajacy moze tak pomyslec. Zapora:
-    # Weryfikacja/spojnosc.ps1.
+    # Jedna pisownia - $tekst i $Tekst to dla PowerShella ta sama zmienna.
     $Tekst = $Tekst.Trim()
     if (-not $Tekst) { return $false }
 
@@ -186,24 +108,8 @@ function Test-JezykWygladaNaTelefon {
     return ($cyfry.Length -ge 6 -and $cyfry.Length -le 15)
 }
 
-<#
-.SYNOPSIS
-    Czy dwa numery opisuja ten sam telefon, mimo innego zapisu?
-
-.DESCRIPTION
-    Porownujemy SAME CYFRY i tylko tyle koncowych, ile ma krotszy z numerow. Dzieki temu
-    kod kraju przestaje przeszkadzac i dziala to w OBIE strony: szukane "123456789" trafia
-    w zapisane "+48 123 456 789", a szukane "+48123456789" trafia w zapisane "123456789".
-
-    SWIADOMA CENA: dluzszy numer konczacy sie tymi samymi cyframi przejdzie. Rozroznienie
-    prawdziwego kodu kraju od przypadkowego przedrostka wymagaloby tablicy kodow, ktorej
-    tu nie ma. Kosztem falszywego trafienia jest JEDEN dodatkowy wiersz na liscie wyboru,
-    podpisany imieniem i nazwiskiem; kosztem trafienia przeoczonego jest cale wyszukiwanie,
-    ktore nie znalazlo szukanej osoby. Wybieramy tansza pomylke.
-
-    Prog szesciu cyfr jest ten sam co w Test-JezykWygladaNaTelefon: krotsze ciagi zgadzaja
-    sie zbyt czesto przypadkiem.
-#>
+# Czy dwa numery to ten sam telefon: zgodne koncowe cyfry (dlugosc krotszego, min. 6).
+# Swiadoma cena: dluzszy numer o tej samej koncowce tez przejdzie (README: Rdzen numeru).
 function Test-JezykNumerPasuje {
     param([string]$Szukane, [string]$Numer)
 
@@ -217,15 +123,7 @@ function Test-JezykNumerPasuje {
     return ($a.Substring($a.Length - $dlugosc) -eq $b.Substring($b.Length - $dlugosc))
 }
 
-<#
-.SYNOPSIS
-    Sprawdza konfiguracje z SEKCJI 1. Zwraca liste zastrzezen - pusta, gdy jest dobrze.
-
-.DESCRIPTION
-    Sprawdzamy wartosci wyznaczajace ADRESY polaczen: domeny ida do parametru -Server,
-    serwer lokacji do sesji WMI, kontrolery do sciezki LDAP. Zwracamy LISTE, a nie pierwszy
-    blad - kto poprawia konfiguracje, woli zobaczyc wszystkie literowki naraz.
-#>
+# Sprawdza ustawienia z czesci 1; oddaje liste wszystkich zastrzezen (pusta = dobrze).
 function Confirm-JezykUstawienia {
 
     $bledy = @()
@@ -241,8 +139,7 @@ function Confirm-JezykUstawienia {
         }
     }
 
-    # Wpis wskazujacy domene spoza listy znaczy, ze ktos zamierzal wlaczyc zapis gdzie
-    # indziej, niz sadzi. Przy jedynej operacji zapisu nie ma miejsca na domysly.
+    # Lista zapisu spoza Domeny - ktos zamierzal wlaczyc zapis gdzie indziej, niz sadzi.
     foreach ($domena in @($Script:DomenyZOdblokowaniem)) {
         if ($domeny -notcontains $domena) {
             $bledy += 'DomenyZOdblokowaniem: "{0}" nie ma na liście Domeny - odblokowanie nie zadziała.' -f $domena
@@ -268,10 +165,7 @@ function Confirm-JezykUstawienia {
         }
     }
 
-    # Poddrzewo jest opcjonalne: brak wpisu to poprawny stan "szukaj od korzenia domeny".
-    # Wpis BLEDNY juz nie: -SearchBase z niepoprawna nazwa wyrozniajaca wywraca zapytanie,
-    # a jedynym objawem bylaby notka "przeszukanie numerow sie nie powiodlo" przy KAZDYM
-    # numerze - czyli usterka wygladajaca na awarie sieci.
+    # Poddrzewo opcjonalne; bledny DN wywracalby kazde zapytanie o numer.
     if ($Script:Ustawienia.SzukajOd -isnot [hashtable]) {
         $bledy += 'SzukajOd: ma być tablicą skrótów (@{}), a nie listą ani napisem.'
     }
@@ -301,16 +195,13 @@ function Confirm-JezykUstawienia {
         if ([string]$Script:Ustawienia.SccmProtokol -notin 'Dcom', 'Wsman') {
             $bledy += 'SccmProtokol: "{0}" - dozwolone wartości to Dcom albo Wsman.' -f $Script:Ustawienia.SccmProtokol
         }
-        # Wartosc inna niz logiczna zachowywalaby sie jak $true po cichu, a wlacza droge
-        # sieciowa, ktorej nikt nie zamawial.
+        # Wartosc nielogiczna dzialalaby po cichu jak $true.
         if ($Script:Ustawienia.SccmProtokolZapasowy -isnot [bool]) {
             $bledy += 'SccmProtokolZapasowy: ma być $true albo $false.'
         }
     }
 
-    # Zdalna konsola jest opcjonalna: puste = przycisk "Połącz" sie nie pojawia. Wpis BLEDNY
-    # juz nie - przycisk pokazywalby sie przy kazdej wykrytej maszynie, a kazde klikniecie
-    # konczylo sie tym samym komunikatem, czyli literowka wygladalaby na awarie konsoli.
+    # Zdalna konsola opcjonalna; bledna sciezka dawalaby przycisk, ktory zawsze zawodzi.
     $sciezkaRc = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
     if ($sciezkaRc -and -not (Test-JezykSciezkaProgramu $sciezkaRc)) {
         $bledy += 'SciezkaRemoteControl: "{0}" nie jest pełną ścieżką do pliku .exe (wymagana litera dysku albo \\serwer).' -f $sciezkaRc
@@ -319,10 +210,7 @@ function Confirm-JezykUstawienia {
     return @($bledy)
 }
 
-# Rozbiera wyjatek na jednowierszowy komunikat do pola Status i pelna tresc pod przycisk "!".
-# Do pola bierzemy PIERWSZA linie, bo wyjatki AD potrafia miec kilka zdan, a pole ma
-# jeden wiersz. Typ wyjatku zostaje w szczegolach - bywa potrzebny, gdy komunikat systemowy
-# jest niejednoznaczny.
+# Rozbiera wyjatek: pierwsza linia do pola Status, pelna tresc z typem pod "!".
 function Get-JezykOpisBledu {
     param($Wyjatek, [string]$Czynnosc = 'Operacja')
 
@@ -340,8 +228,7 @@ function Get-JezykOpisBledu {
     [pscustomobject]@{ Krotki = ('{0}: {1}' -f $Czynnosc, $pierwsza.Trim()); Szczegoly = $szczegoly }
 }
 
-# CanonicalName ma postac "jezyk.pl/Uzytkownicy/Dzial IT/Jan Kowalski". Obcinamy ostatni
-# czlon i zostaje sam katalog - forma czytelna dla czlowieka, nie tylko dla LDAP-a.
+# Katalog z CanonicalName ("jezyk.pl/Uzytkownicy/Dzial IT/Jan Kowalski" bez ostatniego czlonu).
 function Get-JezykKatalogZeSciezki {
     param([string]$Kanoniczna)
 
@@ -351,8 +238,7 @@ function Get-JezykKatalogZeSciezki {
     return $Kanoniczna.Substring(0, $ostatniUkosnik)
 }
 
-# Polska odmiana rzeczownika po liczbie: 1 konto, 2 konta, 5 kont. Nastki (12-14) ida jak
-# 5 i wiecej, mimo ze koncza sie cyfra z przedzialu 2-4 - stad drugi warunek.
+# Polska odmiana po liczbie: 1 konto, 2 konta, 5 kont (nastki 12-14 jak 5).
 function Get-JezykOdmiana {
     param([int]$Ile, [string]$Jeden, [string]$Kilka, [string]$Wiele)
 
@@ -366,9 +252,7 @@ function Get-JezykOdmiana {
     return $Wiele
 }
 
-# Imie i nazwisko do pokazania. DisplayName bywa puste, choc imie i nazwisko w AD sa -
-# wtedy skladamy je sami. Jedna funkcja, bo ta sama regula obowiazuje na liscie wyboru
-# i w widoku konta, a dwie kopie moglyby pokazac co innego.
+# Imie i nazwisko do pokazania: DisplayName, a gdy puste - imie i nazwisko (lista i widok konta).
 function Get-JezykOsoba {
     param([string]$Wyswietlana, [string]$Imie, [string]$Nazwisko)
 
@@ -376,18 +260,8 @@ function Get-JezykOsoba {
     return (('{0} {1}' -f $Imie, $Nazwisko).Trim())
 }
 
-<#
-.SYNOPSIS
-    Buduje obiekt wyniku. Jedyne miejsce, ktore definiuje jego ksztalt.
-
-.DESCRIPTION
-    Wszystkie sciezki - konto znalezione, nieznalezione, pusty login, blad lacznosci -
-    przechodza przez ta funkcje, wiec warstwa renderujaca zawsze dostaje te same pola.
-
-    LockedOut i Enabled sa CELOWO bez typu: [bool] zamienilby $null na $false, gubiac
-    stan "nie wiadomo". Logika oddaje surowe dane, formatowanie zostaje po stronie GUI -
-    stad osobne pola HasloWygasa i HasloNigdyNieWygasa zamiast jednego.
-#>
+# Buduje obiekt wyniku - jedyne miejsce, ktore definiuje jego ksztalt (README: Budowa i rozbudowa).
+# LockedOut i Enabled bez typu: [bool] zamienilby $null ("nie wiadomo") na $false.
 function New-JezykResult {
     param(
         [string]$Login,
@@ -405,14 +279,7 @@ function New-JezykResult {
         [string]$TelefonKomorkowy = '',
         [string]$Menedzer = '',
 
-        # Grupy konta. Tablica, a nie napis: okno stawia je jedna pod druga na liscie,
-        # a sklejenie ich tutaj kazaloby mu ten napis z powrotem rozebrac.
-        #
-        # PRZYJMUJEMY PARY "nazwa + nazwa wyrozniajaca" (Get-JezykCzlonkostwaGrup) ALBO
-        # same nazwy. Normalizacja stoi TUTAJ, w jednym miejscu, i z niej powstaja OBA
-        # pola wyniku - nazwy do pokazania i nazwy wyrozniajace do zapisu. Dwie listy
-        # podane osobno rozjechalyby sie przy pierwszej zmianie, a objawem byloby
-        # usuniecie konta z INNEJ grupy niz zaznaczona na liscie.
+        # Grupy: pary "nazwa + DN" albo same nazwy - normalizacja tutaj, z niej oba pola wyniku.
         [object[]]$Grupy = @(),
 
         [string]$Lokalizacja = '',
@@ -426,15 +293,13 @@ function New-JezykResult {
         $OstatnieLogowaniePrzyblizone = $null,
         [string]$Dn = '',
 
-        # Nazwa obiektu w AD (atrybut Name, czyli cn). Wypelniana dla kontaktow, ktore nie
-        # maja loginu - okno pokazuje ja wtedy w polu przemianowanym z "Login" na "Nazwa".
+        # Nazwa obiektu (cn) - dla kontaktow, ktore nie maja loginu.
         [string]$NazwaObiektu = '',
 
         [string]$Szczegoly = ''
     )
 
-    # JEDNO WEJSCIE, DWA WIDOKI. Liczone raz, przed zlozeniem wyniku, zeby nazwy i nazwy
-    # wyrozniajace nie mogly opisywac czego innego.
+    # Jedno wejscie, dwa widoki: nazwy i DN liczone raz.
     $grupyPelne = @(Get-JezykParyGrup $Grupy)
 
     [pscustomobject]@{
@@ -450,32 +315,17 @@ function New-JezykResult {
         Nazwisko = $Nazwisko
         Email    = $Email
 
-        # OBA NUMERY OSOBNO, SUROWO. Sklejenie ich w jeden napis nalezy do widoku - to
-        # czysta decyzja o wygladzie i nie wymaga pytania do katalogu. Przelozony jest tu
-        # inaczej: przychodzi jako nazwa wyrozniajaca, a jej rozwiazanie na czytelny podpis
-        # to OSOBNE zapytanie do AD, wiec musi zapasc tutaj i schodzi nizej juz gotowe.
+        # Numery surowo (sklejenie nalezy do widoku); przelozony juz rozwiazany - to osobne zapytanie.
         TelefonGlowny    = $TelefonGlowny
         TelefonKomorkowy = $TelefonKomorkowy
 
         Menedzer = $Menedzer
 
-        # DOKLADNIE ZAKLADKA "Czlonek grupy" Z KONSOLI AD, i tylko ona. Nie ma tu grupy
-        # PODSTAWOWEJ (zwykle "Uzytkownicy domeny") - AD nie trzyma jej w memberOf, tylko
-        # w primaryGroupID - ani czlonkostw DZIEDZICZONYCH przez grupy zagniezdzone.
-        # Obie granice sa swiadome: rozwiniecie drzewa to zapytanie rekurencyjne do
-        # kontrolera, czyli dokladnie ta klasa kosztu, ktorej to pole mialo nie miec.
-        #
-        # ODSIANIE PUSTYCH JEST WARUNKIEM POPRAWNOSCI, A NIE PORZADKAMI. @($null) to
-        # w PowerShellu tablica JEDNOELEMENTOWA, wiec konto bez grup przyszlo by tu
-        # z Count = 1 - przycisk "Grupy AD" zapalalby sie przy KAZDYM koncie i otwieral
-        # liste z jedna pusta pozycja. Odsiew robi Get-JezykParyGrup, wiec Count niesie
-        # tu liczbe grup.
+        # Zakladka "Czlonek grupy" z konsoli AD: bez grupy podstawowej i bez czlonkostw zagniezdzonych.
+        # Puste pozycje odsiane (@($null) ma jeden element) - Count to liczba grup.
         Grupy = @($grupyPelne | ForEach-Object { $_.Nazwa })
 
-        # TO SAMO Z NAZWAMI WYROZNIAJACYMI. Przy zapisie grupe wskazuje wylacznie nazwa
-        # wyrozniajaca oddana przez katalog: Remove-ADGroupMember -Identity nie przyjmuje
-        # nazwy zwyklej (CN), tylko sAMAccountName, SID, GUID albo wlasnie DN - a CN
-        # i sAMAccountName grupy nie musza byc takie same.
+        # DN grup do zapisu - Remove-ADGroupMember nie przyjmuje zwyklej nazwy (CN).
         GrupyPelne = $grupyPelne
 
         Lokalizacja = $Lokalizacja
@@ -493,12 +343,10 @@ function New-JezykResult {
 
         KontoUtworzono = $KontoUtworzono
 
-        # lastLogonTimestamp - przychodzi w tym samym zapytaniu co reszta konta, wiec jest
-        # widoczny natychmiast. Zadanie w tle tylko go uscisla.
+        # lastLogonTimestamp - widoczny od razu; zadanie w tle go uscisla.
         OstatnieLogowaniePrzyblizone = $OstatnieLogowaniePrzyblizone
 
-        # DistinguishedName oszczedza zadaniu w tle rozwiazywania nazwy konta na kazdym
-        # kontrolerze z osobna.
+        # DN oszczedza zadaniu w tle rozwiazywania konta na kazdym kontrolerze.
         Dn = $Dn
 
         NazwaObiektu = $NazwaObiektu
@@ -507,26 +355,14 @@ function New-JezykResult {
     }
 }
 
-<#
-.SYNOPSIS
-    Odczyt atrybutu lastLogon z JEDNEGO kontrolera domeny.
-
-.DESCRIPTION
-    Surowy odczyt LDAP zamiast Get-ADUser: majac DistinguishedName z pierwszego zapytania
-    wiemy dokladnie, co czytac - wystarczy odczyt o zakresie Base po jeden atrybut.
-
-    Wynik rozroznia trzy rzeczy: $null = kontroler nie odpowiedzial, 0 = odpowiedzial, ale
-    nigdy nie obsluzyl logowania tego konta, > 0 = znacznik czasu FILETIME.
-#>
+# lastLogon z jednego kontrolera (LDAP, zakres Base): $null - milczy, 0 - nigdy, wiecej - FILETIME.
 function Get-JezykLastLogonZKontrolera {
     param([string]$Kontroler, [string]$Dn = '', [string]$Login = '', [int]$LimitMs = 2500)
 
-    # Sprawdzenie PRZED pierwszym uzyciem wartosci - takze przed droga zapasowa nizej,
-    # ktora oddaje nazwe wprost do parametru -Server.
+    # Sprawdzenie przed pierwszym uzyciem - takze przed droga zapasowa.
     if (-not (Test-JezykNazwaHosta $Kontroler)) { return $null }
 
-    # Bez DN zostaje droga zapasowa przez modul AD: wolniejsza, ale dziala wtedy, gdy
-    # pierwsze zapytanie nie oddalo DistinguishedName.
+    # Bez DN - droga zapasowa przez modul AD.
     if (-not $Dn) {
         try {
             $konto = Get-ADUser -Identity $Login -Server $Kontroler -Properties lastLogon -ErrorAction Stop
@@ -541,19 +377,15 @@ function Get-JezykLastLogonZKontrolera {
     $wejscie = $null
     $szukacz = $null
     try {
-        # Ukosnik w DN (nazwy typu "Kowalski/Nowak") rozdzielilby sciezke ADsPath w zlym
-        # miejscu, wiec go poprzedzamy odwrotnym.
+        # Ukosnik w DN oslaniamy, inaczej rozdzielilby sciezke ADsPath.
         $sciezka = 'LDAP://{0}/{1}' -f $Kontroler, ($Dn -replace '/', '\/')
 
-        # Zadamy podpisania i zaszyfrowania kanalu. Bez tego atrybut i pelna nazwa
-        # wyrozniajaca ida po porcie 389 jawnym tekstem, a na kontrolerach z wymuszonym
-        # podpisywaniem LDAP bind bywa odrzucany - i odmowa wyglada jak milczacy kontroler.
+        # Kanal podpisany i szyfrowany (README: Bezpieczenstwo > Co Jezyk czyta i zapisuje).
         $uwierzytelnienie = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
                             [System.DirectoryServices.AuthenticationTypes]::Sealing -bor
                             [System.DirectoryServices.AuthenticationTypes]::Signing
 
-        # Puste poswiadczenia = kontekst zalogowanego uzytkownika. Poswiadczenia z okna
-        # logowania nie trafiaja tu nigdy.
+        # Puste poswiadczenia = kontekst zalogowanego uzytkownika.
         $wejscie = New-Object System.DirectoryServices.DirectoryEntry(
                        $sciezka, $null, $null, $uwierzytelnienie)
         $szukacz = New-Object System.DirectoryServices.DirectorySearcher($wejscie)
@@ -568,9 +400,7 @@ function Get-JezykLastLogonZKontrolera {
         $wartosci = $trafienie.Properties['lastlogon']
         if (-not $wartosci -or $wartosci.Count -eq 0) { return 0L }
 
-        # Zwykle wraca Int64, ale przy niektorych dostawcach obiekt COM IADsLargeInteger,
-        # ktorego nie da sie rzutowac. Wtedy skladamy liczbe z dwoch polowek; dolna jest
-        # bez znaku, stad rzutowanie przez UInt32 - bez niego polowa dat wychodzi ujemna.
+        # Int64 albo COM IADsLargeInteger - wtedy skladamy z polowek (dolna bez znaku).
         $surowa = $wartosci[0]
         if ($surowa -is [int64]) { return $surowa }
         try { return [int64]$surowa } catch { }
@@ -589,18 +419,8 @@ function Get-JezykLastLogonZKontrolera {
     }
 }
 
-<#
-.SYNOPSIS
-    Wywoluje jedna funkcje dla wielu wartosci ROWNOLEGLE, z terminem na calosc.
-
-.DESCRIPTION
-    Przestrzenie w puli startuja PUSTE i nie widza funkcji z naszej sesji - wstrzykujemy
-    je jako tekst. Wolajacy podaje KOMPLET funkcji, ktorych zadanie potrzebuje: pominiecie
-    ktorejkolwiek konczy zadanie wyjatkiem "nie rozpoznano nazwy polecenia" WEWNATRZ
-    przestrzeni, a wolajacy widzi to jako brak odpowiedzi. Objawem jest cisza, nie blad.
-
-    Termin dotyczy CALOSCI - jeden martwy kontroler nie moze zatrzymac pozostalych.
-#>
+# Wywoluje jedna funkcje dla wielu wartosci rownolegle, z terminem na calosc.
+# Uwaga: pula startuje pusta - wolajacy podaje KOMPLET funkcji do wstrzykniecia (README: Pulapki).
 function Invoke-JezykRownolegle {
     param(
         [string[]]$Wartosci,
@@ -628,8 +448,7 @@ function Invoke-JezykRownolegle {
         foreach ($wartosc in $Wartosci) {
             $ps = [powershell]::Create()
             $ps.RunspacePool = $pula
-            # Wartosci ida przez AddArgument, nie do tekstu skryptu - to jedyne miejsce
-            # w narzedziu, gdzie kod powstaje z lancucha znakow.
+            # Wartosci przez AddArgument, nie w tekscie skryptu.
             [void]$ps.AddScript($tresc).AddArgument($wartosc)
             foreach ($arg in $Argumenty) { [void]$ps.AddArgument($arg) }
             $zadania += [pscustomobject]@{ Wartosc = $wartosc; Ps = $ps; Uchwyt = $ps.BeginInvoke() }
@@ -654,18 +473,7 @@ function Invoke-JezykRownolegle {
     return $wyniki
 }
 
-<#
-.SYNOPSIS
-    Dokladna data ostatniego logowania - najpozniejsza wartosc ze wszystkich kontrolerow.
-
-.DESCRIPTION
-    lastLogonTimestamp jest replikowany, ale odswiezany celowo co 9-14 dni. lastLogon jest
-    dokladny co do sekundy, ale NIE replikowany - kazdy kontroler zna tylko te logowania,
-    ktore sam obsluzyl. Prawdziwa data to najpozniejszy lastLogon ze wszystkich.
-
-    Lista kontrolerow przychodzi z zewnatrz, bo ich rozpoznanie kosztuje osobne zapytanie,
-    a zmieniaja sie raz na wiele miesiecy. Uruchamiane w tle, nigdy na watku interfejsu.
-#>
+# Dokladna data logowania: najpozniejszy lastLogon ze wszystkich kontrolerow (tylko w tle).
 function Get-JezykOstatnieLogowanie {
     param([string]$Login, [string]$Domena, [string]$Dn = '',
           [string[]]$Kontrolery = @(), [int]$LimitMsLacznie = 6000,
@@ -684,9 +492,7 @@ function Get-JezykOstatnieLogowanie {
         catch { return $wynik }
     }
 
-    # Sprawdzenie ksztaltu RAZ, tutaj, zanim cokolwiek pojdzie do przestrzeni w tle.
-    # Nazwa odrzucona w tle bylaby nieodroznialna od kontrolera, ktory nie odpowiedzial,
-    # a to zupelnie inne sytuacje - odrzucone trafiaja wiec do osobnego pola.
+    # Nazwy kontrolerow sprawdzane tutaj - odrzucone osobno od milczacych.
     $odrzucone = @($lista | Where-Object { -not (Test-JezykNazwaHosta $_) })
     $lista     = @($lista | Where-Object { Test-JezykNazwaHosta $_ })
 
@@ -697,11 +503,9 @@ function Get-JezykOstatnieLogowanie {
 
     $najnowsze = 0L
 
-    # Rownolegle: czas przestaje rosnac z liczba kontrolerow i schodzi do czasu
-    # najwolniejszego z nich.
+    # Rownolegle: czas schodzi do czasu najwolniejszego kontrolera.
     if ($lista.Count -gt 1 -and $LimitRownoleglosci -gt 1) {
-        # KOMPLET funkcji, ktorych potrzebuje Get-JezykLastLogonZKontrolera. Pominiecie
-        # ktorejkolwiek nie daje bledu przy starcie, tylko ciszy - patrz Invoke-JezykRownolegle.
+        # Komplet funkcji dla Get-JezykLastLogonZKontrolera - pominieta dalaby cisze.
         $odpowiedzi = Invoke-JezykRownolegle -Wartosci $lista `
                           -Funkcje   'Test-JezykNazwaHosta', 'Test-JezykDn', 'Get-JezykLastLogonZKontrolera' `
                           -Wywolanie 'Get-JezykLastLogonZKontrolera -Kontroler $args[0] -Dn $args[1] -Login $args[2]' `
@@ -738,28 +542,8 @@ function Get-JezykOstatnieLogowanie {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Czy na wskazanym hoscie odpowiada port, ktorym pojdzie zapytanie?
-
-.DESCRIPTION
-    NAJWAZNIEJSZA ZAPORA CZASOWA W CALYM NARZEDZIU. Polaczenie DCOM z milczacym hostem
-    wisi w RPC dziesiatki sekund do kilku minut i NIE DA SIE GO PRZERWAC: -OperationTimeoutSec
-    dotyczy operacji, a nie zestawiania sesji, a zatrzymanie zadania w tle dochodzi do
-    skutku dopiero wtedy, gdy RPC samo odpusci. Kilkanascie takich zwisow naraz wyczerpuje
-    pule watkow procesu i okno przestaje odpowiadac.
-
-    Sonda zamyka to pytanie w poltorej sekundy. Sam fakt otwartego portu niczego nie
-    obiecuje - odpowiedz "nie" jest jednak pewna i tylko o nia tu chodzi.
-
-    ROZWIAZANIE NAZWY IDZIE OSOBNO I MA WLASNY TERMIN. BeginConnect z NAZWA hosta rozwiazuje
-    ja SYNCHRONICZNIE, zanim w ogole zacznie laczenie - termin nalozony na polaczenie nie
-    obejmuje wiec ani jednej milisekundy odpytania DNS. Ta sama pulapka zamrozila juz raz
-    okno Jezyka i jest opisana w README, rozdzial "Pulapki, ktore psuly ten kod".
-
-    Termin jest LACZNY dla obu krokow, bo wolajacego obchodzi calkowity czas sondy,
-    a nie to, ktory z krokow go zjadl.
-#>
+# Czy port na hoscie odpowiada (termin 1,5 s) - sonda przed kazda sesja WMI (README: Pulapki).
+# DNS rozwiazywany osobno, w tym samym terminie - BeginConnect z nazwa rozwiazuje ja synchronicznie.
 function Test-JezykPortOtwarty {
     param([string]$Serwer, [int]$Port, [int]$LimitMs = 1500)
 
@@ -784,11 +568,10 @@ function Test-JezykPortOtwarty {
     try {
         $klient = New-Object System.Net.Sockets.TcpClient
 
-        # ADRESY, nie nazwa: nazwa jest juz rozwiazana i nie ma czego rozwiazywac drugi raz.
+        # Adresy, nie nazwa - juz rozwiazana.
         $uchwyt = $klient.BeginConnect($adresy, $Port, $null, $null)
 
-        # WaitOne z terminem, a nie EndConnect wprost: samo EndConnect czekaloby tyle,
-        # ile zechce stos TCP.
+        # WaitOne z terminem - samo EndConnect czekaloby tyle, ile zechce stos TCP.
         if (-not $uchwyt.AsyncWaitHandle.WaitOne([int]$pozostalo, $false)) { return $false }
 
         $klient.EndConnect($uchwyt)
@@ -798,18 +581,7 @@ function Test-JezykPortOtwarty {
     finally { if ($klient) { try { $klient.Close() } catch { } } }
 }
 
-<#
-.SYNOPSIS
-    Nazywa przyczyne bledu WMI i podaje wykonalna naprawe.
-
-.DESCRIPTION
-    Wczesniej cztery zupelnie rozne sytuacje - zla przestrzen nazw, brak uprawnien,
-    zablokowany DCOM i nieosiagalny host - konczyly sie tym samym napisem "brak dostepu
-    do SCCM". Z takiego komunikatu nie da sie wyczytac, co poprawic.
-
-    Rozpoznajemy NAJPIERW po kodzie bledu, a dopiero potem po tresci: kody nie zaleza od
-    jezyka systemu, a tresc na polskim Windowsie brzmi inaczej niz na angielskim.
-#>
+# Nazywa przyczyne bledu WMI i podaje naprawe; rozpoznaje najpierw po kodzie bledu, potem po tresci.
 function Get-JezykOpisBleduWmi {
     param($Wyjatek, [string]$Serwer = '', [string]$Przestrzen = '', [string]$Protokol = '',
           [ValidateSet('', 'Polaczenie', 'Zapytanie')][string]$Etap = '')
@@ -818,8 +590,7 @@ function Get-JezykOpisBleduWmi {
     $tresc = ([string]$tresc).Trim()
     if (-not $tresc) { $tresc = 'brak treści błędu' }
 
-    # NativeErrorCode jest wyliczeniem CIM, nie tekstem - nie zalezy od jezyka systemu.
-    # Pod wlasnym try, bo niosa je tylko wyjatki CIM, a tutaj trafiaja rowniez inne.
+    # NativeErrorCode - wyliczenie CIM niezalezne od jezyka systemu; nie kazdy wyjatek go ma.
     $kodCim = ''
     try {
         if ($Wyjatek.Exception -and $Wyjatek.Exception.PSObject.Properties['NativeErrorCode']) {
@@ -828,10 +599,7 @@ function Get-JezykOpisBleduWmi {
     }
     catch { }
 
-    # 0x80131500 to COR_E_EXCEPTION - generyczna wartosc .NET nadawana kazdemu wyjatkowi,
-    # ktory nie ustawil wlasnego HResult. CimException zostawia ja czesto bez zmian, wiec
-    # ten konkretny kod NIE OPISUJE bledu WMI - jest szumem obok prawdziwej przyczyny
-    # (ktora niesie kodCim). Pokazanie go wygladaloby na trop, a byloby pusta wydmuszka.
+    # 0x80131500 (COR_E_EXCEPTION) to szum .NET, nie kod bledu WMI - nie pokazujemy go.
     $kodHex = ''
     try {
         $hresult = [int]$Wyjatek.Exception.HResult
@@ -854,11 +622,7 @@ function Get-JezykOpisBleduWmi {
 
         $krotki  = 'brak uprawnień do SCCM'
 
-        # Odmowa przy SAMYM POLACZENIU (przed dotknieciem root\sms) i odmowa przy
-        # ZAPYTANIU o konkretna przestrzen to DWIE ROZNE bramki zabezpieczen - pierwsza
-        # zalezy od transportu (DCOM vs WinRM), druga jest wlasnoscia samej przestrzeni
-        # nazw i taka sama dla obu protokolow. Bez rozroznienia rada byla ogolnikowa
-        # i wskazywala dwa miejsca naraz, choc winne jest zwykle tylko jedno.
+        # Odmowa przy polaczeniu (prawo DCOM) i przy zapytaniu (przestrzen WMI) to dwie rozne bramki.
         if ($Etap -eq 'Polaczenie') {
             $naprawa = 'Serwer {0} ODMÓWIŁ już przy nawiązywaniu połączenia - zanim padło jakiekolwiek zapytanie o dane SCCM. To wskazuje na brak prawa zdalnej aktywacji DCOM dla tego konta na tym serwerze (Component Services → Computers → Mój komputer → DCOM Config → "Windows Management and Instrumentation" → Security → Launch and Activation Permissions), a nie na brak roli w konsoli ConfigMgr.' -f $Serwer
         }
@@ -904,35 +668,15 @@ function Get-JezykOpisBleduWmi {
     [pscustomobject]@{ Krotki = $krotki; Szczegoly = ($szczegoly -join [Environment]::NewLine) }
 }
 
-<#
-.SYNOPSIS
-    Zestawia JEDNA sesje WMI do serwera lokacji SCCM. Zwraca sesje albo opis porazki.
-
-.DESCRIPTION
-    Sesja jest jedna na cale zadanie. Wczesniej kazde zapytanie otwieralo wlasna, wiec
-    najdrozszy krok - zestawienie polaczenia - byl placony tyle razy, ile bylo zapytan.
-
-    Przed kazda proba idzie sonda portu; powod opisany przy Test-JezykPortOtwarty.
-
-    Protokol zapasowy probuje TEJ SAMEJ nazwy serwera druga droga - zapasowy jest protokol,
-    NIGDY adres. Ma to sens, bo prawo wstepu bywa nadane tylko jednej z dwoch drog: rola
-    w ConfigMgr daje zdalna aktywacje DCOM, a wejscie przez WinRM wymaga osobnego
-    czlonkostwa na serwerze lokacji.
-
-    PROBUJEMY KAZDEGO PROTOKOLU, TAKZE PO ODMOWIE DOSTEPU NA PIERWSZYM. Odmowa przy
-    zestawianiu polaczenia (brak prawa aktywacji DCOM) i odmowa zabezpieczen SAMEJ
-    PRZESTRZENI NAZW to dwie osobne bramki - pierwsza zalezy od transportu, druga nie.
-    Kod nie ma jak z gory rozstrzygnac, na ktora trafil, wiec zgadywanie i rezygnacja
-    z drugiej proby bylyby zwyklym zalozeniem, nie faktem.
-#>
+# Jedna sesja WMI do serwera lokacji na cale zadanie; przed kazda proba sonda portu.
+# Protokol zapasowy probuje tego samego serwera - takze po odmowie dostepu na pierwszym.
 function Open-JezykSesjaSccm {
     param([string]$Serwer, [string]$Protokol = 'Dcom', [bool]$Zapasowy = $false,
           [int]$LimitSek = 15, [int]$LimitSondyMs = 1500)
 
     $wynik = [pscustomobject]@{ Sesja = $null; Protokol = ''; Blad = ''; Szczegoly = '' }
 
-    # Sprawdzenie PRZED pierwszym uzyciem nazwy - takze przed sonda, ktora oddaje ja
-    # wprost do gniazda TCP.
+    # Sprawdzenie nazwy przed pierwszym uzyciem - takze przed sonda.
     if (-not (Test-JezykNazwaHosta $Serwer)) {
         $wynik.Blad      = 'zła nazwa serwera SCCM'
         $wynik.Szczegoly = 'SccmSerwer "{0}" nie jest poprawną nazwą hosta.' -f $Serwer
@@ -947,10 +691,7 @@ function Open-JezykSesjaSccm {
     $powody      = @()
     $ostatniOpis = ''
 
-    # Odmowa uprawnien zapamietywana OSOBNO od ostatniego opisu: to najbardziej konkretna
-    # ze wszystkich mozliwych porazek (polaczenie doszlo do skutku, tylko dostep zostal
-    # odrzucony), wiec ma pierwszenstwo przy koncowym komunikacie - nawet jesli druga proba
-    # zawiedzie z zupelnie innego, mniej informatywnego powodu.
+    # Odmowa uprawnien zapamietana osobno - ma pierwszenstwo w koncowym komunikacie.
     $bladOdmowy = $null
 
     foreach ($proba in $kolejnosc) {
@@ -962,15 +703,8 @@ function Open-JezykSesjaSccm {
         }
 
         try {
-            # -SkipTestConnection JEST TU WARUNKIEM DZIALANIA, nie oszczednoscia czasu.
-            # New-CimSession domyslnie weryfikuje polaczenie, ale ten test NIE idzie do
-            # root\sms\site_XXX - idzie do domyslnej przestrzeni maszyny (root\cimv2).
-            # W zamknietych srodowiskach to czesta asymetria: instalator SCCM nadaje prawa
-            # grupie SMS Admins WPROST na root\sms, a nikt nie nadaje im praw do root\cimv2
-            # ani ogolnej zdalnej aktywacji DCOM. Test przechodzil wiec przez bramke, ktorej
-            # prawdziwe zapytanie nigdy by nie dotknelo - i to ON zwracal "Odmowa dostepu",
-            # mimo ze konsola ConfigMgr z tego samego konta czytala dane bez problemu.
-            # Konsola nie robi takiego testu: laczy sie prosto do root\sms i my teraz tez.
+            # Uwaga: bez -SkipTestConnection domyslny test pyta root\cimv2 zamiast root\sms i dostaje odmowe
+            # (README: -SkipTestConnection jest warunkiem dzialania).
             $wynik.Sesja = New-CimSession -ComputerName $Serwer `
                                           -SessionOption (New-CimSessionOption -Protocol $proba) `
                                           -OperationTimeoutSec $LimitSek `
@@ -983,8 +717,7 @@ function Open-JezykSesjaSccm {
             return $wynik
         }
         catch {
-            # Etap 'Polaczenie': ta odmowa pada PRZED dotknieciem root\sms, wiec jesli to
-            # ona, naprawa wskazuje prawo aktywacji DCOM, nie zabezpieczenia przestrzeni.
+            # Etap 'Polaczenie': odmowa przed dotknieciem root\sms - naprawa to prawo aktywacji DCOM.
             $opis        = Get-JezykOpisBleduWmi $_ -Serwer $Serwer -Protokol $proba -Etap 'Polaczenie'
             $powody     += '{0}: {1}' -f $proba, $opis.Krotki
             $ostatniOpis = $opis.Szczegoly
@@ -993,9 +726,7 @@ function Open-JezykSesjaSccm {
         }
     }
 
-    # Odmowa uprawnien na KTORYMKOLWIEK protokole jest bardziej wartosciowa niz ogolnikowe
-    # "zadna droga nie dziala" - mowi wprost, ze polaczenie dziala i tylko dostep zostal
-    # zablokowany, wiec zostaje ostatecznym wynikiem, choc druga proba mogla zawiesc inaczej.
+    # Odmowa na ktorymkolwiek protokole zostaje wynikiem - mowi najwiecej.
     if ($bladOdmowy) {
         $wynik.Blad      = $bladOdmowy.Krotki
         $wynik.Szczegoly = if ($kolejnosc.Count -gt 1) {
@@ -1004,8 +735,7 @@ function Open-JezykSesjaSccm {
         return $wynik
     }
 
-    # Sonda odrzucila wszystko: nie ma zadnego wyjatku do opisania, jest za to pewna
-    # wiedza, ze zaden port nie odpowiedzial.
+    # Sonda odrzucila wszystko - zaden port nie odpowiedzial.
     if (-not $ostatniOpis) {
         $ostatniOpis = 'Żaden port nie odpowiedział, więc żadna sesja nie została nawet zestawiona. Zwykle znaczy to zaporę między stacją a serwerem lokacji albo złą nazwę serwera w SccmSerwer.'
     }
@@ -1016,9 +746,7 @@ function Open-JezykSesjaSccm {
     return $wynik
 }
 
-# Jedno zapytanie na GOTOWEJ sesji. Termin nalozony takze tutaj, bo zawiesic sie potrafi
-# samo zapytanie, nie tylko zestawienie sesji.
-# Funkcja celowo nie lapie wyjatku: o tym, czy blad jest do pokazania, decyduje wolajacy.
+# Jedno zapytanie na gotowej sesji, z terminem; wyjatek zostawia wolajacemu.
 function Invoke-JezykZapytanieWmi {
     param($Sesja, [string]$Przestrzen, [string]$Zapytanie, [int]$LimitSek = 15)
 
@@ -1026,44 +754,14 @@ function Invoke-JezykZapytanieWmi {
                     -OperationTimeoutSec $LimitSek -ErrorAction Stop
 }
 
-<#
-.SYNOPSIS
-    To samo zapytanie, ale STARYM stosem WMI. Droga zapasowa po odmowie z CIM.
-
-.DESCRIPTION
-    To NIE jest "ten sam protokol jeszcze raz". Get-CimInstance idzie przez stos MI,
-    a Get-WmiObject przez klasyczny COM/DCOM - ten sam, ktorego uzywa konsola ConfigMgr
-    i wszystkie skrypty SCCM sprzed ery CIM. Bywa, ze jedno przechodzi, a drugie nie,
-    bo autoryzacja i sciezka wywolania sa w obu zupelnie inne.
-
-    BEZ TERMINU, i to jest swiadoma cena: Get-WmiObject nie ma odpowiednika
-    -OperationTimeoutSec. Wolajacy odpala te droge WYLACZNIE po szybkiej, definitywnej
-    odmowie z CIM - serwer jest wtedy znany jako odpowiadajacy, wiec zwis jest malo
-    prawdopodobny, a gdyby jednak nastapil, zadanie w tle ma wlasna machinerie porzucania.
-
-    Funkcja celowo nie lapie wyjatku: o tym, czy blad jest do pokazania, decyduje wolajacy.
-#>
+# To samo zapytanie starym stosem WMI (jak konsola ConfigMgr) - bez terminu, tylko po odmowie CIM.
 function Invoke-JezykZapytanieWmiStare {
     param([string]$Serwer, [string]$Przestrzen, [string]$Zapytanie)
 
     Get-WmiObject -ComputerName $Serwer -Namespace $Przestrzen -Query $Zapytanie -ErrorAction Stop
 }
 
-<#
-.SYNOPSIS
-    Jedno zapytanie do SCCM: najpierw stosem CIM, a po ODMOWIE - starym stosem WMI.
-
-.DESCRIPTION
-    Dwie drogi, bo autoryzacja w obu przebiega inaczej i jedna potrafi przejsc tam, gdzie
-    druga odbija sie od odmowy. Stary stos jest tym, ktorego uzywa konsola ConfigMgr -
-    a operator widzi w niej dane, ktorych Jezyk nie potrafil odczytac.
-
-    Droga zapasowa odpala sie WYLACZNIE po odmowie uprawnien. Kazdy inny blad (zla
-    przestrzen nazw, brak klasy, zerwane polaczenie) powtorzylby sie identycznie na drugim
-    stosie, wiec druga proba byloby tylko marnowaniem czasu operatora.
-
-    Gdy zawioda obie, wraca opis z PIERWSZEJ proby: to on niesie rozpoznana przyczyne.
-#>
+# Zapytanie do SCCM: stos CIM, a po ODMOWIE uprawnien - stary stos WMI (README: Dwa stosy WMI).
 function Invoke-JezykZapytanieSccm {
     param($Sesja, [string]$Serwer, [string]$Przestrzen, [string]$Zapytanie,
           [string]$Protokol = 'Dcom', [int]$LimitSek = 15)
@@ -1076,8 +774,7 @@ function Invoke-JezykZapytanieSccm {
         return $wynik
     }
     catch {
-        # Etap 'Zapytanie': polaczenie juz stoi, wiec odmowa dotyczy KONKRETNIE tej
-        # przestrzeni nazw, a nie prawa aktywacji DCOM.
+        # Etap 'Zapytanie': odmowa dotyczy konkretnej przestrzeni nazw.
         $wynik.Blad = Get-JezykOpisBleduWmi $_ -Serwer $Serwer -Przestrzen $Przestrzen `
                                               -Protokol $Protokol -Etap 'Zapytanie'
         if ($wynik.Blad.Krotki -ne 'brak uprawnień do SCCM') { return $wynik }
@@ -1094,10 +791,7 @@ function Invoke-JezykZapytanieSccm {
     return $wynik
 }
 
-# Ustawienia polaczenia z SCCM przepisane z konfiguracji, bez zadnego rozpoznawania.
-# Kod lokacji trafia do NAZWY PRZESTRZENI NAZW, wiec musi byc dokladnie trzyznakowy;
-# nazwa serwera przechodzi te sama biala liste co kazda inna nazwa hosta, zeby literowka
-# dala komunikat o literowce, a nie o nieosiagalnym serwerze.
+# Ustawienia SCCM z konfiguracji, bez rozpoznawania: kod lokacji 3 znaki, serwer z bialej listy.
 function Get-JezykSccmPolaczenie {
     param([string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom')
 
@@ -1129,32 +823,8 @@ function Get-JezykSccmPolaczenie {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Sprowadza znacznik czasu z SCCM do czasu LOKALNEGO stacji.
-
-.DESCRIPTION
-    SCCM trzyma znaczniki aktywnosci w UTC, a Jezyk pokazywal je bez przeliczenia - stad
-    zgloszenie "zalogowalem sie o 6:20, a w polu jest 4:56". Roznica nie byla przypadkowa:
-    4:56 UTC to 6:56 czasu lokalnego, czyli puls klienta 36 minut po zalogowaniu. Wartosc
-    byla wiec poprawna, tylko podana w cudzej strefie.
-
-    CZTERY KSZTALTY, w jakich ta sama data potrafi przyjsc, i kazdy wymaga czego innego:
-      - [datetime] Kind = Utc          (Get-CimInstance)  -> przeliczamy na lokalny,
-      - [datetime] Kind = Local        (juz przeliczony)  -> zostawiamy,
-      - [datetime] Kind = Unspecified  (czesc instalacji) -> TRAKTUJEMY JAK UTC, bo tak
-        SCCM te pola przechowuje; brak znacznika strefy nie znaczy "czas lokalny",
-      - lancuch DMTF "20260827065600.000000+120" (droga zapasowa przez Get-WmiObject).
-
-    Ostatni kszalt naprawia DRUGA, dotad niewidoczna usterke: rzutowanie [datetime] na
-    lancuchu DMTF wywalalo sie do catch i data po prostu znikala. Lancuch rozkladamy
-    SAMI, zamiast przez ManagementDateTimeConverter: przestrzen w tle startuje pusta,
-    wiec typ z System.Management moze sie w niej nie rozwiazac, a wtedy data znikalaby
-    tak samo cicho jak przedtem.
-
-    Nie rzuca wyjatkiem: wartosc nie do odczytania to $null, czyli "bez daty" - a to stan,
-    ktory wolajacy juz obsluguje.
-#>
+# Znacznik czasu z SCCM (UTC) na czas lokalny: Kind Utc, Local, Unspecified (jak UTC) i lancuch DMTF.
+# Nie rzuca - wartosc nie do odczytania to $null (README: Data przychodzi w UTC).
 function ConvertTo-JezykCzasLokalny {
     param($Wartosc)
 
@@ -1164,8 +834,7 @@ function ConvertTo-JezykCzasLokalny {
         $tekst = ([string]$Wartosc).Trim()
         if (-not $tekst) { return $null }
 
-        # DMTF niesie WLASNE przesuniecie strefy (ostatnie trzy cyfry to minuty od UTC),
-        # wiec rozwiazuje sie w calosci tutaj i nie przechodzi przez galaz Kind nizej.
+        # DMTF niesie wlasne przesuniecie strefy (minuty od UTC).
         if ($tekst -match '^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3})$') {
             try {
                 # Mikrosekundy na takty: jeden takt to 100 nanosekund.
@@ -1173,8 +842,7 @@ function ConvertTo-JezykCzasLokalny {
                                        [int]$Matches[4], [int]$Matches[5], [int]$Matches[6],
                                        [System.DateTimeKind]::Utc).AddTicks([long]$Matches[7] * 10)
 
-                # Zapis jest czasem LOKALNYM serwera, wiec do UTC idziemy w DRUGA strone
-                # niz mowi znak przesuniecia.
+                # Zapis to czas lokalny serwera - do UTC idziemy w strone przeciwna do znaku.
                 $minuty = [int]$Matches[9]
                 if ($Matches[8] -eq '+') { $minuty = -$minuty }
 
@@ -1195,17 +863,7 @@ function ConvertTo-JezykCzasLokalny {
     return ([datetime]::SpecifyKind($data, [System.DateTimeKind]::Utc)).ToLocalTime()
 }
 
-<#
-.SYNOPSIS
-    Nazwy kont zapisane w JEDNYM polu SCCM - kazda bez przedrostka domeny.
-
-.DESCRIPTION
-    Jedna regula rozbierania takiego pola, w jednym miejscu. Pola z nazwami uzytkownikow
-    bywaja zapisane raz jako "konto", raz jako "DOMENA\konto", a PrimaryUser dodatkowo bywa
-    LISTA kont oddzielonych przecinkami. Korzystaja z tej reguly dwie rzeczy: licznik
-    odrebnych kont na maszynie i dopasowanie loginu do wiersza - czyli miejsce, w ktorym
-    zapada decyzja, czyja to maszyna. Dwie kopie rozjechalyby sie przy pierwszej zmianie.
-#>
+# Nazwy kont z jednego pola SCCM, bez przedrostka domeny (pole bywa lista po przecinku).
 function Get-JezykKontaZPola {
     param([string]$Wartosc)
 
@@ -1223,20 +881,7 @@ function Get-JezykKontaZPola {
     return ,$konta.ToArray()
 }
 
-<#
-.SYNOPSIS
-    Odrebne konta widoczne na maszynie wg CurrentLogonUser/LastLogonUser/PrimaryUser.
-
-.DESCRIPTION
-    Trzy pola bywaja zapisane raz jako "konto", raz jako "DOMENA\konto", a PrimaryUser
-    dodatkowo bywa LISTA kont oddzielonych przecinkami - porownanie idzie wiec po nazwie
-    konta bez przedrostka domeny i bez wzgledu na wielkosc liter. Wiecej niz jedno odrebne
-    konto znaczy, ze maszyna jest wspoldzielona: pokazana data aktywnosci moze wtedy
-    dotyczyc zupelnie innej osoby niz ta, ktorej szukamy.
-
-    Czysta funkcja bez zaleznosci od SCCM/CIM - latwa do przetestowania bez atrapowania
-    calej sesji.
-#>
+# Odrebne konta na maszynie (Current/LastLogonUser, PrimaryUser); wiecej niz jedno = wspoldzielona.
 function Get-JezykKontaMaszyny {
     param($Wiersz)
 
@@ -1254,44 +899,11 @@ function Get-JezykKontaMaszyny {
         $konta.Add($bezDomeny)
     }
 
-    # Przecinek wymuszony: bez niego PowerShell rozpakowuje tablice 0/1-elementowa przy
-    # zwrocie z funkcji, a wolajacy dostaje $null albo goly string zamiast tablicy.
+    # Przecinek wymuszony - bez niego tablica 0/1-elementowa rozwinelaby sie przy zwrocie.
     return ,$konta.ToArray()
 }
 
-<#
-.SYNOPSIS
-    Ostatnio uzywany komputer - z inwentaryzacji SCCM, bo AD tego nie przechowuje.
-
-.DESCRIPTION
-    W AD nie ma takiego atrybutu: lastLogon mowi KIEDY, nigdy GDZIE. SCCM ma to wprost -
-    kazdy komputer raportuje LastLogonUserName. Stad nazwa pola "ostatnio uzywany",
-    a nie "zalogowany": to ostatni uzytkownik maszyny wedlug inwentaryzacji.
-
-    Data pochodzi z LastActiveTime w SMS_CombinedDeviceResources, a NIE z
-    SMS_R_System.LastLogonTimestamp - tamto pole to moment uwierzytelnienia konta
-    komputera w domenie i pod nazwa komputera wygladaloby jak data pracy uzytkownika.
-
-    Wspoldzielony/SzczegolyWspoldzielenia dziala wylacznie, gdy trafilo pierwsze zrodlo
-    (SMS_CombinedDeviceResources) - tylko ono niesie CurrentLogonUser/LastLogonUser/
-    PrimaryUser w wierszu wyniku, patrz Get-JezykKontaMaszyny.
-#>
-<#
-.SYNOPSIS
-    Wybiera adres MAC karty, ktora odpowiada pod wskazanym adresem IP.
-
-.DESCRIPTION
-    Maszyna miewa kilka kart naraz - Ethernet, Wi-Fi, czesto jeszcze VPN albo Hyper-V -
-    a inwentaryzacja SCCM oddaje je wszystkie. Adres wziety "z brzegu" opisywalby inna
-    karte niz ta, ktora odpowiada pod pokazanym IP, i NIC BY TEGO NIE ZDRADZILO: jeden
-    adres MAC wyglada w oknie dokladnie jak kazdy inny.
-
-    IPAddress jest TABLICA - jedna karta miewa adres IPv4 i IPv6 naraz - wiec porownanie
-    idzie po calej tablicy, a nie po jej pierwszym elemencie.
-
-    Brak dopasowania oddajemy jako pusty napis, a nie jako pierwszy lepszy adres: "nie
-    wiadomo" i "wiadomo, ze ten" to dwie rozne odpowiedzi.
-#>
+# Adres MAC karty z dokladnie tym adresem IP (cala tablica IPAddress); brak trafienia = pusty napis.
 function Get-JezykMacDlaAdresu {
     param($Karty, [string]$Adres)
 
@@ -1303,12 +915,7 @@ function Get-JezykMacDlaAdresu {
         if (-not $karta) { continue }
         if (-not $karta.MACAddress) { continue }
 
-        # KSZTALTU IPAddress NIE ZAKLADAMY. Inwentaryzacja sprzetu splaszcza wlasciwosci
-        # tablicowe do jednego napisu, wiec ta sama karta potrafi przyjsc raz jako tablica
-        # adresow, a raz jako "10.0.0.5, fe80::1" w calosci - a wtedy porownanie calego
-        # napisu z pojedynczym adresem jest falszywe dla KAZDEJ karty z IPv6 i adres MAC
-        # po prostu nie wychodzi. Rozbieramy wiec kazdy element, zamiast ufac, ze jest juz
-        # rozebrany. Porownanie zostaje DOKLADNE: fragment adresu nie jest adresem.
+        # Ksztaltu IPAddress nie zakladamy - bywa tablica albo jeden napis "10.0.0.5, fe80::1".
         $adresyKarty = New-Object System.Collections.Generic.List[string]
         foreach ($wpis in @($karta.IPAddress)) {
             foreach ($czesc in ([string]$wpis) -split '[,;]') {
@@ -1323,25 +930,8 @@ function Get-JezykMacDlaAdresu {
     return ''
 }
 
-<#
-.SYNOPSIS
-    Rozbiera wartosc z inwentaryzacji na pojedyncze wpisy, zachowujac ich POZYCJE.
-
-.DESCRIPTION
-    Inwentaryzacja sprzetu splaszcza wlasciwosci tablicowe do jednego napisu, wiec ta sama
-    karta potrafi przyjsc raz jako tablica, a raz jako "10.0.0.5, fe80::1" w calosci.
-    Rozbieramy wiec kazdy element, zamiast ufac, ze jest juz rozebrany.
-
-    PUSTYCH WPISOW NIE ODSIEWAMY, i to jest tu cala rzecz: IPSubnet paruje sie z IPAddress
-    PO INDEKSIE, wiec wyrzucenie pustego wpisu z jednej listy przesuwa druga i adres dostaje
-    maske sasiada. Wpisy nieczytelne odpadaja pozniej, przy sprawdzaniu kazdej pary osobno.
-
-    OWINIECIE @() STOI NA MIEJSCU WYWOLANIA, wiec przecinka wymuszajacego tu NIE MA - byl by
-    bledem. Przy "return ,$tablica" wyrazenie @(wywolanie) oddaje JEDEN element, ktorym jest
-    cala tablica: petla wykonuje sie raz, a odczyt pola przechodzi po WSZYSTKICH jej
-    elementach naraz (wyliczanie czlonkow) i sklada wartosci w jedna. Przecinek nalezy
-    wylacznie do funkcji, ktorych wynik przypisuje sie wprost - patrz Get-JezykAdresyDoSondy.
-#>
+# Rozbiera wartosc z inwentaryzacji na wpisy, zachowujac pozycje (IPSubnet paruje sie po indeksie).
+# Uwaga: bez przecinka przy return - wolajacy owija wynik w @() (README: Kod > Jezyk-2-Logika).
 function Get-JezykRozbiteWpisy {
     param($Wartosc)
 
@@ -1355,26 +945,8 @@ function Get-JezykRozbiteWpisy {
     return $wpisy.ToArray()
 }
 
-<#
-.SYNOPSIS
-    Bajty adresu IPv4 z napisu - albo $null, gdy napis adresem IPv4 nie jest.
-
-.DESCRIPTION
-    BRAMKA JEST TU WAZNIEJSZA OD SAMEGO ODCZYTU. [System.Net.IPAddress]::TryParse przyjmuje
-    znacznie wiecej, niz wyglada, i kazdy z tych trzech napisow przeszedlby dalej jako
-    poprawny adres, dopasowujac karte z zupelnie innej sieci:
-
-        "64"           -> 0.0.0.64      (dlugosc prefiksu IPv6, ktora inwentaryzacja
-                                         wpisuje w IPSubnet obok masek IPv4)
-        "10.0.0"       -> 10.0.0.0      (zapis niepelny)
-        "010.20.30.44" -> 8.20.30.44    (wiodace zero czytane OSEMKOWO)
-
-    Zapora jest jedna i zamyka wszystkie trzy przypadki: adres musi wrocic TYM SAMYM
-    napisem. Rodzine sprawdzamy osobno, bo IPv6 wraca poprawnie - a maska ma sens wylacznie
-    dla IPv4.
-
-    Przecinek przy return wymuszony - inaczej tablica czterech bajtow rozwija sie w potok.
-#>
+# Bajty adresu IPv4 albo $null. Adres musi wrocic tym samym napisem, bo TryParse przyjmuje
+# takze "64", "10.0.0" i "010.20.30.44" (osemkowo). Przecinek przy return celowy.
 function Get-JezykBajtyIPv4 {
     param([string]$Tekst)
 
@@ -1389,22 +961,7 @@ function Get-JezykBajtyIPv4 {
     return ,$odczytany.GetAddressBytes()
 }
 
-<#
-.SYNOPSIS
-    Czy napis jest maska podsieci IPv4, czyli ciagiem jedynek, a po nim samych zer.
-
-.DESCRIPTION
-    CZESC INWENTARYZACJI WPISUJE W IPSubnet ADRES PODSIECI, A NIE MASKE. Maskowanie przez
-    "10.0.0.0" zrownuje 10.0.0.5 z 10.99.99.99, wiec karta z zupelnie innej sieci wyszlaby
-    jako ta, ktora odpowiada pod pokazanym adresem - i nic by tego nie zdradzilo, bo jeden
-    adres MAC wyglada w oknie dokladnie jak kazdy inny. Sprawdzenie ciaglosci jest jedyna
-    rzecza, ktora to odsiewa.
-
-    Sama lista dozwolonych bajtow nie wystarcza: 255.128.128.0 sklada sie wylacznie z nich,
-    a maska nie jest. Po pierwszym bajcie innym niz 255 kazdy nastepny musi byc zerem.
-    Maske /0 odrzucamy osobno - odpowiadalaby "zawsze ta sama podsiec", a to nie jest zadna
-    odpowiedz.
-#>
+# Czy napis jest maska IPv4: ciag jedynek, potem zera, nie /0 (w IPSubnet bywa adres podsieci).
 function Test-JezykMaskaIPv4 {
     param([string]$Maska)
 
@@ -1425,22 +982,7 @@ function Test-JezykMaskaIPv4 {
     return ($sumaBajtow -gt 0)
 }
 
-<#
-.SYNOPSIS
-    Czy adres z sondy i adres karty leza w tej samej podsieci IPv4.
-
-.DESCRIPTION
-    Drugi szczebel dopasowania karty. Adres zapisany w inwentaryzacji bywa starszy od
-    biezacej dzierzawy DHCP, wiec dokladna zgodnosc nie zachodzi - ale maszyna, ktora
-    odpowiada w tej samej podsieci, odpowiada przez te sama karte.
-
-    Porownanie idzie BAJT PO BAJCIE, a nie przez [uint32]: w operacji bajtowej nie ma
-    pojecia kolejnosci bajtow, wiec nie da sie w niej popelnic bledu, ktory przy masce /24
-    wyglada poprawnie, a wywraca sie przy /23.
-
-    Bez try - TryParse oddaje wartosc logiczna i nie rzuca, a catch zamienilby maske-smiec
-    w ciche "nie ta podsiec", czyli w stan nie do odroznienia od poprawnej odpowiedzi.
-#>
+# Czy adres z sondy i adres karty leza w tej samej podsieci - bajt po bajcie, bez try.
 function Test-JezykTaSamaPodsiec {
     param([string]$Sonda, [string]$Karta, [string]$Maska)
 
@@ -1460,31 +1002,8 @@ function Test-JezykTaSamaPodsiec {
     return $true
 }
 
-<#
-.SYNOPSIS
-    Karty sieciowe z wierszy inwentaryzacji - tylko te z czytelnym adresem IPv4.
-
-.DESCRIPTION
-    Jeden rekord na karte, z lista jej adresow IPv4 i maska przy kazdym z nich. Wiersze bez
-    adresu IPv4 nie wchodza do listy wcale: liczba wierszy oddanych przez SCCM idzie osobno
-    (patrz Get-JezykDopasowanieMac), bo klasa NETWORK_ADAPTER_CONFIGURATION obejmuje takze
-    tunele, karty wirtualne i WAN Miniporty - to one robia z kilku kart siedemnascie wpisow.
-
-    MASKA PAROWANA PO INDEKSIE PELNEJ LISTY: IPSubnet[i] opisuje IPAddress[i]. Odsianie
-    IPv6 przed sparowaniem przesuwa indeksy i adres IPv4 dostaje maske sasiada - przy karcie
-    "fe80::1, 10.0.0.5" bylaby to wartosc "64", czyli dlugosc prefiksu IPv6.
-
-    MaskaZSccm mowi, czy maska pochodzi z inwentaryzacji, czy jest zapasem. Bez tego
-    znacznika komunikat podawalby wymyslona maske jako odczytana - a obietnica pod "!" ma
-    byc sprawdzona, nie zalozona. IPSubnet i Description czytamy przez PSObject.Properties,
-    bo obie wlasciwosci bywaja wylaczone w ustawieniach inwentaryzacji sprzetu.
-
-    OWINIECIE @() STOI NA MIEJSCU WYWOLANIA, wiec przecinka wymuszajacego tu NIE MA - byl by
-    bledem. Przy "return ,$tablica" wyrazenie @(wywolanie) oddaje JEDEN element, ktorym jest
-    cala tablica: petla wykonuje sie raz, a odczyt pola przechodzi po WSZYSTKICH jej
-    elementach naraz (wyliczanie czlonkow) i sklada wartosci w jedna. Przecinek nalezy
-    wylacznie do funkcji, ktorych wynik przypisuje sie wprost - patrz Get-JezykAdresyDoSondy.
-#>
+# Karty z adresem IPv4; maska po indeksie pelnej listy, MaskaZSccm - czy maska jest z inwentaryzacji.
+# Uwaga: bez przecinka przy return - wolajacy owija wynik w @().
 function Get-JezykKartySieciowe {
     param($Wiersze)
 
@@ -1528,38 +1047,15 @@ function Get-JezykKartySieciowe {
     return $karty.ToArray()
 }
 
-<#
-.SYNOPSIS
-    Rozstrzyga, ktora karta odpowiada pod pokazanym adresem - i na jakiej podstawie.
-
-.DESCRIPTION
-    JEDNO MIEJSCE, W KTORYM ZAPADA DECYZJA. Podstawa mowi, skad wzial sie adres MAC, i widok
-    pokazuje go inaczej dla kazdej z nich:
-
-        'Adres'   - karta ma DOKLADNIE ten adres, ktory oddala sonda. Odpowiedz pewna.
-        'Podsiec' - dokladnego adresu nie ma zadna karta, ale jedna ma adres z tej samej
-                    podsieci. Odpowiedz prawdopodobna, oznaczona w oknie.
-        'Wiele'   - adres z tej podsieci ma kilka kart. Ktora z nich odpowiada, nie wiadomo,
-                    wiec nie wybieramy zadnej - "!" wymienia wszystkie.
-        'Brak'    - zapytanie poszlo, nie pasuje nic.
-        ''        - nie bylo czego dopasowywac.
-
-    TRZECIEGO SZCZEBLA ("jedyna karta z jakimkolwiek adresem") NIE MA SWIADOMIE. Karta Wi-Fi
-    wylaczona w chwili inwentaryzacji nie ma zapisanego adresu, wiec taki szczebel pokazywalby
-    MAC Ethernetu dokladnie wtedy, gdy maszyna odpowiada przez Wi-Fi. Zgadywanie wyglada tu
-    identycznie jak odpowiedz.
-
-    Karta liczy sie RAZ, nawet gdy ma dwa adresy w tej podsieci - inaczej jedna karta
-    z dwoma adresami udawalaby dwie i wywracala rozstrzygniecie na 'Wiele'.
-#>
+# Ktora karta odpowiada pod adresem sondy i na jakiej podstawie: Adres, Podsiec, Wiele, Brak albo ''.
+# Trzeciego szczebla ("jedyna karta z adresem") swiadomie nie ma; karta liczy sie raz.
 function Get-JezykDopasowanieMac {
     param($Wiersze, [string]$Adres)
 
     $dopasowanie = [pscustomobject]@{ Mac = ''; Podstawa = ''; Karta = $null
                                       Karty = @(); Wpisow = 0 }
 
-    # @() wokol POTOKU, nie wokol zmiennej: @($null).Count rowna sie 1, wiec brak wiersza
-    # policzylby sie jako jeden wpis inwentaryzacji.
+    # @() wokol potoku - @($null).Count to 1.
     $zWierszy = @(@($Wiersze) | Where-Object { $_ })
     $dopasowanie.Wpisow = $zWierszy.Count
     $dopasowanie.Karty  = @(Get-JezykKartySieciowe -Wiersze $zWierszy)
@@ -1598,32 +1094,8 @@ function Get-JezykDopasowanieMac {
     return $dopasowanie
 }
 
-<#
-.SYNOPSIS
-    Dopisuje do wyniku adres MAC karty, ktora odpowiada pod ustalonym adresem IP.
-
-.DESCRIPTION
-    ADRES MAC MUSI PASOWAC DO POKAZANEGO IP, a nie byc "jakims" adresem maszyny. Laptop ma
-    Ethernet, Wi-Fi, czesto jeszcze karte VPN albo Hyper-V - wybranie pierwszego z brzegu
-    dawaloby adres innej karty niz ta, ktora odpowiada pod tym IP, i nic by tego nie
-    zdradzilo. Dlatego pytamy o karty Z ICH ADRESAMI i dopasowujemy.
-
-    JEDNA FUNKCJA NA DWIE DROGI. Ten sam blok stal wczesniej w dwoch kopiach - raz w drodze
-    od loginu do maszyny, raz w odwrotnej - wiec kazdy komunikat trzeba bylo zmieniac dwa
-    razy. Funkcja WPISUJE POLA do przekazanego wyniku; zasada tego pliku to "zero kodu GUI",
-    nie "zero mutacji", a odpowiednik oddajacy paczke zostawialby te same przypisania
-    w dwoch kopiach i niczego nie domykal.
-
-    SELECT * ZAMIAST LISTY KOLUMN, bo IPSubnet i Description bywaja wylaczone w ustawieniach
-    inwentaryzacji sprzetu, a WQL wymieniajacy nieistniejaca wlasciwosc klasy wywraca CALE
-    zapytanie - i Invoke-JezykZapytanieWmi nie ma drogi zapasowej. To usuwa jednak tylko ten
-    jeden tryb awarii: gdy wlasciwosci nie ma w wierszu, odczyt przez PSObject.Properties
-    jest potrzebny OBOK, a nie zamiast.
-
-    Brak dopasowania jest zwyklym, spodziewanym wynikiem, nie awaria - i wychodzi jako
-    MacPodstawa, a nie jako MacSzczegoly. MacSzczegoly niesie TWARDE awarie: brak adresu,
-    brak identyfikatora zasobu i nieudany odczyt.
-#>
+# Dopisuje do wyniku MAC karty dopasowanej do adresu IP (obie drogi: od loginu i od maszyny).
+# SELECT *, bo IPSubnet i Description bywaja wylaczone w inwentaryzacji; brak trafienia to nie awaria.
 function Set-JezykMacWWyniku {
     param($Wynik, $ResourceID, $Sesja, [string]$Przestrzen, [int]$LimitSek)
 
@@ -1652,44 +1124,13 @@ function Set-JezykMacWWyniku {
         $Wynik.MacWpisow   = [int]$dopasowanie.Wpisow
     }
     catch {
-        # Powod zapisujemy, zamiast go polknac: pusty catch zamienilby brak prawa albo
-        # wylaczona klase w ciche "brak danych", nie do odroznienia od maszyny bez kart
-        # sieciowych.
+        # Powod zapisany - pusty catch zrobilby z bledu "brak danych".
         $Wynik.MacSzczegoly = 'Odczyt kart sieciowych z SCCM zawiódł: {0}' -f $_.Exception.Message
     }
 }
 
-<#
-.SYNOPSIS
-    Wybiera z wierszy SCCM maszyne nalezaca do podanego loginu - i mowi, po czym ja poznal.
-
-.DESCRIPTION
-    TO TUTAJ ZAPADA DECYZJA, CZY TO TEN LOGIN, a nie w zapytaniu WQL. Wzorzec LIKE robi
-    wylacznie zgrubny przesiew, bo tego, jak dostawca SMS traktuje w nim odwrotny ukosnik,
-    nie da sie orzec z gory: przy jednej interpretacji "%\\jan" znaczy "cokolwiek, ukosnik,
-    jan", przy drugiej - "cokolwiek i DWA ukosniki". Zapis "DOMENA\jan" wypadal przez to raz
-    tak, raz inaczej - stad zgloszenie "czasami nie pokazuje komputera", choc uzytkownik byl
-    zalogowany. Tutaj regul nie musimy zgadywac, bo rozbieramy pole sami.
-
-    PRZESIEW JEST SZERSZY NIZ ODPOWIEDZ i tak ma byc: "%jan%" lapie tez "janine" i "bojana",
-    a podkreslenie jest w LIKE znakiem wieloznacznym, wiec "jan_k" lapie "jan1k". Dopasowanie
-    ponizej jest dokladne, wiec wszystko to odpada - i wlasnie dlatego wzorzec nie potrzebuje
-    juz zadnego uciekania znakow.
-
-    KOLEJNOSC POL NIESIE ODPOWIEDZ NA PYTANIE OPERATORA. Pyta on, przy ktorej maszynie ta
-    osoba siedzi: CurrentLogonUser znaczy "siedzi przy niej teraz", LastLogonUser - "siedziala
-    ostatnio", a PrimaryUser to przypisanie, a nie zdarzenie. Data aktywnosci rozstrzyga
-    dopiero WEWNATRZ stopnia; liczona ponad nim wysuwalaby wiecznie wlaczony komputer wspolny
-    przed laptopa, przy ktorym operator faktycznie kogos szuka.
-
-    Porownanie idzie BEZ WZGLEDU NA WIELKOSC LITER (-contains, nie -ccontains) i tak ma
-    zostac: AD nie rozroznia wielkosci w nazwie konta, a SCCM zapisuje ja tak, jak przyszla
-    od klienta. To jest odwrotnosc pulapki z nazwami zmiennych - tam wielkosc liter MUSI byc
-    brana pod uwage, tutaj brac jej pod uwage nie wolno.
-
-    Wiersz bez nazwy maszyny nie liczy sie za trafienie: nie ma go czym pokazac w polu,
-    a zajalby miejsce prawdziwej odpowiedzi z kolejnego zrodla.
-#>
+# Wybiera z wierszy SCCM maszyne loginu: dokladne dopasowanie konta (wzorzec WQL to tylko przesiew),
+# stopien pola (Current, Last, Primary) przed data, bez wzgledu na wielkosc liter.
 function Select-JezykMaszyneDlaLoginu {
     param($Wiersze, [string]$Login,
           $Pola = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser'))
@@ -1732,27 +1173,20 @@ function Select-JezykMaszyneDlaLoginu {
     return $wynik
 }
 
+# Ostatnio uzywany komputer konta - z inwentaryzacji SCCM (AD nie wie, GDZIE), z sonda i adresem MAC.
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
-    # Odpowiada i Adres wypelnia sonda ICMP na samym koncu, po ustaleniu nazwy maszyny.
-    # $null w Odpowiada znaczy "nie sprawdzono albo nie wiadomo" i tak ma zostac na kazdej
-    # sciezce bledu - patrz Get-JezykPingKomputera.
-    # Mac wypelnia sie PO sondzie, bo karte dopasowujemy do adresu, ktory oddala sonda.
-    # MacPodstawa mowi, SKAD ten adres MAC sie wzial, i pole pokazuje go inaczej dla kazdej
-    # podstawy - patrz Get-JezykDopasowanieMac. MacSzczegoly niesie tylko TWARDE awarie.
-    # MacKarty to karty z czytelnym adresem IPv4, a MacWpisow - wszystkie wiersze oddane
-    # przez SCCM: widok liczy z tej roznicy wpisy bez adresu, wiec jedno NIE wynika
-    # z drugiego i nie wolno go z drugiego wyliczac.
+    # Odpowiada i Adres wypelnia sonda na koncu, MAC po niej; $null w Odpowiada = nie wiadomo.
+    # MacKarty to karty z adresem IPv4, MacWpisow - wszystkie wiersze (jedno nie wynika z drugiego).
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
                                 Blad = ''; Szczegoly = ''
                                 Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
                                 Mac = ''; MacSzczegoly = ''; MacPodstawa = ''
                                 MacKarta = $null; MacKarty = @(); MacWpisow = 0 }
 
-    # Login pochodzi z AD, wiec jest bezpieczny - ale zapytanie budowane z tekstu sprawdza
-    # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
+    # Zapytanie budowane z tekstu - login sprawdzany zawsze.
     if (-not (Test-JezykNazwaKonta $Login)) {
         $wynik.Blad      = 'nieprawidłowy login'
         $wynik.Szczegoly = 'Login "{0}" zawiera znaki spoza dozwolonego zestawu.' -f $Login
@@ -1781,28 +1215,11 @@ function Get-JezykOstatnioUzywanyKomputer {
         return $wynik
     }
 
-    # Wszystko ponizej idzie na JEDNEJ sesji, a finally ja zamyka - takze przy porzuceniu
-    # zadania w polowie.
+    # Jedna sesja na wszystko ponizej; finally ja zamyka - takze przy porzuceniu zadania.
     try {
-        # TRZY ZRODLA, w kolejnosci od najblizszego temu, CO OPERATOR WIDZI W KONSOLI.
-        #
-        # SMS_CombinedDeviceResources jest pierwsza nie bez powodu: to wlasnie ta klasa
-        # zasila wezel "Devices" w konsoli ConfigMgr. Operator wpisuje tam login i widzi
-        # komputer - my dlugo pytalismy o SMS_R_System.LastLogonUserName, czyli o INNE POLE
-        # Z INNEGO ZRODLA (rekord odkrycia, odswiezany rzadziej), i dlatego nie znajdowalismy
-        # tego, co konsola pokazuje bez trudu. Ta klasa niesie od razu Name i LastActiveTime,
-        # wiec przy trafieniu nie ma juz osobnego zapytania o date.
-        #
-        # WZORZEC JEST PRZESIEWEM, NIE ODPOWIEDZIA. Nazwy uzytkownika bywaja zapisane raz
-        # jako "konto", raz jako "DOMENA\konto", a PrimaryUser potrafi byc LISTA kont po
-        # przecinku - dotad lapal to wzorzec "%\\konto", czyli ZALOZENIE o tym, ze dostawca
-        # SMS traktuje odwrotny ukosnik jako znak ucieczki. Zalozenia nie da sie sprawdzic
-        # ani stad, ani testem, a gdy jest falszywe, zapis z domena nie trafia NIGDY.
-        # Dlatego wzorzec nie zawiera juz ukosnika ani uciekania znakow, a o tym, czy to ten
-        # login, rozstrzyga Select-JezykMaszyneDlaLoginu - patrz jego opis.
-        #
-        # Pole, po ktorym przesiewamy, musi tez byc W SELECT: bez niego dopasowanie nie ma
-        # czego czytac i odrzucaloby kazdy wiersz zrodla 2 i 3.
+        # Trzy zrodla, od najblizszego widokowi "Devices" w konsoli (README: Pytamy o to samo).
+        # Wzorzec to tylko przesiew (bez ukosnika); login rozstrzyga Select-JezykMaszyneDlaLoginu.
+        # Pole przesiewu musi byc w SELECT, inaczej dopasowanie nie ma czego czytac.
         $zrodla = @(
             @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
                Wql   = "SELECT ResourceID, Name, LastActiveTime, CurrentLogonUser, LastLogonUser, PrimaryUser " +
@@ -1838,29 +1255,18 @@ function Get-JezykOstatnioUzywanyKomputer {
                                              -Protokol $sesja.Protokol -LimitSek $LimitSek
 
             if ($odp.Blad) {
-                # TYLKO brak samej klasy jest problemem JEDNEGO zrodla - inna wersja
-                # ConfigMgr albo wylaczona inwentaryzacja. Wtedy pozostale klasy maja sens
-                # i szukamy dalej.
+                # Tylko brak klasy dotyczy jednego zrodla - wtedy szukamy dalej.
                 if ($odp.Blad.Krotki -eq 'brak klasy w SCCM') {
                     $niedostepne += '{0}: {1}' -f $z.Nazwa, $odp.Blad.Krotki
                     continue
                 }
 
-                # Kazdy inny blad (brak uprawnien, zla przestrzen nazw, zerwane polaczenie)
-                # dotyczy CALEJ przestrzeni albo sesji, wiec kolejne klasy odbija sie od
-                # dokladnie tego samego. Isc dalej znaczyloby skonczyc z komunikatem "brak
-                # w inwentaryzacji", ktory falszywie twierdzi, ze polaczenie i przestrzen
-                # dzialaja - a to wlasnie one zawiodly.
+                # Inny blad dotyczy calej przestrzeni albo sesji - dalsze zrodla odbilyby sie tak samo.
                 $odmowa = $odp.Blad
                 break
             }
 
-            # Zrodlo liczy sie za trafione dopiero wtedy, gdy DOPASOWANIE oddalo wiersz.
-            # Sam niepusty wynik nie wystarcza z dwoch powodow naraz: przesiew LIKE jest
-            # szerszy od odpowiedzi (przy "janie" lapie takze "janine"), a klasa, ktora
-            # zwrocila rekordy bez Name i bez NetbiosName, nie ma czego pokazac w polu.
-            # Odrzucenie wszystkich wierszy NIE konczy przeszukiwania - kolejne zrodla ida
-            # normalnie; dawniej falszywe trafienie ucinalo je i pokazywalo cudza maszyne.
+            # Zrodlo trafione dopiero, gdy dopasowanie oddalo wiersz (przesiew jest szerszy od odpowiedzi).
             $trafienie = Select-JezykMaszyneDlaLoginu -Wiersze $odp.Wiersze -Login $Login -Pola $z.Pola
             if ($trafienie.Wiersz) {
                 $najlepsza     = $trafienie.Wiersz
@@ -1894,14 +1300,10 @@ function Get-JezykOstatnioUzywanyKomputer {
             return $wynik
         }
 
-        # Aktywnosc jest DODATKIEM: brak klasy albo brak prawa do niej zostawia sama nazwe.
-        # Date niosa wiersze pierwszego zrodla i wtedy jest juz w $najData; zrodla 2 i 3 nie
-        # znaja jej wcale, wiec dla nich pytamy osobno - o JEDEN wybrany identyfikator, a nie
-        # o wszystkie przesiane, bo pokazujemy dokladnie jedna maszyne.
+        # Data aktywnosci jest dodatkiem: zrodla 2 i 3 jej nie znaja, wiec pytamy o jeden ResourceId.
         if ($null -eq $najData -and $najlepsza.ResourceID) {
             try {
-                # ResourceId przez [int] - do zapytania trafiaja wtedy same liczby, niezaleznie
-                # od tego, co oddal serwer.
+                # ResourceId przez [int] - do zapytania trafiaja same liczby.
                 $idAktywnosci = [int]$najlepsza.ResourceID
                 if ($idAktywnosci -gt 0) {
                     foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
@@ -1921,9 +1323,7 @@ function Get-JezykOstatnioUzywanyKomputer {
         $wynik.Nazwa = [string]$nazwa
         $wynik.Data  = $najData
 
-        # Wieloosobowosc sprawdzamy WYLACZNIE, gdy trafilo pierwsze zrodlo - tylko ono
-        # niesie CurrentLogonUser/LastLogonUser/PrimaryUser w wierszu (zrodla 2 i 3 tych
-        # pol w ogole nie znaja, wiec dla nich nie ma jak tego rozstrzygnac).
+        # Wspoldzielenie tylko dla pierwszego zrodla - tylko ono niesie pola kont.
         if ($zrodlo -eq $zrodla[0].Nazwa) {
             $konta = Get-JezykKontaMaszyny -Wiersz $najlepsza
             if ($konta.Count -gt 1) {
@@ -1934,11 +1334,7 @@ function Get-JezykOstatnioUzywanyKomputer {
             }
         }
 
-        # SONDA ICMP TUTAJ, A NIE W OKNIE. Zapytanie idzie juz w przestrzeni uruchomieniowej
-        # w tle, wiec ping nie kosztuje watku interfejsu ani jednej milisekundy - a policzony
-        # przy odbiorze wyniku zamrozilby okno na czas rozwiazania nazwy i odpowiedzi.
-        # Wlasny try: sonda jest DODATKIEM. Maszyna jest juz znaleziona i jej nazwa ma sie
-        # pokazac takze wtedy, gdy sprawdzenie dostepnosci samo zawiedzie.
+        # Sonda ICMP tutaj, w tle - na watku interfejsu zamrozilaby okno; wlasny try, bo to dodatek.
         $opisPingu = ''
         try {
             $ping = Get-JezykPingKomputera -Nazwa $wynik.Nazwa
@@ -1948,9 +1344,7 @@ function Get-JezykOstatnioUzywanyKomputer {
         }
         catch { $opisPingu = 'Sprawdzenie dostępności zawiodło: {0}' -f $_.Exception.Message }
 
-        # Karta sieciowa dopasowana do adresu, ktory oddala sonda - cala regule i jej
-        # uzasadnienie niesie Set-JezykMacWWyniku. Blok stoi PO sondzie, bo bez adresu nie
-        # ma do czego dopasowywac.
+        # Karta sieciowa po sondzie - dopasowanie potrzebuje adresu.
         Set-JezykMacWWyniku -Wynik $wynik -ResourceID $najlepsza.ResourceID -Sesja $sesja.Sesja `
                             -Przestrzen $przestrzen -LimitSek $LimitSek
 
@@ -1975,60 +1369,27 @@ function Get-JezykOstatnioUzywanyKomputer {
     }
 }
 
-<#
-.SYNOPSIS
-    Droga ODWROTNA: kto ostatnio korzystal z podanej maszyny.
-
-.DESCRIPTION
-    Te same trzy warstwy klas i ta sama sesja co w Get-JezykOstatnioUzywanyKomputer, tylko
-    filtr idzie po NAZWIE MASZYNY, a z wiersza bierzemy uzytkownika zamiast nazwy komputera.
-    Osobna funkcja, a nie parametr tamtej: obie odpowiadaja na inne pytanie, wracaja innym
-    ksztaltem i sa wolane z innych miejsc okna, wiec zlaczenie ich dalo by funkcje, ktorej
-    polowa parametrow zawsze jest pusta.
-
-    Nazwe uzytkownika oddajemy TAK, JAK ZAPISAL JA SCCM - razem z przedrostkiem domeny,
-    jesli tam jest. Operator porownuje ja z tym, co widzi w konsoli, a "poprawiona" nazwa
-    przestalaby sie z tamtym zgadzac.
-
-    Maszyna ZNALEZIONA, ale bez zapisanego uzytkownika, to co innego niz maszyna nieznana
-    w SCCM - pierwsze znaczy "klient nie zameldowal jeszcze logowania", drugie "tej maszyny
-    tu nie ma". Komunikaty rozroznia te dwa przypadki, bo prowadza do zupelnie innych krokow.
-
-    Razem z uzytkownikiem oddajemy DOSTEPNOSC MASZYNY (sonda ICMP) i adres MAC karty, ktora
-    odpowiada pod znalezionym adresem - tak samo jak droga odwrotna i z tego samego powodu:
-    obie rzeczy sa dodatkiem do zapytania, ktore i tak idzie w tle, wiec nie kosztuja okna
-    ani jednej milisekundy. Nazwy pol sa IDENTYCZNE jak w Get-JezykOstatnioUzywanyKomputer,
-    zeby widok mial jedna sciezke renderowania dla obu polowek okna.
-#>
+# Droga odwrotna: kto ostatnio korzystal z maszyny (te same zrodla i sesja, filtr po nazwie maszyny).
+# Uzytkownik tak, jak zapisal go SCCM; te same pola sondy i MAC co w drodze od loginu.
 function Get-JezykUzytkownikKomputera {
     param([string]$Netbios, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
-    # Nazwy pol MAC-a sa te same, co po drugiej stronie okna - widok ma jedna sciezke
-    # wyswietlania, patrz Set-JezykMacWWyniku.
+    # Pola MAC takie same jak po drugiej stronie okna - jedna sciezka wyswietlania.
     $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = ''
                                 Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
                                 MacPodstawa = ''; MacKarta = $null; MacKarty = @()
                                 MacWpisow = 0 }
 
-    # Nazwa pochodzi z AD, wiec jest bezpieczna - ale zapytanie budowane z tekstu sprawdza
-    # sie ZAWSZE, a nie tylko wtedy, gdy wyglada to na potrzebne.
+    # Zapytanie budowane z tekstu - nazwa sprawdzana zawsze.
     if (-not (Test-JezykNazwaKonta $Netbios)) {
         $wynik.Blad      = 'nieprawidłowa nazwa komputera'
         $wynik.Szczegoly = 'Nazwa "{0}" zawiera znaki spoza dozwolonego zestawu.' -f $Netbios
         return $wynik
     }
 
-    # SONDA ICMP PRZED ZAPYTANIEM DO SCCM, a nie po nim. Z tej funkcji wychodzi PIEC drog
-    # powrotu (brak ustawien, brak sesji, odmowa, brak zapisanego uzytkownika, wynik),
-    # a dostepnosc maszyny jest prawdziwa odpowiedzia w kazdej z nich - ICMP nie potrzebuje
-    # SCCM do niczego. Postawiona na koncu wypadlaby ze wszystkich drog poza ostatnia,
-    # czyli akurat tam, gdzie maszyny nie ma w inwentaryzacji, a pytanie "czy ona w ogole
-    # odpowiada" jest najczestsze. Cena to najwyzej 1,5 s (caly budzet sondy) doliczone do
-    # zapytania z wlasnym limitem 15 s, w polu, ktore i tak animuje kropki.
-    #
-    # Wlasny try: sonda jest DODATKIEM. Uzytkownik maszyny ma sie pokazac takze wtedy, gdy
-    # sprawdzenie dostepnosci samo zawiedzie.
+    # Sonda PRZED zapytaniem do SCCM - dostepnosc jest odpowiedzia w kazdej z pieciu drog powrotu.
+    # Wlasny try: sonda jest dodatkiem.
     $opisPingu = ''
     try {
         $ping = Get-JezykPingKomputera -Nazwa $Netbios
@@ -2061,11 +1422,7 @@ function Get-JezykUzytkownikKomputera {
     }
 
     try {
-        # Kolejnosc jak przy drodze odwrotnej: najpierw klasa, ktora zasila wezel "Devices"
-        # w konsoli, bo to ona jest odswiezana najczesciej i niesie od razu date aktywnosci.
-        # Pola w kazdym zrodle sa uporzadkowane OD NAJSWIEZSZEGO: trwajaca sesja przed
-        # ostatnia zakonczona, a uzytkownik glowny na koncu, bo opisuje przypisanie, a nie
-        # zdarzenie.
+        # Kolejnosc zrodel jak w drodze od loginu; pola od najswiezszego (sesja, ostatnie logowanie, przypisanie).
         $zrodla = @(
             @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
                Wql   = "SELECT ResourceID, Name, CurrentLogonUser, LastLogonUser, PrimaryUser, LastActiveTime " +
@@ -2091,8 +1448,7 @@ function Get-JezykUzytkownikKomputera {
         $odmowa      = $null
         $niedostepne = @()
         $znaleziona  = $false
-        # Wiersz, ktory opisal TE maszyne - trzymany wylacznie dla identyfikatora zasobu,
-        # ktorym pytamy pozniej o karty sieciowe.
+        # Wiersz tej maszyny - dla identyfikatora zasobu do zapytania o karty.
         $wierszMaszyny = $null
 
         foreach ($z in $zrodla) {
@@ -2101,8 +1457,7 @@ function Get-JezykUzytkownikKomputera {
                                              -Protokol $sesja.Protokol -LimitSek $LimitSek
 
             if ($odp.Blad) {
-                # TYLKO brak samej klasy jest problemem JEDNEGO zrodla - reszta bledow
-                # dotyczy calej przestrzeni albo sesji i powtorzylaby sie identycznie.
+                # Tylko brak klasy dotyczy jednego zrodla.
                 if ($odp.Blad.Krotki -eq 'brak klasy w SCCM') {
                     $niedostepne += '{0}: {1}' -f $z.Nazwa, $odp.Blad.Krotki
                     continue
@@ -2114,9 +1469,7 @@ function Get-JezykUzytkownikKomputera {
             foreach ($wiersz in @($odp.Wiersze)) {
                 if ($wiersz.Name -or $wiersz.NetbiosName) {
                     $znaleziona = $true
-                    # PIERWSZY wiersz opisujacy maszyne, takze gdy nie niesie zadnego
-                    # uzytkownika: karta sieciowa jest wtedy nadal znana, a maszyna
-                    # w inwentaryzacji bez zapisanego logowania to czesty przypadek.
+                    # Pierwszy wiersz maszyny - takze bez uzytkownika (karta sieciowa jest wtedy znana).
                     if (-not $wierszMaszyny) { $wierszMaszyny = $wiersz }
                 }
 
@@ -2148,24 +1501,15 @@ function Get-JezykUzytkownikKomputera {
             return $wynik
         }
 
-        # Karta sieciowa dopasowana do adresu z sondy - ta sama funkcja, co po drugiej
-        # stronie okna (Set-JezykMacWWyniku).
-        #
-        # Blok stoi PO odmowie (tam przestrzeni juz raz odmowiono, wiec pytanie o karty
-        # powtorzyloby tylko te sama odmowe), ale PRZED wyjsciem "brak zapisanego
-        # uzytkownika": maszyna bywa w inwentaryzacji bez zapisanego logowania, a karte
-        # sieciowa SCCM zna wtedy tak samo dobrze.
-        #
-        # Maszyny NIEZNANEJ w SCCM zostawiamy bez powodu - pole ma wtedy powiedziec
-        # "nie sprawdzono", bo nie bylo czego dopasowywac, a nie "nie dopasowano".
+        # Karta sieciowa: nie po odmowie (powtorzylaby ja), ale takze przy braku zapisanego uzytkownika.
+        # Maszyna nieznana w SCCM zostaje bez dopasowania - pole mowi wtedy "nie sprawdzono".
         if ($wierszMaszyny) {
             Set-JezykMacWWyniku -Wynik $wynik -ResourceID $wierszMaszyny.ResourceID `
                                 -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek
         }
 
         if (-not $uzytkownik) {
-            # Dwa rozne braki, dwie rozne odpowiedzi: maszyna bez zapisanego uzytkownika
-            # czeka na meldunek klienta, maszyny nieznanej trzeba szukac gdzie indziej.
+            # Maszyna bez zapisanego uzytkownika a maszyna nieznana - dwie rozne odpowiedzi.
             $wynik.Blad = if ($znaleziona) { 'brak zapisanego użytkownika' }
                           else             { 'brak w inwentaryzacji SCCM' }
 
@@ -2182,9 +1526,7 @@ function Get-JezykUzytkownikKomputera {
             if ($niedostepne.Count) {
                 $szczegolyBraku += @('', ('Klasy, które nie odpowiedziały: {0}.' -f ($niedostepne -join '; ')))
             }
-            # Sonda odbyla sie takze na tej drodze, a jej wynik bywa TU najciekawszy: maszyny
-            # nie ma w inwentaryzacji, wiec "czy ona w ogole odpowiada" zostaje jedyna
-            # odpowiedzia, jaka okno ma. Pole adresu pokazuje ja skrotem, pelne zdanie tutaj.
+            # Wynik sondy bywa tu jedyna odpowiedzia - pelne zdanie trafia do szczegolow.
             if ($opisPingu) { $szczegolyBraku += @('', $opisPingu) }
             $wynik.Szczegoly = $szczegolyBraku -join [Environment]::NewLine
             return $wynik
@@ -2208,29 +1550,16 @@ function Get-JezykUzytkownikKomputera {
     }
 }
 
-<#
-.SYNOPSIS
-    Odblokowuje konto w AD. JEDNA Z DWOCH operacji ZAPISU w calym narzedziu (druga jest
-    Set-JezykCzlonkostwoGrupy - dodanie i usuniecie z grupy).
-
-.DESCRIPTION
-    Obwarowana z dwoch stron: wolajacy sprawdza, czy domena jest dozwolona, i TUTAJ
-    sprawdzamy to ponownie - warunek "tylko ta domena" opiera sie na stanie interfejsu,
-    a stan interfejsu da sie rozspojnic.
-
-    Nie rzuca wyjatkiem: odmowa uprawnien to normalna odpowiedz AD, nie awaria narzedzia.
-#>
+# Odblokowuje konto w AD - jedna z dwoch drog zapisu; uprawnienie sprawdzane takze tutaj.
+# Nie rzuca: odmowa uprawnien to zwykla odpowiedz AD (README: Odblokowanie konta).
 function Unlock-JezykKonto {
     param([string]$Login, [string]$Domena,
           [System.Management.Automation.PSCredential]$Poswiadczenia)
 
-    # Serwer to kontroler, ktory FAKTYCZNIE przyjal zapis. Wolajacy odczytuje po nim konto
-    # od nowa: stan blokady jest replikowany pilnie, ale nie natychmiast, wiec odczyt
-    # z przypadkowego kontrolera potrafi oddac stan sprzed odblokowania.
+    # Serwer = kontroler, ktory przyjal zapis - wolajacy czyta z niego konto od nowa.
     $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = '' }
 
-    # Najpierw ksztalt danych, potem uprawnienie: wartosc o zlym ksztalcie nie ma prawa
-    # dojsc nawet do sprawdzania listy domen.
+    # Najpierw ksztalt danych, potem uprawnienie.
     if (-not (Test-JezykNazwaKonta $Login)) {
         $wynik.Komunikat = 'Nieprawidłowa nazwa konta - odblokowanie przerwane.'
         return $wynik
@@ -2250,8 +1579,7 @@ function Unlock-JezykKonto {
     try {
         $serwer = Get-JezykSerwerDoZapisu -Domena $Domena -Poswiadczenia $Poswiadczenia
 
-        # Poswiadczenia dokladane WARUNKOWO - bez nich zapis idzie na koncie, na ktorym
-        # Jezyk dziala.
+        # Poswiadczenia warunkowo - bez nich zapis idzie kontem, na ktorym dziala Jezyk.
         $parametry = @{ Identity = $Login; Server = $serwer; Confirm = $false; ErrorAction = 'Stop' }
         if ($Poswiadczenia) { $parametry['Credential'] = $Poswiadczenia }
 
@@ -2264,9 +1592,7 @@ function Unlock-JezykKonto {
                            $serwer, ([Environment]::NewLine + [Environment]::NewLine)
     }
     catch {
-        # Prawo do odblokowywania jest OSOBNE od prawa odczytu, wiec odmowa jest tu
-        # spodziewana i ma trafic do pola Status. Jezyk nie dokłada do komunikatu nazwy
-        # uzytkownika z poswiadczen; co znajdzie sie w tresci wyjatku, decyduje AD.
+        # Odmowa to spodziewana odpowiedz (prawo odblokowania jest osobne) - trafia do pola Status.
         $opis = Get-JezykOpisBledu $_ ('Odblokowanie konta {0}' -f $Login)
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = $opis.Szczegoly
@@ -2274,58 +1600,36 @@ function Unlock-JezykKonto {
     finally {
         if ($parametry) { $parametry.Clear() }
 
-        # $Error TRZYMA OBIEKT POSWIADCZEN. Nieudane wywolanie wklada tam rekord bledu,
-        # a ten niesie InvocationInfo.BoundParameters - czyli slownik zwiazanych parametrow
-        # razem z obiektem PSCredential. Bez tego wiersza haslo administratora dalo sie
-        # odczytac do konca zycia procesu. Czyscimy CALA liste, bo rozpoznanie emulatora
-        # PDC tez idzie z poswiadczeniami; Jezyk nigdzie nie czyta $Error.
+        # Uwaga: $Error trzyma obiekt poswiadczen (BoundParameters) - czyscimy cala liste.
         $Error.Clear()
     }
 
     return $wynik
 }
 
-# Jedno miejsce z decyzja "czy w tej domenie wolno odblokowywac", zeby interfejs i logika
-# nie mogly sie rozjechac. Pusta lista znaczy "nigdzie" i jest wartoscia domyslna.
+# Czy w tej domenie wolno odblokowywac (jedno miejsce decyzji; pusta lista = nigdzie).
 function Test-JezykWolnoOdblokowac {
     param([string]$Domena)
     if (-not $Domena) { return $false }
     return (@($Script:DomenyZOdblokowaniem) -contains $Domena.ToLower())
 }
 
-# Blizniak powyzszego dla DRUGIEJ operacji zapisu, czyli dla zarzadzania czlonkostwem
-# grup - w OBIE strony naraz, bo w AD to jedno prawo: kto moze zmieniac atrybut member,
-# ten moze i dopisac, i usunac. Osobna lista od odblokowania, bo tamto jest niezalezna
-# delegacja i wlaczenie jednej operacji nie moze po cichu wlaczac drugiej. Pusta lista
-# znaczy "nigdzie" i jest wartoscia domyslna.
+# Czy w tej domenie wolno zarzadzac czlonkostwem grup (oba kierunki; lista osobna od odblokowania).
 function Test-JezykWolnoZarzadzacGrupami {
     param([string]$Domena)
     if (-not $Domena) { return $false }
     return (@($Script:DomenyZZarzadzaniemGrupami) -contains $Domena.ToLower())
 }
 
-# Czy SCCM zna konta i komputery tej domeny - jedno miejsce tej decyzji dla obu stron okna:
-# widok pyta tu, czy uruchomic zapytania do SCCM, a uklad, czy pokazac pola, ktore te
-# zapytania wypelniaja. Dwie kopie rozjechalyby sie przy pierwszej zmianie i okno albo
-# pytaloby SCCM o konto, ktorego nie zna, albo chowalo pola, ktore wlasnie sie wypelniaja.
-# Pusta lista znaczy "nigdzie", tak samo jak przy obu listach wyzej.
+# Czy SCCM zna konta i komputery tej domeny - jedna decyzja dla zapytan i dla ukladu okna.
 function Test-JezykDomenaZSccm {
     param([string]$Domena)
     if (-not $Domena) { return $false }
     return (@($Script:DomenyZSccm) -contains $Domena.ToLower())
 }
 
-# KONTROLER, NA KTORY KIERUJEMY ZAPIS - wspolny dla obu operacji zapisu w narzedziu.
-#
-# Idzie na EMULATOR PDC. Dla blokad to on jest autorytatywny: nieudane uwierzytelnienia
-# z kazdego kontrolera sa lancuchowo kierowane wlasnie tam. Dla czlonkostwa w grupie
-# zadnego autorytetu nie ma, ale drugi powod zostaje ten sam - zapis skierowany
-# "gdziekolwiek" potrafi trafic na kontroler tylko do odczytu, ktory go nie przyjmie.
-#
-# Rozpoznanie jest OPCJONALNE: gdy sie nie uda albo nazwa nie przejdzie bialej listy,
-# oddajemy nazwe domeny i zapis idzie tam, gdzie szedlby bez tej funkcji. Nieudane
-# rozpoznanie nie ma prawa przesadzic o calej operacji - stad pusty catch, jedyny
-# dopuszczalny rodzaj: taki, ktorego wynik jest z gory nazwany wartoscia zapasowa.
+# Kontroler dla zapisu (obu drog): emulator PDC - autorytet blokad i nigdy kontroler tylko do odczytu.
+# Rozpoznanie opcjonalne: przy niepowodzeniu nazwa domeny (catch z nazwana wartoscia zapasowa).
 function Get-JezykSerwerDoZapisu {
     param([string]$Domena,
           [System.Management.Automation.PSCredential]$Poswiadczenia)
@@ -2342,21 +1646,14 @@ function Get-JezykSerwerDoZapisu {
     return $Domena
 }
 
-# Fraza od operatora idzie do FILTRA LDAP, czyli w miejsce, w ktorym tekst przestaje byc
-# tekstem i zaczyna byc skladnia. Metaznaki z RFC 4515 oslaniamy zapisem szesnastkowym,
-# a ODWROTNY UKOSNIK MUSI ISC PIERWSZY - inaczej oslonilibysmy wlasne oslony.
-#
-# Bialej listy znakow tu nie ma i byc nie moze: nazwy grup nosza spacje, polskie znaki
-# i nawiasy, wiec Test-JezykNazwaKonta odrzucilby wiekszosc poprawnych fraz. Zapora jest
-# inna i mocniejsza - ZAPIS NIE UZYWA TEGO TEKSTU WCALE. Do Set-JezykCzlonkostwoGrupy wchodzi
-# nazwa wyrozniajaca oddana przez katalog, sprawdzona jeszcze raz przez Test-JezykDn.
+# Oslona metaznakow RFC 4515 we frazie do filtra LDAP - odwrotny ukosnik PIERWSZY.
+# Bez bialej listy (nazwy grup maja spacje i nawiasy) - zapis i tak idzie po DN z katalogu.
 function Get-JezykFrazaLdap {
     param([string]$Tekst)
 
     $fraza = ([string]$Tekst).Trim()
     if (-not $fraza) { return '' }
-    # 256 to duzo powyzej dlugosci nazwy grupy; chodzi o to, zeby absurdalnie dlugi tekst
-    # nie wedrowal do kontrolera.
+    # 256 - duzo powyzej dlugosci nazwy grupy.
     if ($fraza.Length -gt 256) { return '' }
     if ($fraza -match '[\x00-\x1F]') { return '' }
 
@@ -2367,33 +1664,8 @@ function Get-JezykFrazaLdap {
     return $fraza
 }
 
-<#
-.SYNOPSIS
-    Rozpoznaje nazwe grupy w AD - to, co robi przycisk "Sprawdz nazwy" w oknie wyboru
-    obiektow AD.
-
-.DESCRIPTION
-    DWA PRZEBIEGI, drugi wylacznie wtedy, gdy pierwszy nic nie znalazl.
-
-    (1) anr= to ta sama droga, ktora idzie "Sprawdz nazwy": rozpoznanie niejednoznacznej
-        nazwy, w kontrolerze zoptymalizowane i oparte o indeks. Dopasowuje OD POCZATKU
-        wartosci.
-
-    (2) (cn=*fraza*) dopasowuje fragment w SRODKU nazwy. Nazwy grup zaczynaja sie od
-        przedrostka w rodzaju GG_ czy DL_, ktorego nikt nie przepisuje, zeby dojsc do
-        slowa niosacego sens - bez tego przebiegu "Kadry" nie znalazloby "GG_Kadry",
-        czyli przycisk nie dzialalby dokladnie tam, gdzie jest potrzebny.
-
-        TEN PRZEBIEG JEST DROGI i nie ma sensu udawac, ze nie jest: gwiazdka na poczatku
-        wartosci nie korzysta z indeksu, wiec kontroler idzie obiekt po obiekcie. Od
-        pulapki z numerem telefonu rozni go jedna rzecz - Get-ADGroup zawezą przeszukanie
-        do klasy group, a ta jest indeksowana, wiec mowa o tysiacach obiektow zamiast
-        dziesiatkach tysiecy. Prace kontrolera konczy -ResultPageSize rowny limitowi,
-        a nie licznik wynikow (-ResultSetSize ucina tylko odpowiedz).
-
-    Nieudane szukanie MUSI BYC ODROZNIALNE od pustego wyniku, a "jest ich za wielu" to
-    trzecia rzecz, nie odmiana zadnej z tamtych dwoch - stad Przerwane i ZaDuzo osobno.
-#>
+# "Sprawdz nazwy": (anr=...) po indeksie, a gdy pusto - (cn=*...*) dla fragmentu w srodku nazwy.
+# Strone konczy -ResultPageSize = limit + 1; Przerwane i ZaDuzo osobno od pustego wyniku.
 function Find-JezykGrupyPoNazwie {
     param([string]$Fraza, [int]$Limit, [string]$Serwer)
 
@@ -2403,14 +1675,12 @@ function Find-JezykGrupyPoNazwie {
     if (-not $szukana) { return $wynik }
     if ($Limit -lt 1)  { return $wynik }
 
-    # Napisy skladane DO ZMIENNYCH: przecinek w argumencie metody nalezalby do listy
-    # argumentow, a nie do tablicy dla operatora -f.
+    # Uwaga: napisy do zmiennych - w argumencie metody przecinek nalezy do metody, nie do -f.
     $filtrAnr = '(anr={0})' -f $szukana
     $filtrCn  = '(cn=*{0}*)' -f $szukana
 
     foreach ($filtr in @($filtrAnr, $filtrCn)) {
-        # Limit + 1 po to, zeby odroznic "dokladnie tyle" od "wiecej niz tyle" - ta sama
-        # sztuczka, co przy wyszukiwaniu po numerze telefonu.
+        # Limit + 1 odroznia "dokladnie tyle" od "wiecej".
         $zapytanie = @{ LDAPFilter = $filtr; Properties = 'Name'
                         ResultPageSize = ($Limit + 1); ResultSetSize = ($Limit + 1)
                         ErrorAction = 'Stop' }
@@ -2430,9 +1700,7 @@ function Find-JezykGrupyPoNazwie {
         foreach ($grupa in $znalezione) {
             $nazwa = [string]$grupa.Name
             $dn    = [string]$grupa.DistinguishedName
-            # Pozycja bez nazwy nie ma czego pokazac, a pozycja bez nazwy wyrozniajacej nie ma
-            # czego zapisac. Numeracji okna wyboru ten odsiew NIE pilnuje - Show-JezykWyborGrupy
-            # numeruje i zwraca z jednej tablicy, po Get-JezykParyGrup.
+            # Pozycja bez nazwy albo bez DN odpada (okno wyboru numeruje po Get-JezykParyGrup).
             if (-not $nazwa -or -not $dn) { continue }
             $pozycje += [pscustomobject]@{ Nazwa = $nazwa; Dn = $dn }
         }
@@ -2443,9 +1711,7 @@ function Find-JezykGrupyPoNazwie {
             $wynik.ZaDuzo = $true
             $pozycje      = @($pozycje[0..($Limit - 1)])
         }
-        # Podpis liczony na liscie, KTORA ZOBACZY OPERATOR - po przycieciu do limitu. Grupa
-        # o tej samej nazwie, ktora sie w nim nie zmiescila, nie jest na liscie z kim mylona;
-        # jej folder i tak pokaze pytanie Tak/Nie.
+        # Podpisy liczone na liscie po przycieciu - tej, ktora zobaczy operator.
         $wynik.Trafienia = @(Get-JezykPodpisyGrup $pozycje)
         return $wynik
     }
@@ -2453,36 +1719,8 @@ function Find-JezykGrupyPoNazwie {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Dopisuje konto do grupy AD albo je z niej usuwa. Druga z dwoch operacji ZAPISU
-    w calym narzedziu.
-
-.DESCRIPTION
-    JEDNA FUNKCJA NA OBA KIERUNKI, a nie dwie kopie. Rozni je wylacznie polecenie i slowo
-    w komunikacie; cztery bramki, kontroler zapisu, wskazanie konta i obsluga bledu sa te
-    same, wiec dwie kopie rozjechalyby sie przy pierwszej zmianie - a objawem byloby to,
-    ze jeden kierunek ma zapore, ktorej drugi nie ma. To ta sama zasada, co przy -Widok
-    w funkcjach obslugujacych obie polowy okna glownego.
-
-    Obwarowana tak samo jak odblokowanie: wolajacy sprawdza, czy domena jest dozwolona,
-    i TUTAJ sprawdzamy to ponownie - warunek "tylko ta domena" opiera sie na stanie
-    interfejsu, a stan interfejsu da sie rozspojnic.
-
-    GRUPE WSKAZUJE NAZWA WYROZNIAJACA ODDANA PRZEZ KATALOG - nigdy tekst wpisany przez
-    operatora ani nazwa przeczytana z listy. Remove-ADGroupMember -Identity nie przyjmuje
-    zwyklej nazwy (CN), tylko sAMAccountName, SID, GUID albo wlasnie DN, a CN
-    i sAMAccountName grupy NIE MUSZA byc takie same.
-
-    ZAPIS IDZIE NA KONCIE, NA KTORYM JEZYK DZIALA - o poswiadczenia nie pytamy. Prawo do
-    zarzadzania czlonkostwem jest w tym wdrozeniu nadane temu samemu kontu, ktore czyta
-    katalog, wiec okno logowania pytaloby o to, co juz mamy. Potwierdzeniem operacji jest
-    osobne pytanie w oknie - i ono zostaje, bo usuniecie z grupy jest nieodwracalne
-    jednym klknieciem.
-
-    Nie rzuca wyjatkiem: odmowa uprawnien i "konto juz jest w tej grupie" to normalne
-    odpowiedzi AD, nie awarie narzedzia.
-#>
+# Dopisuje konto do grupy albo z niej usuwa - druga droga zapisu, jedna funkcja na oba kierunki.
+# Grupe wskazuje DN z katalogu; zapis kontem operatora, uprawnienie sprawdzane takze tutaj.
 function Set-JezykCzlonkostwoGrupy {
     param([string]$Login, [string]$Dn, [string]$GrupaDn, [string]$Domena,
           [ValidateSet('Dodaj', 'Usun')][string]$Akcja = 'Dodaj')
@@ -2493,8 +1731,7 @@ function Set-JezykCzlonkostwoGrupy {
     # Nazwa czynnosci skladana RAZ, zeby kazda galaz mowila o tej samej rzeczy.
     $czynnosc = if ($Akcja -eq 'Usun') { 'usunięcie z grupy' } else { 'dodanie do grupy' }
 
-    # Najpierw ksztalt danych, potem uprawnienie: wartosc o zlym ksztalcie nie ma prawa
-    # dojsc nawet do sprawdzania listy domen.
+    # Najpierw ksztalt danych, potem uprawnienie.
     if (-not (Test-JezykNazwaKonta $Login)) {
         $wynik.Komunikat = 'Nieprawidłowa nazwa konta - {0} przerwane.' -f $czynnosc
         return $wynik
@@ -2518,9 +1755,7 @@ function Set-JezykCzlonkostwoGrupy {
     try {
         $serwer = Get-JezykSerwerDoZapisu -Domena $Domena
 
-        # Konto wskazujemy jego wlasna nazwa wyrozniajaca, gdy ja mamy: jest jednoznaczna
-        # i nie kaze kontrolerowi rozwiazywac nazwy. Login zostaje droga zapasowa, bo Dn
-        # bywa pusty na czesci sciezek odczytu.
+        # Konto po DN (jednoznaczny), a login jako droga zapasowa.
         $czlonek = if (Test-JezykDn $Dn) { $Dn } else { $Login }
 
         $parametry = @{ Identity = $GrupaDn; Members = $czlonek; Server = $serwer
@@ -2532,10 +1767,7 @@ function Set-JezykCzlonkostwoGrupy {
         $wynik.Udane  = $true
         $wynik.Serwer = $serwer
 
-        # KOMUNIKAT NAZYWA GRUPE, KTORA NAPRAWDE ZAPISANO - z nazwy wyrozniajacej, ktora poszla
-        # do zapisu, a nie z listy. Nazwa grupy nie jest w domenie jednoznaczna: po usunieciu
-        # jednej z dwoch grup "GG_Kadry" druga zostaje na liscie, a zdanie bez folderu
-        # wygladaloby przy niej jak nieudany zapis.
+        # Komunikat nazywa grupe z DN, ktory naprawde poszedl do zapisu (z folderem).
         $grupa  = '"{0}"' -f (Get-JezykNazwaZDn $GrupaDn)
         $folder = Get-JezykFolderAd $GrupaDn
         if ($folder) { $grupa = '{0} ({1})' -f $grupa, $folder }
@@ -2547,9 +1779,7 @@ function Set-JezykCzlonkostwoGrupy {
         $wynik.Szczegoly = 'Zapis przyjął kontroler: {0}' -f $serwer
     }
     catch {
-        # Prawo zarzadzania czlonkostwem jest OSOBNE od prawa odczytu, a "konto juz jest
-        # w tej grupie" (albo juz go w niej nie ma) to odpowiedz, nie awaria - obie maja
-        # trafic do pola, a nie przewrocic okna.
+        # Odmowa i "konto juz jest w grupie" to odpowiedzi, nie awarie.
         $czego = if ($Akcja -eq 'Usun') { 'Usunięcie konta {0} z grupy' } else { 'Dodanie konta {0} do grupy' }
         $opis  = Get-JezykOpisBledu $_ ($czego -f $Login)
         $wynik.Komunikat = $opis.Krotki
@@ -2559,16 +1789,7 @@ function Set-JezykCzlonkostwoGrupy {
     return $wynik
 }
 
-# Ponowny odczyt czlonkostw PO ZAPISIE, z kontrolera, KTORY TEN ZAPIS PRZYJAL. Jedno
-# konto i jeden atrybut, wiec to najtansze zapytanie w narzedziu - a jest po co: lista
-# w oknie ma pokazywac stan katalogu, a nie zalozenie okna o tym, co przed chwila wyslalo.
-#
-# W polu Grupy jada PARY "nazwa + nazwa wyrozniajaca" (Get-JezykCzlonkostwaGrup), a nie
-# same nazwy: po odswiezeniu listy da sie z niej od razu usuwac, bez drugiego zapytania.
-#
-# Nieudany odczyt NIE UNIEWAZNIA ZAPISU, wiec wychodzi osobnym polem: wolajacy musi umiec
-# powiedziec "grupa zostala dodana, ale listy nie udalo sie odswiezyc". Zgubienie tej
-# roznicy znaczyloby, ze operator dodaje te sama grupe drugi raz.
+# Grupy konta (pary nazwa + DN) z kontrolera zapisu; nieudany odczyt nie uniewaznia zapisu.
 function Get-JezykGrupyKonta {
     param([string]$Login, [string]$Serwer)
 
@@ -2595,44 +1816,8 @@ function Get-JezykGrupyKonta {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Sprawdza stan konta w AD. Nigdy nie rzuca wyjatkiem - zawsze zwraca obiekt wyniku.
-
-.DESCRIPTION
-    Kazdy blad jest zamieniany na obiekt wyniku. Gdyby wyjatek wydostal sie do GUI,
-    kliniecie "Szukaj" konczyloby sie bledem w niewidocznej konsoli, a okno wygladaloby,
-    jakby nic sie nie stalo.
-
-.PARAMETER Serwer
-    Konkretny kontroler zamiast nazwy domeny. Uzywany po odblokowaniu konta: zapis idzie na
-    emulator PDC, a stan blokady replikuje sie pilnie, lecz nie natychmiast - odczyt
-    z przypadkowego kontrolera potrafilby oddac stan sprzed zapisu i pokazac "Konto
-    zablokowane" sekunde po udanym odblokowaniu.
-
-    Nazwa przechodzi TE SAMA biala liste co kazdy inny adres w narzedziu; wartosc, ktora
-    jej nie przejdzie, jest po cichu pomijana na rzecz nazwy domeny. Nazwa przyniesiona
-    z sieci nie zostaje adresem polaczenia bez sprawdzenia.
-#>
-<#
-.SYNOPSIS
-    Zamienia nazwe wyrozniajaca przelozonego na czytelny podpis.
-
-.DESCRIPTION
-    Atrybut Manager niesie NAZWE WYROZNIAJACA ("CN=Jan Kowalski,OU=Kadry,DC=jezyk,DC=pl"),
-    a nie nazwisko - wpisany do pola wprost byl by scianą tekstu, w ktorej nazwiska trzeba
-    szukac wzrokiem. Rozwiazujemy go osobnym odczytem i skladamy podpis "Jan Kowalski (jkowalski)".
-
-    WLASNY try, i to jest tu najwazniejsze: przelozony bywa kontem z INNEJ domeny, kontem
-    juz usunietym albo obiektem, do ktorego nie ma prawa odczytu. Zaden z tych przypadkow
-    nie moze zamienic udanego odczytu konta w komunikat o bledzie - operator dzwoni w sprawie
-    blokady, a nie przelozonego.
-
-    Wartosc ZAPASOWA wyciagamy wprost z nazwy wyrozniajacej: pierwszy czlon (CN) to i tak
-    zwykle to samo imie i nazwisko. Lepsze niz puste pole, ktore wyglada jak brak danych.
-    Odwrotne ukosniki, ktorymi LDAP oslania przecinki w nazwie ("CN=Kowalski\, Jan"),
-    zdejmujemy - inaczej byly by widoczne w oknie.
-#>
+# Podpis przelozonego z DN: "Jan Kowalski (jkowalski)"; przy bledzie odczytu - CN z DN.
+# Wlasny try: przelozony z innej domeny albo usuniety nie psuje odczytu konta.
 function Get-JezykPodpisMenedzera {
     param([string]$Dn, [string]$Serwer = '')
 
@@ -2640,8 +1825,7 @@ function Get-JezykPodpisMenedzera {
     $Dn = $Dn.Trim()
     if (-not $Dn) { return '' }
 
-    # Zapasowy podpis skladamy PRZED zapytaniem - ma byc gotowy takze wtedy, gdy odczyt
-    # w ogole nie dojdzie do skutku.
+    # Zapasowy podpis przed zapytaniem - gotowy takze wtedy, gdy odczyt nie dojdzie do skutku.
     $zapasowy = ''
     if ($Dn -match '^\s*CN=((?:[^,\\]|\\.)+)') { $zapasowy = ($Matches[1] -replace '\\(.)', '$1').Trim() }
 
@@ -2658,8 +1842,7 @@ function Get-JezykPodpisMenedzera {
         $nazwa = Get-JezykOsoba ([string]$szef.DisplayName) ([string]$szef.GivenName) ([string]$szef.Surname)
         $login = [string]$szef.SamAccountName
 
-        # Bez nazwy wyswietlanej pokazujemy sam login, zamiast loginu z pustymi nawiasami -
-        # ta sama zasada co na liscie wyboru kont.
+        # Bez nazwy wyswietlanej - sam login, bez pustych nawiasow.
         if (-not $nazwa) { return $login }
         if (-not $login) { return $nazwa }
         return '{0} ({1})' -f $nazwa, $login
@@ -2667,13 +1850,7 @@ function Get-JezykPodpisMenedzera {
     catch { return $zapasowy }
 }
 
-# Nazwa obiektu z jego nazwy wyrozniajacej: pierwszy czlon, bez "CN=" i bez odwrotnych
-# ukosnikow, ktorymi LDAP oslania przecinki w nazwie ("CN=Dzial IT\, Warszawa") - inaczej
-# bylyby widoczne w oknie. Wzorzec jest ten sam, co przy podpisie zapasowym
-# w Get-JezykPodpisMenedzera: ten sam problem ma miec jedna odpowiedz.
-#
-# Zapis, ktory nie zaczyna sie od CN=, oddajemy w CALOSCI - lepiej pokazac nazwe
-# wyrozniajaca niz zgubic obiekt, o ktorego istnieniu operator ma sie dowiedziec.
+# Nazwa obiektu z DN: pierwszy czlon bez "CN=" i bez oslon przecinkow; zapis bez CN= oddany w calosci.
 function Get-JezykNazwaZDn {
     param([string]$Dn)
 
@@ -2684,22 +1861,7 @@ function Get-JezykNazwaZDn {
     return $tekst
 }
 
-<#
-.SYNOPSIS
-    Folder obiektu AD z jego nazwy wyrozniajacej - tak, jak pokazuje go konsola AD
-    ("jezyk.pl/Warszawa/Grupy").
-
-.DESCRIPTION
-    Ta sama postac, co kolumna folderu w zakladce "Czlonek grupy" konsoli AD i atrybut
-    canonicalName: domena z czlonow DC, pod nia kontenery OD GORY - odwrotnie niz w nazwie
-    wyrozniajacej, ktora idzie od obiektu w gore. Ukosnik w nazwie kontenera jest oslaniany
-    ("Kadry\/Place"), inaczej wygladalby na dwa poziomy.
-
-    ZADNEGO ZAPYTANIA DO AD - folder siedzi w nazwie wyrozniajacej, tak samo jak nazwa.
-
-    Czlony rozdziela przecinek NIEOSLONIETY - ten sam wzorzec, co przy nazwie, wiec przecinek
-    w nazwie grupy ("CN=Dzial IT\, Warszawa") nie rozcina jej na dwa czlony folderu.
-#>
+# Folder obiektu z DN, jak w konsoli AD ("jezyk.pl/Warszawa/Grupy") - bez zapytania do AD.
 function Get-JezykFolderAd {
     param([string]$Dn)
 
@@ -2723,27 +1885,8 @@ function Get-JezykFolderAd {
     return ($czesci -join '/')
 }
 
-<#
-.SYNOPSIS
-    Dokleja do par "nazwa + nazwa wyrozniajaca" podpis, ktory rozroznia je na liscie.
-
-.DESCRIPTION
-    NAZWA GRUPY NIE JEST W DOMENIE JEDNOZNACZNA. CN jest unikalny tylko w swoim kontenerze,
-    wiec konto potrafi nalezec do dwoch grup "GG_Kadry" z dwoch roznych OU, a wyszukiwanie
-    potrafi obie zwrocic. Dwa wiersze "GG_Kadry" sa dla operatora jednym - dlatego nazwa,
-    ktora na liscie sie POWTARZA, dostaje w podpisie folder AD:
-    "GG_Kadry (jezyk.pl/Warszawa/Grupy)". Nazwa niepowtorzona zostaje sama: folder przy
-    kazdej z kilkudziesieciu grup bylby szumem, a ma sie rzucic w oczy wtedy, gdy jest
-    potrzebny.
-
-    PODPIS LICZY SIE RAZ, NA CALEJ LISCIE - tam, gdzie lista powstaje z odpowiedzi AD
-    (Get-JezykCzlonkostwaGrup, Find-JezykGrupyPoNazwie). Dalej tylko jedzie razem z para
-    (Get-JezykParyGrup); przeliczany po drodze, na liscie po filtrze, zalezalby od tego,
-    co akurat widac.
-
-    Porownanie BEZ wielkosci liter - tak porownuje nazwy AD i tak czyta je czlowiek. Klucze
-    @{} wielkosci liter nie rozrozniaja, i tu wlasnie o to chodzi.
-#>
+# Podpisy par grup: sama nazwa, a przy nazwie powtorzonej na liscie - nazwa z folderem AD.
+# Liczone raz, na calej liscie z AD (nie po filtrze); porownanie bez wielkosci liter.
 function Get-JezykPodpisyGrup {
     param([object[]]$Grupy)
 
@@ -2767,31 +1910,11 @@ function Get-JezykPodpisyGrup {
         $wynik += [pscustomobject]@{ Nazwa = $nazwa; Dn = $dn; Podpis = $podpis }
     }
 
-    # Owiniecie @() musi stac NA MIEJSCU WYWOLANIA - PowerShell rozwija tablice oddawana
-    # z funkcji.
+    # Wolajacy owija wynik w @() - PowerShell rozwija tablice oddawana z funkcji.
     return @($wynik)
 }
 
-<#
-.SYNOPSIS
-    Zamienia liste czlonkostw z memberOf na pary "nazwa + nazwa wyrozniajaca" z podpisem.
-
-.DESCRIPTION
-    Atrybut memberOf niesie NAZWY WYROZNIAJACE grup ("CN=GG_Kadry_Odczyt,OU=Grupy,
-    DC=jezyk,DC=pl"), a nie nazwy - tak samo jak Manager przy przelozonym. Nazwe wyciaga
-    z nich Get-JezykNazwaZDn, a podpis rozrozniajacy grupy o tej samej nazwie -
-    Get-JezykPodpisyGrup.
-
-    ZADNEGO ZAPYTANIA DO AD. Nazwa grupy siedzi w jej wlasnej nazwie wyrozniajacej,
-    wiec odczyt kazdej grupy z osobna bylby N podrozami po sieci po wartosc, ktora
-    juz mamy w reku - a lista bywa kilkudziesieciopozycyjna.
-
-    Zapis, ktory nie zaczyna sie od CN=, oddajemy w CALOSCI. Lepiej pokazac nazwe
-    wyrozniajaca niz zgubic czlonkostwo, o ktorego istnieniu operator ma sie dowiedziec.
-
-    Sortujemy tutaj, bo memberOf przychodzi w kolejnosci dowolnej, a okno ma tylko
-    pokazac gotowa liste - formatowanie po stronie widoku nie ma tu czego rozstrzygac.
-#>
+# memberOf na pary "nazwa + DN" z podpisem, posortowane - bez zapytan do AD (nazwa siedzi w DN).
 function Get-JezykCzlonkostwaGrup {
     param($Czlonkostwa)
 
@@ -2800,43 +1923,21 @@ function Get-JezykCzlonkostwaGrup {
         $tekst = ([string]$dn).Trim()
         if (-not $tekst) { continue }
 
-        # Nazwa siedzi w PIERWSZYM czlonie nazwy wyrozniajacej, wiec nie ma po co pytac
-        # o kazda grupe z osobna - to bylyby kilkadziesiat podrozy po sieci po wartosc,
-        # ktora juz mamy w reku.
+        # Nazwa z pierwszego czlonu DN - bez zapytania o kazda grupe.
         $nazwa = Get-JezykNazwaZDn $tekst
         if (-not $nazwa) { continue }
 
         $pary += [pscustomobject]@{ Nazwa = $nazwa; Dn = $tekst }
     }
 
-    # ODSIEW POWTORZEN PO NAZWIE WYROZNIAJACEJ, NIE PO NAZWIE. Nazwa grupy jest unikalna
-    # tylko w swoim kontenerze: odsiew po niej zostawial z dwoch grup "GG_Kadry" z dwoch OU
-    # jedna, DOWOLNA, a "Usun z grupy" usuwal konto z tej, ktora przetrwala - bez sladu, ze
-    # byla druga. Kazde czlonkostwo to osobna pozycja, a rozroznia je podpis z folderem AD.
-    #
-    # Kolejnosc ustala sie TUTAJ i tylko tutaj - memberOf przychodzi w dowolnej, a dwa
-    # miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie. Grupy o tej samej
-    # nazwie stoja obok siebie, uporzadkowane po folderze.
-    #
-    # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice oddawana
-    # z funkcji: przy zerze grup wolajacy dostaje $null, a przy jednej sam obiekt, a nie
-    # tablice jednoelementowa. Dlatego kazde wywolanie owija sie w @() NA MIEJSCU
-    # WYWOLANIA - ta sama konwencja, co przy @(Confirm-JezykUstawienia).
+    # Uwaga: odsiew powtorzen po DN, nie po nazwie - CN jest unikalny tylko w kontenerze
+    # (README: Grupy o tej samej nazwie). Kolejnosc ustalana tylko tutaj; wolajacy owija wynik w @().
     $unikalne = @($pary | Sort-Object -Property Dn -Unique)
     return @(Get-JezykPodpisyGrup $unikalne | Sort-Object -Property Nazwa, Podpis)
 }
 
-# Sprowadza liste grup do jednej postaci: par "nazwa + nazwa wyrozniajaca" z podpisem. Na
-# wejsciu przyjmuje pary z Get-JezykCzlonkostwaGrup albo same nazwy - ta druga postac
-# zostaje, bo nie kazda sciezka odczytu ma nazwy wyrozniajace pod reka, a nazwa wystarcza,
-# zeby grupe POKAZAC. Do ZAPISU nie wystarcza i dlatego pozycja bez Dn nie da sie usunac.
-#
-# Odsiew pustych stoi tutaj, czyli tam, gdzie zapada decyzja - a nie u wolajacego:
-# @($null) ma w PowerShellu JEDEN element i bez tego konto bez grup zapalaloby przycisk.
-#
-# PODPIS JEDZIE, A NIE LICZY SIE TUTAJ - patrz Get-JezykPodpisyGrup. Ta funkcja bywa wolana
-# na liscie po filtrze, a podpis policzony na niej zalezalby od tego, co akurat widac. Para,
-# ktora podpisu nie ma, dostaje sama nazwe.
+# Sprowadza liste grup do par nazwa + DN + podpis (przyjmuje pary albo same nazwy); odsiewa puste.
+# Podpis tylko jedzie - liczony tu zalezalby od filtra.
 function Get-JezykParyGrup {
     param([object[]]$Grupy)
 
@@ -2860,19 +1961,8 @@ function Get-JezykParyGrup {
     return @($pary)
 }
 
-<#
-.SYNOPSIS
-    Zamienia wlasciciela obiektu AD ("DOMENA\konto") na czytelny podpis osoby.
-
-.DESCRIPTION
-    Wzorowana na Get-JezykPodpisMenedzera, z jedna roznica: oddaje obiekt, a nie napis.
-    Widok musi wiedziec, CZY trafila sie osoba - AD wpisuje jako wlasciciela GRUPE
-    (Administratorzy domeny), gdy obiekt zakladal jej czlonek, a nazwa grupy nie jest
-    odpowiedzia na pytanie "kto". Bez tej flagi okno nie odroznialoby nazwiska od grupy.
-
-    Osoba = $null znaczy "nie bylo czego sprawdzac", czyli pusty wlasciciel - deskryptor,
-    ktorego nie udalo sie odczytac. To nie to samo, co "sprawdzono i to nie jest osoba".
-#>
+# Wlasciciel obiektu AD ("DOMENA\konto") jako podpis. Osoba: $true osoba, $false grupa albo SID,
+# $null - wlasciciela nie bylo (deskryptor nieodczytany).
 function Get-JezykPodpisWlasciciela {
     param([string]$Wlasciciel, [string]$Serwer = '')
 
@@ -2880,9 +1970,7 @@ function Get-JezykPodpisWlasciciela {
     $Wlasciciel = $Wlasciciel.Trim()
     if (-not $Wlasciciel) { return [pscustomobject]@{ Podpis = ''; Osoba = $null } }
 
-    # Czesc za OSTATNIM ukosnikiem: "JEZYK\jkowalski" -> "jkowalski". Wartosc bez ukosnika
-    # (goly SID, gdy Windows nie zdolal przetlumaczyc) idzie do sprawdzenia w calosci -
-    # AD przyjmuje SID jako tozsamosc, wiec i taki zapis ma szanse zamienic sie w nazwisko.
+    # Czesc za ostatnim ukosnikiem; goly SID idzie w calosci (AD przyjmuje SID jako tozsamosc).
     $login = $Wlasciciel.Substring($Wlasciciel.LastIndexOf('\') + 1)
 
     if (-not (Test-JezykNazwaKonta $login)) {
@@ -2898,18 +1986,17 @@ function Get-JezykPodpisWlasciciela {
 
         $nazwa = Get-JezykOsoba ([string]$konto.DisplayName) ([string]$konto.GivenName) ([string]$konto.Surname)
 
-        # Bez nazwy wyswietlanej sam login, zamiast loginu z pustymi nawiasami - ta sama
-        # zasada co przy menedzerze i na liscie wyboru kont.
+        # Bez nazwy wyswietlanej - sam login.
         $podpis = if ($nazwa) { '{0} ({1})' -f $nazwa, $login } else { $login }
         return [pscustomobject]@{ Podpis = $podpis; Osoba = $true }
     }
     catch {
-        # Grupa, konto komputera albo konto z innej domeny: Get-ADUser rzuca, a wlasciciel
-        # i tak jest prawdziwa odpowiedzia - pokazujemy go w zapisie, ktory zna administrator.
+        # Grupa, konto komputera albo konto z innej domeny - wlasciciel pokazany w oryginalnym zapisie.
         return [pscustomobject]@{ Podpis = $Wlasciciel; Osoba = $false }
     }
 }
 
+# Stan konta w AD - nigdy nie rzuca, zawsze oddaje obiekt wyniku; -Serwer to kontroler po odblokowaniu.
 function Get-JezykUserStatus {
     param([string]$Login, [string]$Serwer = '')
 
@@ -2920,8 +2007,7 @@ function Get-JezykUserStatus {
     $adres = $Script:Config.Domena
     if ($Serwer -and (Test-JezykNazwaWDomenach $Serwer $Script:Domeny)) { $adres = $Serwer }
 
-    # Pusty login to nie awaria, tylko "uzytkownik jeszcze nic nie wpisal" - kontroler
-    # domeny nie jest w ogole odpytywany.
+    # Pusty login to nie awaria - kontroler nie jest odpytywany.
     if ([string]::IsNullOrWhiteSpace($Login)) {
         return New-JezykResult -Login '' -Status 'Empty' -Message 'Wpisz login i kliknij "Szukaj".'
     }
@@ -2932,13 +2018,8 @@ function Get-JezykUserStatus {
     }
 
     try {
-        # -Identity, a nie -Filter: parametr traktuje tekst jako wartosc do odnalezienia,
-        # a nie jako fragment zapytania, wiec znaki o znaczeniu skladniowym w LDAP nie maja
-        # tu czego zepsuc.
-        #
-        # -Properties jest konieczne: Get-ADUser domyslnie zwraca tylko podstawowy zestaw
-        # atrybutow. LockedOut nie jest zwyklym atrybutem w bazie - modul wylicza go na
-        # biezaco po stronie kontrolera domeny.
+        # -Identity, nie -Filter: tekst jest wartoscia, nie fragmentem zapytania.
+        # -Properties konieczne; LockedOut modul wylicza po stronie kontrolera.
         $user = Get-ADUser -Identity $Login `
                            -Server $adres `
                            -Properties LockedOut, Enabled, LockoutTime, DisplayName,
@@ -2949,8 +2030,7 @@ function Get-JezykUserStatus {
                                        AccountExpirationDate, Created, LastLogonDate `
                            -ErrorAction Stop
 
-        # LockoutTime to FILETIME; 0 albo brak atrybutu znaczy, ze konta nigdy nie blokowano.
-        # Osobny try, bo nietypowa wartosc nie moze zamienic udanego odczytu w komunikat o bledzie.
+        # LockoutTime to FILETIME (0 = nigdy); osobny try - nietypowa wartosc nie psuje odczytu.
         $czasBlokady = $null
         if ($user.LockoutTime -and $user.LockoutTime -gt 0) {
             try   { $czasBlokady = [datetime]::FromFileTime($user.LockoutTime) }
@@ -2959,38 +2039,25 @@ function Get-JezykUserStatus {
 
         $lokalizacja = Get-JezykKatalogZeSciezki $user.CanonicalName
 
-        # OBA NUMERY, KAZDY OSOBNO (LDAP: telephoneNumber i mobile - w oknie AD "Glowny"
-        # i "Komorkowy"). Wczesniej komorka pokazywala sie WYLACZNIE wtedy, gdy nie bylo
-        # stacjonarnego, wiec przy koncie z dwoma numerami operator nie widzial tego, pod
-        # ktorym najlatwiej sie dodzwonic. Brak obu zostawia pola PUSTE - konto bez numeru
-        # to nie usterka, ta sama zasada co przy e-mailu.
+        # Oba numery osobno (telephoneNumber i mobile); brak obu to nie usterka.
         $telefonGlowny    = ([string]$user.OfficePhone).Trim()
         $telefonKomorkowy = ([string]$user.MobilePhone).Trim()
 
-        # Rozwiazanie przelozonego ma WLASNY try wewnatrz - patrz Get-JezykPodpisMenedzera.
-        # Serwer przekazujemy ten sam, z ktorego czytalismy konto: przelozony lezy zwykle
-        # w tej samej domenie, a odpytanie innego kontrolera bylo by druga podroza po sieci.
+        # Przelozony z tego samego serwera; wlasny try ma Get-JezykPodpisMenedzera.
         $menedzer = Get-JezykPodpisMenedzera -Dn ([string]$user.Manager) -Serwer $adres
 
-        # Grupy przychodza W TYM SAMYM ZAPYTANIU, co reszta konta - memberOf jest zwyklym
-        # atrybutem obiektu, wiec nie kosztuje ani jednej dodatkowej podrozy po sieci.
-        # Nie ma tu drugiego odczytu ani zadania w tle, bo nie ma na co czekac.
+        # Grupy w tym samym zapytaniu (memberOf) - bez dodatkowej podrozy po sieci.
         $grupy = @(Get-JezykCzlonkostwaGrup $user.MemberOf)
 
-        # pwdLastSet rowne zero to sposob, w jaki AD zapisuje "uzytkownik musi zmienic haslo
-        # przy nastepnym logowaniu".
+        # pwdLastSet = 0 - "zmien haslo przy nastepnym logowaniu".
         $wymuszonaZmiana = $null
         if ($null -ne $user.pwdLastSet) { $wymuszonaZmiana = ($user.pwdLastSet -eq 0) }
 
-        # msDS-UserPasswordExpiryTimeComputed nie jest zwykla data - ma dwie wartosci
-        # specjalne: 0 (haslo do zmiany przy logowaniu) i maksimum Int64 (nigdy nie wygasa).
-        # Podanie ktorejkolwiek do FromFileTime konczy sie wyjatkiem.
+        # msDS-UserPasswordExpiryTimeComputed ma dwie wartosci specjalne: 0 i maksimum Int64.
         $hasloWygasa    = $null
         $hasloBezTerminu = $null
         $terminHasla = $user.'msDS-UserPasswordExpiryTimeComputed'
-        # Progiem jest ToFileTimeUtc, a nie sama stala Int64: ToFileTime przeliczalby czas
-        # lokalny, wiec wynik zalezalby od strefy czasowej stacji, a porownanie z MaxValue
-        # przepuszczaloby wartosci absurdalne, ale mniejsze - i pokazywaloby termin w roku 9999.
+        # Prog z ToFileTimeUtc - niezalezny od strefy czasowej stacji.
         $progNigdy = [datetime]::MaxValue.ToFileTimeUtc()
         if ($null -ne $terminHasla) {
             if ($terminHasla -le 0 -or $terminHasla -ge $progNigdy) {
@@ -3003,8 +2070,7 @@ function Get-JezykUserStatus {
             }
         }
 
-        # Login bierzemy z AD (SamAccountName), a nie z pola tekstowego - dzieki temu widac
-        # go w oryginalnej pisowni.
+        # Login z AD, w oryginalnej pisowni.
         return New-JezykResult -Login $user.SamAccountName -Status 'Ok' `
                                -LockedOut ([bool]$user.LockedOut) `
                                -Enabled ([bool]$user.Enabled) `
@@ -3029,10 +2095,7 @@ function Get-JezykUserStatus {
                                -Message ('Znaleziono w domenie {0}.' -f $Script:Config.Domena)
     }
     catch {
-        # Typ wyjatku sprawdzamy PO NAZWIE, a nie konstrukcja "catch [Typ]": tamta wymaga,
-        # zeby PowerShell rozwiazal typ juz przy parsowaniu pliku. Na stacji bez RSAT typ
-        # nie istnieje, wiec skrypt wywalilby sie bledem parsowania i uzytkownik nie
-        # zobaczylby czytelnego okna z komunikatem o braku modulu.
+        # Uwaga: typ wyjatku po nazwie, nie "catch [Typ]" - bez RSAT plik nie przeszedlby parsowania.
         $typWyjatku = $_.Exception.GetType().Name
 
         if ($typWyjatku -in @('ADIdentityNotFoundException', 'ADIdentityResolutionException')) {
@@ -3046,19 +2109,7 @@ function Get-JezykUserStatus {
     }
 }
 
-<#
-.SYNOPSIS
-    Sklada JEDNA pozycje listy wyboru z konta zwroconego przez AD.
-
-.DESCRIPTION
-    Wydzielone, bo pozycje powstaja w DWOCH miejscach: przy wyszukiwaniu po nazwie
-    (Find-JezykUsers) i w przestrzeni tla, ktora szuka po numerze. Tamta musi oddac oknu
-    pozycje GOTOWE, a nie surowe obiekty ADUser - inaczej skladanie opisu wedrowaloby do
-    widoku, ktoremu nie wolno pytac katalogu o nic.
-
-    Dwie kopie tego samego skladania rozjechalyby sie przy pierwszej zmianie opisu i lista
-    pokazywalaby konta znalezione po nazwie inaczej niz te same konta znalezione po numerze.
-#>
+# Jedna pozycja listy wyboru z konta AD - wspolna dla szukania po nazwie i po numerze (w tle).
 function New-JezykPozycjaKonta {
     param($Konto)
 
@@ -3075,117 +2126,62 @@ function New-JezykPozycjaKonta {
     }
 }
 
-<#
-.SYNOPSIS
-    Szuka kont po NUMERZE TELEFONU, niezaleznie od tego, jak zapisano go w AD.
-
-.DESCRIPTION
-    JEDEN FILTR, Z GWIAZDKA MIEDZY KAZDA CYFRA. Ten sam numer bywa w katalogu zapisany na
-    kilka sposobow - "+48123456789", "123 456 789", "123456789", "+48 123456789" - a wzorzec
-    "*1*2*3*..." obejmuje je wszystkie naraz, bo separatory wpadaja w gwiazdki. Obejmuje tez
-    zapis dokladny, wiec osobny "szybki" etap na formy bez separatorow niczego nie dokladal:
-    telephoneNumber domyslnie NIE JEST w AD indeksowany, wiec obie formy to i tak pelny skan,
-    a numer zapisany z separatorami placil za ten skan DWA RAZY.
-
-    LAG PRZY NUMERZE INFOLINII BRAL SIE ZE STRONY, A NIE Z LICZBY ZWROCONYCH WIERSZY.
-    -ResultSetSize ucina odpowiedz PO STRONIE KLIENTA: kontroler i tak zbiera cala strone,
-    a strona ma domyslnie 256 wierszy. Numer, ktorego uzywa kilkadziesiat osob, nigdy jej
-    nie zapelnia, wiec kontroler przegladal CALA domene - i to sa te kilka sekund, w ktorych
-    okno stalo. -ResultPageSize rowny limitowi konczy jego prace, gdy tylko uzbiera tyle
-    trafien. To ta jedna wartosc naprawia lag; sam limit trafien nie naprawial go wcale.
-
-    PYTAMY O JEDEN WIERSZ WIECEJ, NIZ POKAZUJEMY. Komplet znaczy wtedy "bylo ich wiecej",
-    a nie "bylo dokladnie tylu" - i wolajacy moze powiedziec to wprost, zamiast pokazywac
-    liste ucieta w polowie. Tak samo zachowuje sie wyszukiwanie po niepelnym nazwisku.
-
-    GWIAZDKI WPUSZCZAJA TRAFIENIA PRZYPADKOWE ("*1*2*3*" pasuje tez do "1x2x3"), wiec kazdy
-    zwrocony numer porownujemy jeszcze raz po samych cyfrach - patrz Test-JezykNumerPasuje.
-
-    NUMER SKRACAMY DO DZIEWIECIU OSTATNICH CYFR, zeby "+48 123 456 789" i "123456789" byly
-    tym samym numerem. Dopasowanie dziala wtedy w OBIE strony, niezaleznie od tego, ktora
-    forma stoi w katalogu, a ktora wpisal operator.
-
-    KSZTALT WYNIKU, A NIE GOLA TABLICA. "Nikogo nie znaleziono", "jest ich za wielu" i "nie
-    udalo sie sprawdzic" prowadza do trzech roznych komunikatow, a pusta tablica umie
-    powiedziec tylko to pierwsze - i przy dwoch pozostalych po prostu klamie.
-#>
+# Konta po numerze telefonu: jeden filtr z gwiazdka miedzy cyframi (9 ostatnich), potem odsiew.
+# -ResultPageSize = limit + 1 konczy prace kontrolera; wynik: Trafienia, ZaDuzo, Przerwane
+# (README: Wyszukiwanie po numerze telefonu).
 function Find-JezykUsersPoNumerze {
     param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '', [string]$SzukajOd = '')
 
     $wynik = [pscustomobject]@{ Trafienia = @(); ZaDuzo = $false; Przerwane = $false; Powod = '' }
 
-    # BRAK SERWERA TO PRZERWANIE, A NIE PUSTA LISTA. Ta funkcja wykonuje sie w OSOBNEJ
-    # przestrzeni uruchomieniowej, gdzie $Script:Config nie istnieje - dawna wartosc
-    # zapasowa "$Script:Config.Domena" dalaby tam po cichu pusty adres i zapytanie o nikogo.
+    # Brak serwera to przerwanie, nie pusta lista - w tle nie ma konfiguracji okna.
     if (-not $Serwer) {
         $wynik.Przerwane = $true
         $wynik.Powod     = 'Nie przeszukano numerów telefonu: nie podano domeny do zapytania.'
         return $wynik
     }
 
-    # Druga zapora mimo sprawdzenia u wolajacego: do wzorca maja trafic same cyfry ZAWSZE,
-    # a nie tylko wtedy, gdy wyglada to na potrzebne. Gorna granica jak w E.164 - dluzszy
-    # ciag numerem juz nie jest.
+    # Druga zapora: do wzorca trafiaja same cyfry (6-15, jak E.164).
     $Cyfry = Get-JezykCyfry $Cyfry
     if ($Cyfry.Length -lt 6 -or $Cyfry.Length -gt 15) { return $wynik }
 
-    # LIMIT BEZ SENSU ZASTEPUJEMY DOMYSLNYM. Brak klucza w konfiguracji daje [int]$null,
-    # czyli ZERO - a limit zero znaczy "kazdy numer ma zbyt wielu wlascicieli", wiec
-    # wyszukiwanie przestaje cokolwiek znajdowac i nie mowi przy tym ani slowa. Nie jest to
-    # ostroznosc na zapas: log ze zgloszenia pokazal limit 1 przy skonfigurowanych dziesieciu.
+    # Limit bez sensu (np. 0 z braku klucza) zastepujemy domyslnym - zero znaczyloby "zawsze za duzo".
     if ($Limit -lt 1) { $Limit = 10 }
 
     $rdzen = if ($Cyfry.Length -gt 9) { $Cyfry.Substring($Cyfry.Length - 9) } else { $Cyfry }
 
-    # APOSTROFY W FILTRZE SA CELOWE i nie wolno ich zamieniac na cudzyslowy: $nr ma dojsc do
-    # modulu AD jako NAZWA ZMIENNEJ, ktorej wartosc modul podstawi sam, a nie jako gotowy
-    # fragment filtra sklejony z tekstu. Powod opisany szerzej przy filtrze w Find-JezykUsers.
-    # (PSScriptAnalyzer zglasza tu falszywy alarm "zmienna nigdy nie uzyta".)
+    # Uwaga: apostrofy w filtrze celowe - $nr podstawia modul AD (analizator zglasza falszywy alarm).
     $nr = '*' + (($rdzen.ToCharArray()) -join '*') + '*'
 
     # OfficePhone i MobilePhone to przyjazne nazwy atrybutow telephoneNumber i mobile.
     $pola  = 'DisplayName', 'GivenName', 'Surname', 'OfficePhone', 'MobilePhone'
     $filtr = 'OfficePhone -like $nr -or MobilePhone -like $nr'
 
-    # PODDRZEWO DOKLADAMY TYLKO WTEDY, GDY JE PODANO. -SearchBase z pusta wartoscia nie
-    # znaczy "od korzenia" - modul AD odrzuca ja bledem, wiec pusty klucz w ustawieniach
-    # wywrocilby wyszukiwanie zamiast zostawic je bez zmian.
+    # -SearchBase tylko gdy podane - pusta wartosc modul AD odrzuca bledem.
     $dodatkowe = @{}
     if ($SzukajOd) { $dodatkowe['SearchBase'] = $SzukajOd }
 
     try {
-        # OBIE WARTOSCI, NIE JEDNA. -ResultSetSize konczy CZYTANIE odpowiedzi, a
-        # -ResultPageSize konczy SZUKANIE: kontroler oddaje strone, gdy tylko ja zapelni,
-        # wiec przy stronie rownej limitowi przestaje przegladac domene po jedenastym
-        # trafieniu, zamiast szukac dalej do konca.
-        #
-        # To ratuje WYLACZNIE numer infolinii. Numer nalezacy do jednej osoby nie zapelni
-        # strony NIGDY, wiec kontroler i tak przeglada wszystkie konta - stad to zapytanie
-        # chodzi w tle, a nie w watku okna.
+        # -ResultPageSize konczy SZUKANIE (ResultSetSize tylko czytanie) - ratuje infolinie, nie numer osoby.
         $trafienia = @(Get-ADUser -Filter $filtr -Server $Serwer -Properties $pola `
                                   -ResultPageSize ($Limit + 1) -ResultSetSize ($Limit + 1) `
                                   @dodatkowe -ErrorAction Stop)
     }
     catch {
-        # "NIE UDALO SIE SPRAWDZIC" TO NIE TO SAMO, CO "NIKOGO NIE MA". Pusta lista zwrocona
-        # po bledzie kazalaby oknu powiedziec "nie znaleziono konta", czyli sklamac o tym,
-        # czego nie wiemy. Przyczyna idzie w calosci pod przycisk "!".
+        # "Nie udalo sie sprawdzic" to nie "nikogo nie ma" - powod pod "!".
         $wynik.Przerwane = $true
         $wynik.Powod     = 'Nie udało się przeszukać numerów telefonu w domenie "{0}": {1}' -f
                            $Serwer, $_.Exception.Message
         return $wynik
     }
 
-    # KOMPLET WIERSZY ZNACZY "BYLO ICH WIECEJ", A NIE "BYLO DOKLADNIE TYLE". Decyzja zapada
-    # PRZED odsiewem po cyfrach: lista ucieta u kontrolera jest niepelna niezaleznie od tego,
-    # ile pozycji przetrwa odsiew.
+    # Komplet wierszy = "bylo ich wiecej" - decyzja przed odsiewem po cyfrach.
     if ($trafienia.Count -gt $Limit) {
         $wynik.ZaDuzo = $true
         return $wynik
     }
 
-    # Odsiew ostatni: wzorzec z gwiazdkami wpuszcza trafienia przypadkowe, wiec kazdy numer
-    # porownujemy jeszcze raz po samych cyfrach.
+    # Odsiew po samych cyfrach - gwiazdki wpuszczaja trafienia przypadkowe.
     $wynik.Trafienia = @($trafienia | Where-Object {
         (Test-JezykNumerPasuje $Cyfry ([string]$_.OfficePhone)) -or
         (Test-JezykNumerPasuje $Cyfry ([string]$_.MobilePhone))
@@ -3194,19 +2190,8 @@ function Find-JezykUsersPoNumerze {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Wejscie zadania w tle: szuka po numerze i oddaje GOTOWE pozycje listy wyboru.
-
-.DESCRIPTION
-    Cala zawartosc tej funkcji dalaby sie wpisac wprost w tekst skladany przez
-    New-JezykSkryptTla - i wlasnie dlatego jej tam nie ma. Kod zyjacy w napisie nie
-    wykonuje sie w zestawie weryfikacyjnym ani razu, a tutaj wykonuje sie w calosci.
-
-    Przeliczenie surowych obiektow ADUser na pozycje listy MUSI zapasc po tej stronie,
-    czyli jeszcze w przestrzeni tla: widok dostaje wtedy to samo, co przy wyszukiwaniu po
-    nazwie, i nie musi wiedziec, skad pozycja przyszla.
-#>
+# Wejscie zadania numeru: szuka i oddaje gotowe pozycje listy wyboru.
+# Funkcja, a nie tekst w skrypcie tla - tylko tak wykonuje sie w zestawie weryfikacyjnym.
 function Find-JezykPozycjePoNumerze {
     param([string]$Cyfry, [int]$Limit = 10, [string]$Serwer = '', [string]$SzukajOd = '')
 
@@ -3220,33 +2205,15 @@ function Find-JezykPozycjePoNumerze {
     }
 }
 
-<#
-.SYNOPSIS
-    Szuka kont, ktorych dane ZACZYNAJA SIE od podanego tekstu. Zwraca lekka liste kandydatow.
-
-.DESCRIPTION
-    Filtr jest tu konieczny, wiec chronimy sie inaczej niz przez -Identity: wzorzec trafia
-    do niego jako ZMIENNA, a modul AD podstawia jej wartosc, zamiast parsowac ja jako
-    fragment filtra. Wpisanie "*)(cn=*" jest wiec szukanym ciagiem znakow, nie poleceniem.
-    -ResultSetSize ogranicza odpowiedz, zeby sama gwiazdka nie sciagnela calej domeny.
-
-    Pobieramy TYLKO to, co trafia na liste. Atrybut wymieniony w -Filter nie musi byc
-    w -Properties: filtr wykonuje sie po stronie kontrolera domeny.
-
-    DWA ZAPYTANIA, bo w AD sa to dwa rozne rodzaje obiektow. Get-ADUser nie zwroci
-    kontaktu NIGDY, niezaleznie od filtra - kontakt jest obiektem klasy "contact", nie ma
-    sAMAccountName ani stanu konta, wiec nie miesci sie w tym poleceniu. Kontakty ida
-    osobnym zapytaniem Get-ADObject i lada POD kontami: pierwsza pozycja listy ma pozostac
-    kontem, bo okno wybiera ja samo po wyszukaniu.
-#>
+# Szuka kont i kontaktow, ktorych dane zaczynaja sie od wpisu; oddaje lekka liste kandydatow.
+# Wzorzec idzie do filtra jako zmienna (podstawia ja modul AD); kontakty pod kontami.
 function Find-JezykUsers {
     param([string]$Fragment)
 
     if ($null -eq $Fragment) { $Fragment = '' }
     $Fragment = $Fragment.Trim()
 
-    # Ksztalt wyniku jest JEDEN dla wszystkich pieciu stanow - wolajacy nie moze musiec
-    # sprawdzac, czy dane pole w ogole istnieje.
+    # Jeden ksztalt wyniku dla wszystkich stanow.
     $pusty = [pscustomobject]@{ Status = 'Empty'; Konta = @(); Szczegoly = ''
                                 Message = 'Wpisz login, imię i nazwisko, e-mail, numer telefonu albo login@domena i kliknij "Szukaj".' }
     if ([string]::IsNullOrWhiteSpace($Fragment)) { return $pusty }
@@ -3254,29 +2221,19 @@ function Find-JezykUsers {
     $slowa = @($Fragment -split '\s+' | Where-Object { $_ })
 
     try {
-        # Gwiazdka tylko na koncu: dopasowanie OD POCZATKU wartosci korzysta z indeksow
-        # katalogu i pozostaje szybkie. Dopasowanie dowolnego fragmentu wymusiloby
-        # przeszukanie wszystkich obiektow w domenie.
+        # Gwiazdka tylko na koncu - dopasowanie od poczatku korzysta z indeksow.
         $wzorzec = $Fragment + '*'
 
-        # Limit pobieramy o jeden wiekszy niz pokazujemy - dzieki temu wiemy, czy wynikow
-        # bylo WIECEJ niz limit, zamiast po cichu uciac liste.
+        # Pobieramy limit + 1, zeby wiedziec, ze bylo wiecej.
         $limit = $Script:Config.LimitWynikow
 
-        # APOSTROFY SA TU CELOWE i nie wolno ich zamieniac na cudzyslowy. Dzieki nim
-        # $wzorzec nie jest rozwijany przez PowerShella, tylko przekazywany modulowi AD.
-        # Cudzyslowy sklejalyby tekst przed wyslaniem i otwieraly droge do wstrzykniecia.
-        # (PSScriptAnalyzer zglasza tu falszywy alarm "zmienna nigdy nie uzyta".)
-        #
-        # Warunki laczy -or, wiec jedno pole obsluguje login, imie, nazwisko i adres.
-        # UserPrincipalName to OSOBNY atrybut niz EmailAddress i czesto ma inna wartosc.
+        # Uwaga: apostrofy celowe - $wzorzec podstawia modul AD; cudzyslowy otwieralyby droge do wstrzykniecia.
+        # UserPrincipalName to osobny atrybut niz EmailAddress.
         $filtr = 'SamAccountName -like $wzorzec -or GivenName -like $wzorzec ' +
                  '-or Surname -like $wzorzec -or EmailAddress -like $wzorzec ' +
                  '-or UserPrincipalName -like $wzorzec -or DisplayName -like $wzorzec'
 
-        # Wpis dwuwyrazowy: GivenName i Surname sprawdzaja sie OSOBNO, wiec zadne pojedyncze
-        # pole nie zaczyna sie od calej frazy. Dokladamy pare warunkow w obu kolejnosciach,
-        # bo nie da sie przewidziec, czy ktos wpisze "Jan Kowalski" czy "Kowalski Jan".
+        # Dwa wyrazy: imie i nazwisko w obu kolejnosciach.
         if ($slowa.Count -eq 2) {
             $wzorzecA = $slowa[0] + '*'
             $wzorzecB = $slowa[1] + '*'
@@ -3290,20 +2247,9 @@ function Find-JezykUsers {
                                    -ResultSetSize ($limit + 1) `
                                    -ErrorAction Stop)
 
-        # NUMERU TELEFONU TA FUNKCJA JUZ NIE SZUKA - robi to zadanie w tle
-        # (Start-JezykZadanieNumeru), a wynik dokleja do listy Update-JezykNumerWTle.
-        # Powod: telephoneNumber i mobile NIE SA w AD indeksowane, a filtr ma gwiazdke na
-        # poczatku wartosci, wiec numer nalezacy do JEDNEJ osoby zmusza kontroler do
-        # przejrzenia wszystkich kont. Trzymane tutaj, kazalo oknu czekac na to przegladanie
-        # takze wtedy, gdy konta po nazwie byly gotowe po dwoch dziesiatych sekundy.
-        #
-        # Zapytanie po nazwie zostaje synchroniczne: idzie po atrybutach indeksowanych,
-        # z gwiazdka na KONCU wartosci, wiec wraca od razu i nie ma czego przenosic w tlo.
+        # Numeru telefonu ta funkcja nie szuka - robi to zadanie w tle (atrybuty bez indeksu).
 
-        # KONTAKTY. Nazwy atrybutow SUROWE, jak w LDAP (name, displayName, givenName, sn,
-        # mail): Get-ADObject nie ma mapy przyjaznych nazw, ktora jest w Get-ADUser, wiec
-        # "Surname" bylby dla niego nieznanym atrybutem. Apostrofy wokol filtra jak wyzej -
-        # to one sprawiaja, ze $wzorzec podstawia modul AD, a nie PowerShell.
+        # Kontakty: nazwy atrybutow surowe (Get-ADObject nie zna przyjaznych); apostrofy jak wyzej.
         $filtrKontakt = 'objectClass -eq ''contact'' -and (name -like $wzorzec ' +
                         '-or displayName -like $wzorzec -or givenName -like $wzorzec ' +
                         '-or sn -like $wzorzec -or mail -like $wzorzec)'
@@ -3315,8 +2261,7 @@ function Find-JezykUsers {
                             '-or (givenName -like $wzorzecB -and sn -like $wzorzecA))'
         }
 
-        # Wlasny try: kontakty sa DODATKIEM do wyniku. Domena bez kontaktow albo odmowa
-        # odczytu tej galezi katalogu nie moze przeslonic znalezionych kont.
+        # Wlasny try: kontakty sa dodatkiem - blad nie przeslania kont.
         $kontakty = @()
         try {
             $kontakty = @(Get-ADObject -Filter $filtrKontakt `
@@ -3327,15 +2272,11 @@ function Find-JezykUsers {
         }
         catch { $kontakty = @() }
 
-        # Limit liczony od SUMY, nie od kazdego zapytania osobno - inaczej lista potrafilaby
-        # urosnac do dwukrotnosci limitu.
+        # Limit od sumy kont i kontaktow.
         $lacznie = $znalezione.Count + $kontakty.Count
 
         if ($lacznie -eq 0) {
-            # O NUMERZE NIE MA TU JUZ MOWY. Wyszukiwanie po numerze chodzi osobno i w tej
-            # chwili moze jeszcze trwac, wiec ta odpowiedz mowi wylacznie o tym, co
-            # sprawdzono: o nazwie. Spoznione trafienie po numerze potrafi ten stan cofnac -
-            # patrz Update-JezykNumerWTle w Jezyk-3-Widok.ps1.
+            # Mowimy tylko o nazwie - szukanie po numerze moze jeszcze trwac (Update-JezykNumerWTle).
             return [pscustomobject]@{
                 Status    = 'NotFound'
                 Konta     = @()
@@ -3355,29 +2296,20 @@ function Find-JezykUsers {
 
         $konta = @($znalezione | Sort-Object SamAccountName | ForEach-Object { New-JezykPozycjaKonta $_ })
 
-        # Kontakt niesie DN zamiast loginu - nie ma sAMAccountName, wiec to jedyna
-        # tozsamosc, po ktorej da sie go pozniej odczytac.
+        # Kontakt niesie DN zamiast loginu.
         $wpisy = @(foreach ($c in ($kontakty | Sort-Object Name)) {
-            # NAZWA OBIEKTU (atrybut Name, czyli cn) IDZIE NA LISTE W NAWIASIE. Dotad byla
-            # wylacznie wartoscia zapasowa, wiec kontakt z wypelnionym displayName pokazywal
-            # ja dopiero PO wybraniu pozycji, w polu przemianowanym na "Nazwa" - a to wlasnie
-            # po niej operator rozpoznaje wpis, ktorego szukal. Na liscie widac wiec oba
-            # napisy naraz i nie trzeba klikac po kolei, zeby trafic we wlasciwy kontakt.
+            # Nazwa obiektu (cn) w nawiasie - po niej operator rozpoznaje kontakt.
             $nazwaObiektu = [string]$c.Name
             $nazwa = Get-JezykOsoba ([string]$c.displayName) ([string]$c.givenName) ([string]$c.sn)
             if (-not $nazwa) { $nazwa = $nazwaObiektu }
 
-            # Nawias TYLKO gdy niesie cos nowego: przy kontakcie bez displayName obie wartosci
-            # sa te same i "Jan Kowalski (Jan Kowalski)" bylby samym halasem.
+            # Nawias tylko wtedy, gdy niesie cos nowego.
             $podpis = if ($nazwaObiektu -and $nazwaObiektu -ne $nazwa) {
                 '{0} ({1})' -f $nazwa, $nazwaObiektu
             } else { $nazwa }
 
             $opis = if ($c.mail) { '[Kontakt] {0} - {1}' -f $podpis, [string]$c.mail } else { '[Kontakt] {0}' -f $podpis }
-            # Ksztalt pozycji zostaje TEN SAM co przy koncie - lista jest jedna, a dwa
-            # ksztalty w jednej kolekcji rozjechalyby sie przy pierwszej zmianie. Nazwy
-            # obiektu nie odkladamy: po wybraniu pozycji Get-JezykKontaktStatus czyta
-            # kontakt od nowa po DN i przynosi ja swieza.
+            # Ten sam ksztalt pozycji co przy koncie; kontakt i tak czytany od nowa po DN.
             [pscustomobject]@{
                 Typ         = 'Kontakt'
                 Login       = ''
@@ -3387,8 +2319,7 @@ function Find-JezykUsers {
             }
         })
 
-        # Konta PIERWSZE, kontakty pod nimi. Okno zaznacza pozycje zerowa samo, wiec
-        # kolejnosc przesadza o tym, co widac zaraz po wyszukaniu.
+        # Konta pierwsze - okno samo zaznacza pozycje zerowa.
         $pozycje = @($konta) + @($wpisy)
 
         $czesci = @()
@@ -3409,21 +2340,7 @@ function Find-JezykUsers {
     }
 }
 
-<#
-.SYNOPSIS
-    Odczytuje pozycje typu Kontakt. Tozsamoscia jest DN, bo kontakt nie ma loginu.
-
-.DESCRIPTION
-    Kontakt to wpis ksiazki adresowej, a nie konto: nie ma sAMAccountName, nie loguje sie,
-    nie da sie go zablokowac ani odblokowac i nie pojawi sie w inwentaryzacji SCCM. Dlatego
-    wraca ze Statusem 'Kontakt' - warstwa renderujaca po nim poznaje, ze polom stanu konta
-    nie ma czym wypelnic, a przycisk odblokowania ma zostac nieczynny.
-
-    Ksztalt obiektu wyniku pozostaje JEDEN (New-JezykResult) - inaczej okno musialoby miec
-    druga sciezke wyswietlania, a dwie sciezki rozjezdzaja sie przy pierwszej zmianie.
-
-    Nazwy atrybutow surowe, jak w LDAP: Get-ADObject nie ma mapy przyjaznych nazw.
-#>
+# Odczyt kontaktu po DN; wynik ze Statusem 'Kontakt' w tym samym ksztalcie (New-JezykResult).
 function Get-JezykKontaktStatus {
     param([string]$Dn)
 
@@ -3446,8 +2363,7 @@ function Get-JezykKontaktStatus {
 
         $lokalizacja = Get-JezykKatalogZeSciezki ([string]$kontakt.CanonicalName)
 
-        # Osobny try: nietypowa wartosc daty nie moze zamienic udanego odczytu w komunikat
-        # o bledzie.
+        # Osobny try - nietypowa data nie psuje odczytu.
         $utworzono = $null
         if ($kontakt.whenCreated) {
             try   { $utworzono = [datetime]$kontakt.whenCreated }
@@ -3457,14 +2373,11 @@ function Get-JezykKontaktStatus {
         $nazwa = Get-JezykOsoba ([string]$kontakt.displayName) ([string]$kontakt.givenName) ([string]$kontakt.sn)
         if (-not $nazwa) { $nazwa = [string]$kontakt.Name }
 
-        # Oba numery osobno, tak samo jak przy koncie. Nazwy atrybutow SUROWE, bo
-        # Get-ADObject nie ma mapy przyjaznych nazw, ktora jest w Get-ADUser -
-        # "OfficePhone" bylby dla niego nieznanym atrybutem.
+        # Oba numery osobno; nazwy atrybutow surowe.
         $telefonGlowny    = ([string]$kontakt.telephoneNumber).Trim()
         $telefonKomorkowy = ([string]$kontakt.mobile).Trim()
 
-        # BEZ Szczegolow: udany odczyt kontaktu to sukces, a Szczegoly zapalaja przy polu
-        # Status przycisk "!", ktory ma znaczyc wylacznie "cos nie dziala".
+        # Bez Szczegolow - udany odczyt nie zapala "!".
         return New-JezykResult -Login '' -Status 'Kontakt' `
                                -NazwaObiektu ([string]$kontakt.Name) `
                                -DisplayName $nazwa `
@@ -3494,55 +2407,8 @@ function Get-JezykKontaktStatus {
     }
 }
 
-<#
-.SYNOPSIS
-    Czy maszyna odpowiada na ping i pod jakim adresem IP? Odpowiedz brzmi tak, nie albo
-    "nie wiadomo" - i te trzy stany trzeba rozroznic.
-
-.DESCRIPTION
-    SCCM mowi, ktorej maszyny uzytkownik uzywal OSTATNIO. Nie mowi, czy ta maszyna stoi
-    teraz wlaczona - a to jest pierwsze pytanie osoby przy telefonie. Stad ta funkcja.
-
-    ROZWIAZANIE NAZWY IDZIE OSOBNO I MA WLASNY TERMIN, dokladnie jak w Test-JezykPortOtwarty.
-    To pulapka, ktora raz juz zamrozila okno Jezyka: odpytanie DNS potrafi trwac dowolnie
-    dlugo, a termin nalozony na sama operacje sieciowa nie obejmuje ani jednej milisekundy
-    rozwiazywania nazwy. Termin jest LACZNY dla obu krokow - wolajacego obchodzi calkowity
-    czas sondy, a nie to, ktory z krokow go zjadl.
-
-    Ping idzie NA GOTOWY ADRES, nie na nazwe: nazwa jest juz rozwiazana i nie ma czego
-    rozwiazywac drugi raz. Ping.Send termin honoruje, wiec nie potrzebuje obejscia przez
-    BeginConnect, ktorego wymagal TcpClient.
-
-    IPv4 MA PIERWSZENSTWO nad IPv6 - to adres, ktory operator rozpozna i ktory wpisze
-    w narzedziu zdalnego pulpitu.
-
-    TRZY STANY POLA Odpowiada, i zaden nie moze udawac drugiego:
-      $true  - maszyna odpowiedziala,
-      $false - nazwa rozpoznana, ale maszyna milczy,
-      $null  - NIE WIADOMO (zla nazwa, DNS nie odpowiedzial, brak czasu). Okno pokazuje
-               ten stan kolorem neutralnym: zielony i czerwony maja znaczyc fakt, a nie
-               brak wiedzy.
-
-    UWAGA, KTORA MUSI ZOSTAC PRZY TEJ FUNKCJI: milczenie na ping NIE JEST dowodem, ze
-    maszyna jest wylaczona. Zapora Windows blokuje ICMP w konfiguracji domyslnej wielu
-    firm. "Nie odpowiada" znaczy dokladnie tyle, ile mowi - nic wiecej.
-#>
-<#
-.SYNOPSIS
-    Adresy maszyny w kolejnosci, w ktorej warto je sondowac.
-
-.DESCRIPTION
-    PIERWSZY ADRES Z DNS-A TO NIE JEST ADRES MASZYNY. Maszyna z Ethernetem i Wi-Fi rejestruje
-    w DNS OBA adresy, a kolejnosc odpowiedzi nie jest ustalona - serwer podaje je na zmiane.
-    Branie "tego z brzegu" dawalo wiec raz adres karty podlaczonej, raz odlaczonej, i to przy
-    tej samej maszynie: adres w oknie skakal miedzy wyszukaniami, a razem z nim skakal adres
-    MAC, bo karte dopasowujemy do POKAZANEGO adresu. Rekord, ktorego DNS jeszcze nie sprzatnal,
-    dokladal do tego czerwone pole przy maszynie, ktora dziala.
-
-    IPv4 przed reszta, bo to jego pokazujemy i to on trafia do zdalnej konsoli. Lista jest
-    przycinana, zeby sondowanie miescilo sie w budzecie: maszyna z kilkunastoma adresami
-    (tunele, Hyper-V) zjadalaby go na adresach, ktorych i tak nie pokazemy.
-#>
+# Adresy maszyny w kolejnosci sondowania: IPv4 najpierw, bez powtorzen, najwyzej $Ile.
+# Nie "pierwszy z DNS" - kolejnosc rekordow nie jest ustalona, a MAC idzie za pokazanym adresem.
 function Get-JezykAdresyDoSondy {
     param($Adresy, [int]$Ile = 4)
 
@@ -3568,6 +2434,8 @@ function Get-JezykAdresyDoSondy {
     return ,$wybrane.ToArray()
 }
 
+# Sonda ICMP: Odpowiada ($true, $false, $null = nie wiadomo) i adres; DNS osobno, jeden termin.
+# Milczenie na ping nie dowodzi, ze maszyna jest wylaczona - zapora czesto blokuje ICMP.
 function Get-JezykPingKomputera {
     param([string]$Nazwa, [int]$LimitMs = 1500)
 
@@ -3598,9 +2466,7 @@ function Get-JezykPingKomputera {
         return $wynik
     }
 
-    # KANDYDACI, A NIE JEDEN ADRES Z BRZEGU - patrz Get-JezykAdresyDoSondy wyzej.
-    # Pusta kolejka to jedyny przypadek "DNS odpowiedzial, ale nie ma czego sondowac",
-    # wiec i bramka jest jedna: druga, na samej odpowiedzi DNS, sprawdzalaby to samo.
+    # Kandydaci, a nie jeden adres z brzegu (Get-JezykAdresyDoSondy).
     $kandydaci = Get-JezykAdresyDoSondy -Adresy $adresy
     if (@($kandydaci).Count -eq 0) {
         $wynik.Blad      = 'nazwa nierozpoznana'
@@ -3608,9 +2474,7 @@ function Get-JezykPingKomputera {
         return $wynik
     }
 
-    # ADRES ZAPISUJEMY NAWET GDY MASZYNA NIE ODPOWIE. DNS ja zna - to osobny fakt od tego,
-    # czy jest wlaczona, i wlasnie on jest potrzebny do polaczenia zdalnego. Gdy ktorys
-    # z kandydatow odpowie, ten wpis zastapi adres, ktory faktycznie odpowiedzial.
+    # Adres zapisany nawet bez odpowiedzi - DNS go zna; zastapi go adres, ktory odpowie.
     $wynik.Adres = $kandydaci[0]
 
     $pozostalo = $LimitMs - $zegar.ElapsedMilliseconds
@@ -3620,10 +2484,7 @@ function Get-JezykPingKomputera {
         return $wynik
     }
 
-    # BUDZET DZIELIMY NA KANDYDATOW, zeby caly pomiar nadal miescil sie w $LimitMs - okno
-    # czeka na wynik zadania i dwukrotnie dluzsze czekanie byloby widac. Zatrzymujemy sie
-    # na PIERWSZYM, ktory odpowie: to on jest adresem maszyny, a nie ten, ktory DNS podal
-    # jako pierwszy.
+    # Budzet dzielony na kandydatow; konczy pierwszy, ktory odpowie.
     $naAdres = [int][math]::Floor($pozostalo / @($kandydaci).Count)
     if ($naAdres -lt 1) { $naAdres = 1 }
 
@@ -3644,8 +2505,7 @@ function Get-JezykPingKomputera {
             }
         }
 
-        # $null znaczy tu "petla przeszla do konca i nikt nie odpowiedzial" - wyjatek nie
-        # doszedlby w to miejsce wcale, wiec niewiedza nadal nie miesza sie z odpowiedzia.
+        # Petla przeszla bez odpowiedzi - maszyna milczy ($false, nie $null).
         if ($null -eq $wynik.Odpowiada) {
             $wynik.Odpowiada = $false
             $wynik.Szczegoly = if (@($kandydaci).Count -gt 1) {
@@ -3667,28 +2527,8 @@ function Get-JezykPingKomputera {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Uruchamia zdalna konsole (CmRcViewer.exe z ConfigMgr) dla wskazanej maszyny.
-
-.DESCRIPTION
-    JEDYNE miejsce w calym narzedziu, ktore startuje osobny proces. Dotad Jezyk wychodzil
-    poza siebie wylacznie przez AD, DNS, ICMP i WMI - i kazda z tych drog wracala z danymi.
-    Ta nie wraca z niczym: oddaje maszyne pod cudzy program.
-
-    Sciezka pochodzi WYLACZNIE z $Script:Ustawienia i jest podawana argumentem, a nie
-    czytana tutaj - dzieki temu funkcja daje sie sprawdzic bez konfiguracji, a odpowiedz
-    na pytanie "co uruchamiamy" ma jedno zrodlo.
-
-    Zwraca ten sam ksztalt, co Unlock-JezykKonto (Udane / Komunikat / Szczegoly), bo widok
-    obsluguje oba tak samo: krotkie zdanie do pola Status, pelna tresc pod przycisk "!".
-    Funkcja NIE RZUCA WYJATKIEM - jak wszystko, czego wynik ma trafic do okna.
-
-.NOTES
-    Bez -Wait: Start-Process wraca zaraz po utworzeniu procesu, wiec watek interfejsu nie
-    czeka na zamkniecie konsoli i nie trzeba tu zadania w tle. Z -Wait okno stalo by przez
-    cala sesje zdalna.
-#>
+# Uruchamia zdalna konsole ConfigMgr dla maszyny - jedyne miejsce, ktore startuje osobny proces.
+# Sciezka z argumentu (z ustawien); nie rzuca; bez -Wait - okno nie czeka na koniec sesji.
 function Start-JezykRemoteControl {
     param([string]$Netbios, [string]$Sciezka)
 
@@ -3699,19 +2539,14 @@ function Start-JezykRemoteControl {
 
     $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
 
-    # BIALA LISTA NA NAZWIE MASZYNY. Nazwa idzie argumentem tworzonego procesu, czyli
-    # w miejsce, gdzie tekst przestaje byc tekstem - ta sama zapora, co przy odczycie
-    # komputera z AD i przy zapytaniu do SCCM. Do pola trafia z SCCM, wiec w praktyce
-    # jest poprawna; sprawdzamy ja mimo to, bo "w praktyce" nie jest gwarancja.
+    # Biala lista na nazwie maszyny - idzie argumentem tworzonego procesu.
     if (-not (Test-JezykNazwaKonta $Netbios)) {
         $wynik.Komunikat = 'Nie mam nazwy maszyny, z którą można się połączyć.'
         $wynik.Szczegoly = 'Wartość "{0}" nie wygląda na nazwę komputera, więc nie została nikomu podana.' -f $Netbios
         return $wynik
     }
 
-    # SCIEZKA SPRAWDZANA TAKZE TUTAJ, nie tylko przy sterowaniu przyciskiem. Ta sama zasada,
-    # co przy uprawnieniu do odblokowania: stan interfejsu da sie rozspojnic, a funkcja
-    # wykonujaca operacje ma bronic sie sama.
+    # Sciezka sprawdzana takze tutaj - funkcja wykonujaca operacje broni sie sama.
     if (-not $Sciezka) {
         $wynik.Komunikat = 'Nie ustawiono ścieżki do zdalnej konsoli.'
         $wynik.Szczegoly = 'Uzupełnij SciezkaRemoteControl w $Script:Ustawienia (plik Jezyk-1-Srodowisko.ps1) - pełną ścieżką do CmRcViewer.exe z konsoli ConfigMgr.'
@@ -3725,16 +2560,13 @@ function Start-JezykRemoteControl {
     }
 
     try {
-        # -ArgumentList TABLICA, nie sklejony napis: kazdy element idzie osobnym argumentem
-        # i nie ma miejsca, w ktorym spacja albo cudzyslow zmienialyby podzial.
+        # -ArgumentList tablica, nie sklejony napis.
         Start-Process -FilePath $Sciezka -ArgumentList @($Netbios) -ErrorAction Stop
         $wynik.Udane     = $true
         $wynik.Komunikat = 'Uruchomiono zdalną konsolę dla maszyny {0}.' -f $Netbios
     }
     catch {
-        # Tu laduje brakujacy plik, odmowa uruchomienia i martwy udzial sieciowy. Rozroznia
-        # je tresc wyjatku, ktora zostaje w calosci - skracanie zabieraloby dokladnie te
-        # informacje, po ktora sie do komunikatu siega.
+        # Brak pliku, odmowa, martwy udzial - rozroznia je pelna tresc wyjatku.
         $opis = Get-JezykOpisBledu $_ ('Uruchomienie zdalnej konsoli dla {0}' -f $Netbios)
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = '{0}{1}Ścieżka z konfiguracji: {2}' -f
@@ -3744,19 +2576,7 @@ function Start-JezykRemoteControl {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Sklada sciezke do udzialu administracyjnego (\\NAZWA\C$) albo mowi, czemu sie nie da.
-
-.DESCRIPTION
-    JEDNO MIEJSCE NA OBIE ZAPORY I NA SAMA SCIEZKE, bo siegaja po nia dwie drogi:
-    zestawienie sesji (Connect-JezykUdzialDysku) i otwarcie udzialu w Eksploratorze
-    (Open-JezykUdzialDysku). Dwie kopie tych warunkow rozjechalyby sie przy pierwszej
-    zmianie, a rozjazd bylby widoczny dopiero na maszynie o nietypowej nazwie.
-
-    PUSTA SCIEZKA W WYNIKU ZNACZY ODMOWE - komunikat i szczegoly sa wtedy niepuste,
-    wiec wolajacy ma co pokazac bez zgadywania, ktora zapora zadzialala.
-#>
+# Sciezka udzialu administracyjnego (\\NAZWA\C$) albo odmowa z komunikatem - jedno miejsce obu zapor.
 function Get-JezykSciezkaUdzialu {
     param([string]$Netbios, [string]$Litera)
 
@@ -3767,66 +2587,33 @@ function Get-JezykSciezkaUdzialu {
 
     $wynik = [pscustomobject]@{ Sciezka = ''; Komunikat = ''; Szczegoly = '' }
 
-    # Ta sama biala lista, co przy zdalnej konsoli - tyle ze nazwa wchodzi tu W SRODEK
-    # napisu podawanego jako sciezka, a nie osobnym elementem tablicy argumentow.
+    # Ta sama biala lista co przy zdalnej konsoli - nazwa wchodzi w srodek sciezki.
     if (-not (Test-JezykNazwaKonta $Netbios)) {
         $wynik.Komunikat = 'Nie mam nazwy maszyny, której dyski można otworzyć.'
         $wynik.Szczegoly = 'Wartość "{0}" nie wygląda na nazwę komputera, więc nie została nikomu podana.' -f $Netbios
         return $wynik
     }
 
-    # JEDEN ZNAK I NIC WIECEJ. Litera doklada sie do sciezki, wiec cokolwiek dluzszego jest
-    # proba dopisania do niej jeszcze czegos - razem z samym "C$", ktore wygladaloby
-    # niewinnie, a dawaloby "\\NAZWA\C$$".
+    # Dokladnie jedna litera - "C$" dalby "\\NAZWA\C$$".
     if ($Litera -notmatch '^[A-Za-z]$') {
         $wynik.Komunikat = 'To nie jest litera dysku.'
         $wynik.Szczegoly = 'Udział otwiera się po JEDNEJ literze dysku (np. C), a dostałem: "{0}"' -f $Litera
         return $wynik
     }
 
-    # Sciezka skladana DO ZMIENNEJ, a nie wprost w argumencie: w wywolaniu metody .NET
-    # przecinek nalezy do listy argumentow metody, a nie do tablicy dla operatora -f.
+    # Uwaga: sciezka do zmiennej - w argumencie metody przecinek nalezy do metody, nie do -f.
     $wynik.Sciezka = '\\{0}\{1}$' -f $Netbios, $Litera.ToUpper()
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Otwiera udzial administracyjny wskazanej maszyny (\\NAZWA\C$) w Eksploratorze plikow.
-
-.DESCRIPTION
-    NIE URUCHAMIAMY PROGRAMU - ODDAJEMY SCIEZKE POWLOCE. Start-Process dostaje sama sciezke
-    UNC, wiec otwiera ja ten program, ktory w systemie obsluguje katalogi - dokladnie tak,
-    jak wpisanie jej w pasku adresu Eksploratora. Droga przez explorer.exe bylaby czyms
-    INNYM: sama nazwa pliku jest szukana po PATH maszyny operatora (dlatego odrzuca ja
-    Test-JezykSciezkaProgramu), a pelna sciezka wymagalaby albo odpytania systemu o katalog
-    Windows, albo kolejnego ustawienia - a udzialy administracyjne system zaklada sam i nie
-    ma tu czego konfigurowac. Stad tez brak -ArgumentList: nie ma programu, ktoremu mozna
-    by cokolwiek podac.
-
-    Zwraca ten sam ksztalt, co Start-JezykRemoteControl (Udane / Komunikat / Szczegoly),
-    i tak samo NIE RZUCA WYJATKIEM - wynik ma trafic do okna.
-
-    SESJA STOI JUZ PRZED TYM WYWOLANIEM. Laczy sie z udzialem Connect-JezykUdzialDysku -
-    w tle albo, gdy trzeba poswiadczen, oknem systemowym - wiec ShellExecute ma tu do
-    zrobienia tylko tyle, co wpisanie gotowej sciezki w pasku adresu: wraca od razu.
-    Dopoki laczenie szlo tedy, to WLASNIE TO WYWOLANIE trzymalo watek interfejsu przez
-    cala rozmowe z serwerem, a przy braku uprawnien konczylo sie odmowa - bo okno
-    poswiadczen pokazuje Eksplorator przy swojej nawigacji, a nie ShellExecute.
-
-.NOTES
-    Bez Test-Path przed otwarciem: na martwym udziale sieciowym potrafi on zawiesic watek
-    interfejsu, a nieistniejaca sciezka i tak konczy sie wyjatkiem albo komunikatem samego
-    Eksploratora. Bez -Wait z tego samego powodu, co przy zdalnej konsoli.
-#>
+# Otwiera udzial w Eksploratorze: sama sciezka dla powloki, bez explorer.exe i bez -ArgumentList.
+# Sesja stoi juz wczesniej (Connect-JezykUdzialDysku), wiec wywolanie wraca od razu (README: Przycisk "Dyski").
 function Open-JezykUdzialDysku {
     param([string]$Netbios, [string]$Litera)
 
     $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
 
-    # Obie zapory i sama sciezka stoja w JEDNYM miejscu - patrz Get-JezykSciezkaUdzialu.
-    # Tamtedy chodzi takze zestawienie sesji, wiec otwierana jest dokladnie ta sciezka,
-    # z ktora system sie przed chwila polaczyl.
+    # Obie zapory i sciezka z Get-JezykSciezkaUdzialu - ta sama, z ktora system sie polaczyl.
     $adres = Get-JezykSciezkaUdzialu -Netbios $Netbios -Litera $Litera
     if (-not $adres.Sciezka) {
         $wynik.Komunikat = $adres.Komunikat
@@ -3842,8 +2629,7 @@ function Open-JezykUdzialDysku {
         $wynik.Komunikat = 'Otwarto udział {0}.' -f $sciezka
     }
     catch {
-        # Tu laduje brak uprawnien do udzialu, wylaczone udzialy administracyjne i maszyna,
-        # ktora nie odpowiada. Rozroznia je tresc wyjatku i zostaje ona w calosci.
+        # Brak uprawnien, wylaczone udzialy, milczaca maszyna - pelna tresc wyjatku.
         $opis = Get-JezykOpisBledu $_ ('Otwarcie udziału {0}' -f $sciezka)
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = $opis.Szczegoly
@@ -3852,29 +2638,8 @@ function Open-JezykUdzialDysku {
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Tlumaczy kod od WNetAddConnection3 na stan, ktorym okno umie pokierowac.
-
-.DESCRIPTION
-    PO KODZIE, A NIE PO TRESCI. Tresc komunikatu systemowego zalezy od jezyka systemu,
-    wiec dopasowanie do slow "odmowa dostepu" psuloby sie na kazdej instalacji w innym
-    jezyku - i to po cichu, bo warunek po prostu nigdy by nie pasowal.
-
-    CZTERY STANY, BO CZTERY ROZNE ZAKONCZENIA:
-      Ok            - sesja stoi, udzial mozna otwierac,
-      Poswiadczenia - to konto nie wystarcza, ale INNE moze wystarczyc: wolno zapytac,
-      Anulowano     - operator zamknal okno poswiadczen; to nie jest blad,
-      Blad          - reszta, w tym rzeczy, ktorych pytaniem o konto sie nie naprawi.
-
-    1219 JEST WLASNIE TAKA RZECZA i dlatego nie stoi przy poswiadczeniach: Windows nie
-    utrzymuje dwoch sesji do jednego serwera na roznych kontach, wiec okno poswiadczen
-    pytaloby o dane, ktorych i tak nie da sie uzyc. Recznie wpisana sciezka konczy sie
-    w tym miejscu tak samo.
-
-    KOD -1 NIE JEST SYSTEMOWY - oddaje go Invoke-JezykPolaczenieUdzialu, gdy nie ma czym
-    zapytac (nie powstal typ z funkcjami natywnymi). Kody systemowe sa nieujemne.
-#>
+# Kod z WNetAddConnection3 na stan: Ok, Poswiadczenia, Anulowano albo Blad - po kodzie, nie po tresci.
+# 1219 to Blad: druga sesja do tego samego serwera na inne konto i tak nie powstanie.
 function Get-JezykStanPolaczeniaUdzialu {
     param([int]$Kod)
 
@@ -3885,9 +2650,7 @@ function Get-JezykStanPolaczeniaUdzialu {
         return $wynik
     }
 
-    # ERROR_ACCESS_DENIED, ERROR_INVALID_PASSWORD, ERROR_LOGON_FAILURE - trzy odpowiedzi
-    # znaczace to samo: TYM kontem nie wejdziesz. Udzialy administracyjne wymagaja praw
-    # administratora NA MASZYNIE DOCELOWEJ, wiec to jest zwykla, spodziewana odpowiedz.
+    # 5, 86, 1326 - tym kontem nie wejdziesz (udzialy wymagaja administratora na maszynie).
     if ($Kod -in @(5, 86, 1326)) {
         $wynik.Stan      = 'Poswiadczenia'
         $wynik.Komunikat = 'Do tego udziału potrzeba konta z prawami administratora na tej maszynie.'
@@ -3895,15 +2658,14 @@ function Get-JezykStanPolaczeniaUdzialu {
         return $wynik
     }
 
-    # ERROR_CANCELLED - operator zamknal okno poswiadczen. Rezygnacja nie jest bledem
-    # i ma sie skonczyc cisza, tak samo jak zamkniecie okna wyboru litery.
+    # 1223 - operator zamknal okno poswiadczen; rezygnacja to nie blad.
     if ($Kod -eq 1223) {
         $wynik.Stan      = 'Anulowano'
         $wynik.Komunikat = 'Nie podano poświadczeń.'
         return $wynik
     }
 
-    # ERROR_SESSION_CREDENTIAL_CONFLICT - patrz opis wyzej: pytanie o konto tu nie pomoze.
+    # 1219 - pytanie o konto tu nie pomoze.
     if ($Kod -eq 1219) {
         $wynik.Komunikat = 'Jest już połączenie z tą maszyną na inne konto.'
         $wynik.Szczegoly = 'Windows utrzymuje do jednego serwera tylko jedną sesję na jedno konto (kod 1219). ' +
@@ -3911,8 +2673,7 @@ function Get-JezykStanPolaczeniaUdzialu {
         return $wynik
     }
 
-    # ERROR_BAD_NETPATH i ERROR_BAD_NET_NAME - maszyna milczy albo udzialu na niej nie ma.
-    # Udzialy administracyjne da sie wylaczyc politykami i wtedy wlasnie to tu przychodzi.
+    # 53, 67 - maszyna milczy albo udzialu nie ma (bywa wylaczony politykami).
     if ($Kod -in @(53, 67)) {
         $wynik.Komunikat = 'Nie znaleziono tej maszyny albo udziału w sieci.'
         $wynik.Szczegoly = 'Połączenie z udziałem zakończyło się kodem {0}. Maszyna może nie odpowiadać, ' -f $Kod
@@ -3927,43 +2688,19 @@ function Get-JezykStanPolaczeniaUdzialu {
         return $wynik
     }
 
-    # KOD ZOSTAJE W TRESCI. Nieznany numer jest jedyna rzecza, ktora o takiej awarii
-    # wiadomo - bez niego pod "!" stalby komunikat nieodrozniajacy jej od zadnej innej.
+    # Nieznany kod zostaje w tresci - to jedyne, co o awarii wiadomo.
     $wynik.Komunikat = 'Nie udało się połączyć z udziałem.'
     $wynik.Szczegoly = 'Połączenie z udziałem zakończyło się kodem systemowym {0}.' -f $Kod
     return $wynik
 }
 
-<#
-.SYNOPSIS
-    Zestawia sesje z udzialem administracyjnym maszyny. NIE otwiera go w Eksploratorze.
-
-.DESCRIPTION
-    DWA KROKI ZAMIAST JEDNEGO - to jest sedno calej zmiany. Dotad udzial otwieralo wprost
-    Open-JezykUdzialDysku, czyli ShellExecute na watku interfejsu: rozmowa z serwerem szla
-    tamtedy (okno stalo nieruchomo), a przy niewystarczajacych prawach wracala odmowa.
-    Okno poswiadczen, ktore widac po recznym wpisaniu sciezki, pokazuje przy swojej
-    nawigacji EKSPLORATOR - z obcego procesu nie ma go skad wziac.
-
-    BEZ -Interaktywnie wolno to wykonac W TLE: nic nie rysuje, wiec okno chodzi przez caly
-    czas laczenia. Z -Interaktywnie rysuje SYSTEMOWE OKNO POSWIADCZEN i dlatego musi isc
-    z watku interfejsu, z uchwytem okna glownego w roli rodzica - inaczej okno potrafi
-    wstac za Jezykiem i wyglada, jakby program po prostu stanal.
-
-    Polaczenie jest BEZ LITERY DYSKU (lpLocalName null): zyje w sesji logowania operatora,
-    wiec Eksplorator - osobny proces tej samej sesji - korzysta z niego bez pytania
-    o cokolwiek, a w oknie "Ten komputer" nie przybywa zadnego dysku.
-
-    NIE RZUCA WYJATKIEM, jak cala ta warstwa: wynik ma trafic do okna.
-#>
+# Zestawia sesje z udzialem (bez litery dysku); nie otwiera go. Bez -Interaktywnie - w tle;
+# z -Interaktywnie - okno poswiadczen, wylacznie z watku interfejsu i z uchwytem okna glownego.
 function Connect-JezykUdzialDysku {
     param([string]$Netbios, [string]$Litera,
           [IntPtr]$Uchwyt = [IntPtr]::Zero, [switch]$Interaktywnie)
 
-    # MASZYNA I LITERA WRACAJA W WYNIKU, a nie tylko zlozona z nich sciezka. Odpowiedz
-    # "potrzeba poswiadczen" znaczy, ze o to samo trzeba zapytac jeszcze raz - z watku
-    # interfejsu i oknem systemowym - a wtedy wolajacy ma czym, nie rozbierajac sciezki
-    # z powrotem na czesci ani nie odkladajac obok niej wlasnego stanu.
+    # Maszyna i litera wracaja w wyniku - na wypadek drugiego pytania, juz z oknem poswiadczen.
     $maszyna = ([string]$Netbios).Trim()
     $dysk    = ([string]$Litera).Trim().ToUpper()
 
@@ -3975,9 +2712,7 @@ function Connect-JezykUdzialDysku {
                                   Komunikat = $adres.Komunikat; Szczegoly = $adres.Szczegoly }
     }
 
-    # CONNECT_INTERACTIVE (0x08) pozwala systemowi zapytac o konto, CONNECT_PROMPT (0x10)
-    # kaze pytac TAKZE wtedy, gdy ma juz cos zapamietanego - bez niego zapamietane, a nic
-    # niedajace poswiadczenia zamykalyby te droge bez jednego slowa.
+    # 0x08 CONNECT_INTERACTIVE + 0x10 CONNECT_PROMPT - pytaj takze mimo zapamietanych poswiadczen.
     $flagi = if ($Interaktywnie) { 0x18 } else { 0 }
 
     $kod  = Invoke-JezykPolaczenieUdzialu -Sciezka $adres.Sciezka -Uchwyt $Uchwyt -Flagi $flagi
@@ -3988,12 +2723,8 @@ function Connect-JezykUdzialDysku {
                        Komunikat = $opis.Komunikat; Szczegoly = $opis.Szczegoly }
 }
 
-# Sprawdza komputer w AD po nazwie NetBIOS. Widok komputera jest celowo krotszy od widoku
-# konta - odpowiada na trzy pytania: gdzie w drzewie AD lezy ten komputer, kto ostatnio
-# z niego korzystal (to idzie w tlo, do SCCM) i kto go do AD dodal.
-# Nazwa NetBIOS jest dla Get-ADComputer prawidlowa tozsamoscia, wiec wystarczy -Identity;
-# AD dopasowuje ja przy tym BEZ rozrozniania wielkosci liter, wiec literowka w wielkosci
-# liter nie wymaga tu zadnego kodu - wystarczy pokazac pisownie, ktora oddalo AD.
+# Komputer w AD po nazwie NetBIOS (bez wielkosci liter): katalog, wlasciciel obiektu, stan konta, data.
+# Funkcja kontrolna - zostaje ostatnia w pliku.
 function Get-JezykComputerStatus {
     param([string]$Netbios)
 
@@ -4018,39 +2749,15 @@ function Get-JezykComputerStatus {
 
         $lokalizacja = Get-JezykKatalogZeSciezki $komputer.CanonicalName
 
-        # AD nie ma atrybutu "tworca". Wlasciciel obiektu to konto, ktore go zalozylo -
-        # z jednym zastrzezeniem: gdy zakladal go czlonek Administratorow domeny, AD wpisuje
-        # tu GRUPE, a nie osobe. Dlatego obok podpisu idzie flaga, czy to w ogole osoba.
-        # mS-DS-CreatorSID celowo NIE jest czytany: wypelnia go wylacznie dolaczenie maszyny
-        # do domeny przez zwyklego uzytkownika, a tutaj wszystkie zaklada administrator.
-        #
-        # Owner NIE JEST polem .NET: ActiveDirectorySecurity ma wylacznie metode GetOwner(),
-        # a wlasnosc Owner dokleja PowerShell - i to ona tlumaczy SID na nazwe. Tlumaczenie
-        # nie zawsze wychodzi: konto skasowane, z drugiego lasu albo zza relacji zaufania,
-        # ktora akurat nie odpowiada. Brak prawa do samego atrybutu wyglada inaczej (atrybut
-        # nie przychodzi wcale), ale konczy sie tym samym - pustym wlascicielem, czyli
-        # "nie wiadomo", stanem, ktory wynik i tak juz opisuje.
-        #
-        # OSLONA JEST UBEZPIECZENIEM, a nie reakcja na znany blad. Pod pwsh 7 sprawdzone:
-        # bledu wlasnosci doklejanej przez siebie PowerShell nie wypuszcza - odklada go
-        # do $Error i oddaje $null, wiec catch nie ma tu czego lapac. Produkt chodzi jednak
-        # WYLACZNIE na Windows PowerShell 5.1, ktorego z maszyny deweloperskiej sprawdzic
-        # sie nie da - a gdyby 5.1 jednak wyjatek wypuscil, polecialby przez CALE
-        # wyszukiwanie komputera i zamienil poprawny wynik w blad. Dlatego oslona obejmuje
-        # DOKLADNIE JEDNO wyrazenie: nie ma w niej kodu, ktorego usterke moglaby zagluszyc.
+        # Tworca = wlasciciel obiektu (nTSecurityDescriptor.Owner); przy administratorze AD wpisuje GRUPE.
+        # Try obejmuje dokladnie jedno wyrazenie - ubezpieczenie na wypadek wyjatku w Windows PowerShell 5.1.
         $wlasciciel = ''
         try   { $wlasciciel = [string]$komputer.nTSecurityDescriptor.Owner }
         catch { $wlasciciel = '' }
 
         $podpis = Get-JezykPodpisWlasciciela -Wlasciciel $wlasciciel -Serwer $Script:Config.Domena
 
-        # Konto komputera wylaczone w AD to dokladnie to, co "Centrum administracyjne Active
-        # Directory" pokazuje wyszarzonym monitorkiem z kropka i slowem "Wyłączone". Nazwa
-        # obiektu sie przy tym NIE zmienia, wiec z samego wyszukiwania tego nie widac -
-        # a maszyna z wylaczonym kontem nie zaloguje sie do domeny.
-        # Enabled jest wlasnoscia domyslna Get-ADComputer, wiec nie trzeba jej zamawiac
-        # w -Properties. Wartosc logiczna zostaje SUROWA, tak jak Enabled przy koncie -
-        # $null (atrybut nie przyszedl) to "nie wiadomo", a nie "wylaczone".
+        # Stan konta komputera surowo: $null (nie przyszedl) to "nie wiadomo", nie "wylaczone".
         $wlaczone = $null
         if ($null -ne $komputer.Enabled) { $wlaczone = [bool]$komputer.Enabled }
 
@@ -4068,9 +2775,7 @@ function Get-JezykComputerStatus {
             TworcaOsoba = $podpis.Osoba
             Wlaczone    = $wlaczone
             Utworzono   = $utworzono
-            # Nazwa Z AD, a nie ta wpisana: AD dopasowuje nazwe NetBIOS bez rozrozniania
-            # wielkosci liter, wiec "jez-0123" znajduje JEZ-0123 - i to pisownia z AD ma
-            # trafic przed oczy operatora.
+            # Komunikat z nazwa z AD - AD dopasowuje bez wielkosci liter, pokazujemy jego pisownie.
             Message     = ('Znaleziono komputer {0} w domenie {1}.' -f $komputer.Name, $Script:Config.Domena)
         }
     }

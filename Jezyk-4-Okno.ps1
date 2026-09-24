@@ -1,107 +1,51 @@
-﻿# Jezyk-4-Okno - siatka okna, budowa kontrolek WinForms i zadania w tle.
-# TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM - oslania pierwsza instrukcje przed
-# zdublowanym znacznikiem BOM. Powod opisany w Kod-Jezyk.ps1.
+﻿# Jezyk-4-Okno - siatka okna, sprite jeza, rysowanie, budowa okna i zadania w tle.
+# Linia 1 musi zostac zwyklym komentarzem - oslania pierwsza instrukcje przed zdublowanym BOM.
 
 # Wlasny trap w kazdej czesci: trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
 
 
 #region SEKCJA 4 - OKNO
-# Gorny wiersz (Domena / Podaj / pole / Szukaj) jest wspolny, a to, co pod nim, siedzi
-# w dwoch panelach: pnlKonto i pnlKomputer. Przelaczenie trybu to pokazanie jednego
-# panelu i schowanie drugiego, a nie przestawianie kilkunastu wspolrzednych.
+# Gorny wiersz wspolny, reszta w dwoch panelach (pnlKonto, pnlKomputer) - tryb pokazuje jeden.
 
 # --- RYTM SIATKI ---------------------------------------------------------------------
-# ZADNA wspolrzedna kontrolki nie jest wpisana recznie - wszystkie wyliczaja sie z ponizszych
-# stalych. Zmiana odstepow to zmiana jednej liczby zamiast przeliczania osiemnastu na piechote.
-# Odstepy BYLY rozrzutne celowo: pola biora wysokosc z czcionki, wiec przy skalowaniu DPI
-# 125-150% rosna, a wspolrzedne zostaja - zapas chronil wtedy przed nachodzeniem wierszy.
-# Cena byla jednak stala: przy zwyklej czcionce ten sam zapas zostawal miedzy polami jako
-# pustka, ktorej nikt nie potrzebowal. Dlatego skok wiersza NIE JEST juz wpisana liczba,
-# tylko wynikiem pomiaru pola (patrz $Script:SkokWiersza nizej) - rosnie wtedy, gdy rosnie
-# czcionka, i tylko wtedy.
+# Wszystkie wspolrzedne wynikaja z ponizszych stalych i z pomiaru pola, nic nie jest wpisane
+# recznie (README: Siatka okna liczy sie sama).
 
-# Odstep od paska tytulu do pierwszej kontrolki. WLASNA LICZBA, a nie polowa pierwszego
-# wiersza: wiersz srodkuje sie wokol stalej wspolrzednej, a wysokosc listy rosnie z czcionka
-# systemu, wiec margines wychodzacy jako "srodek minus polowa kontrolki" zwezal sie sam -
-# przy 100% DPI zostawalo z niego osiem pikseli, przy "Rozmiarze tekstu" 150% trzy. Srodek
-# wiersza liczy dzis Get-JezykSrodekWiersza WLASNIE Z TEGO MARGINESU i z pomiaru kontrolki,
-# ktora w tym wierszu stoi.
-#
-# Reszty bialego miejsca nad napisem "Domena" nie da sie zabrac: to jeszcze okolo czterech
-# pikseli wewnetrznego marginesu listy i etykiety, ktory rysuje Windows.
+# Odstep od paska tytulu do pierwszej kontrolki - wlasna liczba, nie reszta arytmetyki srodka.
 $Script:MarginesGorny = 2
 
-# Odstep od DOLU pola do etykiety nastepnego wiersza - jedyna liczba opisujaca gestosc
-# siatki. Cala reszta skoku to miejsce, ktore zajmuja sama etykieta i samo pole. Stoi tak
-# wysoko, bo liczy sie z niej takze pietro panelu ponizej.
+# Odstep od dolu pola do etykiety nastepnego wiersza - jedyna liczba gestosci siatki.
 $Script:PrzerwaWierszy     = 8
 
 # Wiersz z wyborem domeny stoi nad wszystkim, wiec reszta okna schodzi o jego wysokosc.
 $Script:PasekDomeny   = 30
 
-# ZADNEGO WLASNEGO PASA NA WSKAZNIK PRACY. Pasek postepu mial tu kiedys swoje dziesiec
-# pikseli pod wierszem wyszukiwania; zastapil go jez, ktory stoi w miejscu JUZ PUSTYM -
-# w prawej, niezajetej czesci wiersza domeny (patrz sekcja JEZ nizej). Dlatego panele
-# wracaja do wspolrzednych sprzed paska i okno jest o te dziesiec pikseli nizsze.
-#
-# TA WARTOSC TO WYLACZNIE PUNKT STARTOWY, policzony dla pola o zwyklej wysokosci 22 px -
-# tak samo jak $Script:SkokWiersza nizej. New-JezykForm przelicza ja z FAKTYCZNEGO pomiaru
-# (Get-JezykPietroBezListy), zanim postawi pierwsza kontrolke: gorny margines jest stala,
-# a oba wiersze nad panelem rosna z czcionka, wiec pietro musi jechac razem z nimi.
+# Pietro paneli bez listy wyboru - wartosc startowa dla pola 22 px; New-JezykForm liczy ja z pomiaru.
 $Script:PanelBezListy = $Script:MarginesGorny + $Script:PasekDomeny + 22 + $Script:PrzerwaWierszy
 
-# Miejsce na sama liste wyboru kont - wiersz, ktory pokazuje sie wylacznie przy wyszukiwaniu
-# czesciowym.
+# Wysokosc wiersza listy wyboru kont (tylko przy wyszukiwaniu czesciowym).
 $Script:PasListyWyboru = 30
-# Pietro z lista wyboru LICZONE OD PIETRA BEZ NIEJ: roznica to miejsce na sama liste,
-# wiec zmiana jednego z tych dwoch nie moze zostawic drugiego w tyle.
+# Pietro z lista liczone od pietra bez niej - roznica to sama lista.
 $Script:PanelZListą   = $Script:PanelBezListy + $Script:PasListyWyboru
 
 $Script:PierwszyWiersz     = 92    # y etykiety pierwszego wiersza wewnatrz panelu konta
 $Script:OdstepPodEtykieta  = 20    # ile nizej od etykiety lezy jej pole
 
-# Odleglosc miedzy kolejnymi wierszami. LICZONA Z WYSOKOSCI POLA, a nie wpisana na sztywno:
-# wiersze stoja na stalych wspolrzednych, a pole bierze wysokosc z czcionki okna, ktora
-# Windows powieksza przy skalowaniu ekranu i przy ustawieniu "Rozmiar tekstu". Liczba
-# wpisana recznie musialaby wiec obsluzyc najwieksza czcionke - i przy zwyklej zostawiala
-# miedzy wierszami dwa razy wiecej pustki, niz trzeba.
-#
-# TA WARTOSC TO WYLACZNIE PUNKT STARTOWY, policzony dla pola o zwyklej wysokosci 22 px.
-# New-JezykForm przelicza ja z FAKTYCZNEGO pomiaru, zanim postawi pierwsza kontrolke.
+# Skok wiersza (etykieta, pole, przerwa) - start dla pola 22 px; New-JezykForm liczy go z pomiaru.
 $Script:SkokWiersza        = $Script:OdstepPodEtykieta + 22 + $Script:PrzerwaWierszy
 
-# Pusty pas, ktory pudelko znacznika BEZ TEKSTU ma za kwadratem - WinForms dokleja za nim
-# piksel odstepu i piksel zapasu. Napis znacznika liczy sie od KONCA KWADRATU (patrz
-# Get-JezykOdstepZnacznika), wiec ten pas trzeba odjac - inaczej kazdy napis stalby o dwa
-# piksele dalej, niz mowi jego odstep.
-#
-# Pudelka moga przez to na siebie zachodzic, gdy spacja jest wezsza od pasa. To bezpieczne:
-# pas jest pusty, znacznik lezy wyzej (AddRange dodaje go przed etykieta), a etykieta
-# zaczyna tekst dopiero za wlasnym marginesem, szerszym niz te 2 px.
+# Pusty pas za kwadratem znacznika bez tekstu (WinForms dokleja 2 px) - odejmowany od odstepu napisu.
 $Script:PasZaZnacznikiem   = 2
 
-# O ILE WYKRZYKNIK COFA SIE OD PRAWEJ KRAWEDZI POLA. Prostokat pola konczy sie dalej niz
-# jego WIDOCZNA ramka: przy Fixed3D ostatnia kolumna to jasny refleks krawedzi 3D, ktory
-# na tle okna znika, a przy FixedSingle kreska jest wprawdzie widoczna, ale przycisk "!"
-# ma wlasna ramke 2 px i zlewa sie z nia w jeden gruby slupek. Kwadrat konczacy sie
-# dokladnie na Left + Width wygladal przez to w obu motywach na wysuniety poza pole.
+# O ile "!" cofa sie od prawej krawedzi pola - widoczna ramka konczy sie wczesniej niz prostokat.
 $Script:CofniecieWykrzyknika = 1
 
-# O ile szerszy od systemowego przycisku listy rozwijanej ma byc kwadrat, ktorym go
-# zakrywamy. Szerokosc systemowego liczy WinForms i przy paru pikselach zapasu kryjemy
-# kawalek ciemnego pola wiecej - czego nie widac. Kwadrat WEZSZY zostawilby po bokach
-# jasne paski, czyli dokladnie to, co mial zakryc.
+# O ile kwadrat kryjacy przycisk listy jest szerszy od systemowego (wezszy zostawilby jasne paski).
 $Script:ZapasStrzalkiListy = 2
 
-# Najdluzszy napis, jaki moze pokazac etykieta werdyktu. Potrzebny do ZMIERZENIA jej
-# szerokosci: po zdjeciu AutoSize szerokosc dobrana do biezacego napisu ucielaby dluzszy.
-#
-# MUSI BYC FAKTYCZNIE NAJDLUZSZY ZE WSZYSTKICH tekstow werdyktu (patrz Set-JezykResult
-# w Jezyk-3-Widok.ps1) - to juz raz zawiodlo: dopisanie werdyktu dla kontaktu ("Pozycja
-# typu Kontakt - to nie jest konto", 41 znakow) bez uaktualnienia tej stalej ucinalo jego
-# tekst, bo byla wtedy zmierzona na krotszym "Konto zablokowane i wyłączone" (30 znakow).
-# Przy KAZDYM nowym tekscie werdyktu sprawdz, czy nie jest od tego dluzszy.
+# Najdluzszy napis werdyktu - mierzy szerokosc etykiety.
+# Uwaga: przy kazdym nowym tekscie werdyktu (Set-JezykResult) sprawdz, czy nie jest dluzszy.
 $Script:NajdluzszyWerdykt  = 'Pozycja typu Kontakt - to nie jest konto'
 
 # Srodek wiersza werdyktu - wspolny dla kwadratu, napisu i przycisku odblokowania.
@@ -113,36 +57,16 @@ $Script:SzerokoscOkna = 620
 $Script:PrzerwaKolumn = 28
 
 $Script:SzerokoscPelna = $Script:SzerokoscOkna - 2 * $Script:Margines
-# Dzielenie calkowite: nieparzysta reszta idzie na przerwe, nie na jedna z kolumn -
-# bo to wlasnie roznica szerokosci kolumn rzuca sie w oczy.
+# Nieparzysta reszta ma isc na przerwe, nie na jedna z kolumn.
 $Script:SzerokoscKolumny = [int](($Script:SzerokoscPelna - $Script:PrzerwaKolumn) / 2)
 $Script:DrugaKolumna     = $Script:Margines + $Script:SzerokoscKolumny + $Script:PrzerwaKolumn
 
 # --- JEZ, KTORY MOWI, ZE OKNO PRACUJE ------------------------------------------------
-# Wskaznik pracy okna. Stal tu kiedys pasek Marquee we wlasnym pasie pod wierszem
-# wyszukiwania; jez zajmuje miejsce, ktore BYLO JUZ PUSTE - prawa, niezajeta czesc
-# wiersza domeny, dokladnie nad polem wyszukiwania i przyciskiem "Szukaj". Dlatego
-# nie kosztowal ani jednej wspolrzednej i nie zabral miejsca zadnemu sasiadowi.
-#
-# RUSZA SIE NAPRAWDE TYLKO PRZY WYSZUKIWANIU PO NUMERZE TELEFONU. Klatki odmierza zegar
-# na watku interfejsu, a przy zapytaniu synchronicznym ten watek stoi w zapytaniu - jez
-# jest wtedy widoczny, ale NIERUCHOMY, dokladnie jak wczesniej pasek. Numer telefonu
-# jest jedynym zapytaniem, ktore zeszlo do przestrzeni w tle. Nie obiecuj animacji tam,
-# gdzie jej nie bedzie.
+# Wskaznik pracy w pustej prawej czesci wiersza domeny. Rusza sie naprawde tylko przy szukaniu
+# po numerze - przy zapytaniu synchronicznym stoi (README: Praca w tle).
 
-# Sprite wyprowadzony z Ikona-Jezyk.ico (wariant 24x24) RAZ, przy pisaniu kodu: odsianie
-# granatowego tla i zielonego glifu terminala, zalanie przezroczystosci od krawedzi (zeby
-# oko nie wypadlo jako dziura), przyciecie do ramki i cztery odcienie po jasnosci.
-#
-# PROGRAM NIGDY NIE CZYTA .ico NA POTRZEBY ANIMACJI - mapa siedzi tutaj, wiec brak pliku
-# ikony nadal niczego nie psuje, tak samo jak przed ta zmiana.
-#
-# Jez patrzy w prawo, wiec biegnie w prawo i nie trzeba go odbijac. Znak '.' znaczy
-# "nie rysuj nic" - tlo okna ma w tym miejscu przeswitywac.
-#
-# NAJJASNIEJSZY ODCIEN TO '*', A NIE 'O'. Klucze hashtable w PowerShellu NIE ROZROZNIAJA
-# WIELKOSCI LITER, wiec 'o' i 'O' to ten sam klucz i paleta nie dala sie w ogole wczytac
-# ("Duplicate keys"). Zapora: Weryfikacja/testy-uklad.ps1.
+# Sprite jeza wyprowadzony raz z Ikona-Jezyk.ico; '.' = przezroczyste (programu .ico nie czyta).
+# Uwaga: najjasniejszy odcien to '*', nie 'O' - klucze @{} nie rozrozniaja wielkosci liter.
 $Script:MapaJeza = @(
     '.........#.##........'
     '......########.......'
@@ -164,23 +88,8 @@ $Script:MapaJeza = @(
     '.......###..###.#....'
 )
 
-# KOLORY TU, PEDZLE NIE - i to nie jest kosmetyka. Pedzel to zasob GDI zakladany przy samym
-# wczytaniu pliku, a ten plik dolacza kropka takze zestaw weryfikacyjny, ktory GDI nie ma:
-# pedzel na poziomie skryptu wywrocilby CALY zestaw, zanim ruszyloby pierwsze sprawdzenie.
-# Color::FromArgb jest czysta struktura, wiec paleta moze tu stac. Pedzle powstaja leniwie
-# w Set-JezykRysunekJeza, ktore wola wylacznie procedura Paint - a tej zestaw nie wykonuje
-# nigdy.
-# JABLKO, ktore jez dostaje po udanym wyszukaniu. Nakladka na sylwetke, a NIE osobna
-# mapa osiemnastowierszowa: druga kopia jeza rozjechalaby sie z pierwsza przy pierwszej
-# zmianie rysunku. Ogonek bierze '#', a polysk '*' - oba kolory juz sa, wiec paleta rosnie
-# tylko o czerwien, jej cien i listek.
-#
-# MIERZ JE W PIKSELACH EKRANU, A NIE W KRATKACH MAPY. Komorka sprite'u ma przy 100% DPI
-# dokladnie JEDEN piksel (pas jest wysoki na tyle, co lista domen), wiec caly jez zajmuje
-# 21 na 18 pikseli. Pierwsze jablko (6 na 7 kratek) bylo w oknie prawie niewidoczne, a nawet
-# po powiekszeniu do 8 na 9 wciaz bylo za male. DZIESIEC NA DZIESIEC TO GRANICA, NIE
-# PRZYPADEK: kolumny 1-10 (z 21) i wiersze 0-9 (z 18) siedza CALE przed kolumna 11, w ktorej
-# zaczyna sie pysk - jablko szersze albo wyzsze zaczeloby zjadac oko i policzek jeza.
+# Kolory tu, pedzle nie - pedzel GDI przy wczytaniu pliku wywrocilby zestaw weryfikacyjny.
+# Jablko: nakladka 10x10 na sylwetke - wieksze zjadaloby oko i policzek (README: Praca w tle).
 $Script:MapaJablka = @(
     '....#.....'
     '..zzz#....'
@@ -217,42 +126,20 @@ $Script:TaktJeza = 60        # ms miedzy klatkami, czyli okolo 16 klatek na seku
 $Script:KrokJeza = 6         # pikseli na klatke, mnozone przez rozmiar komorki
 
 # --- IKONKA MOTYWU --------------------------------------------------------------------
-# Ksiezyc albo slonce na przycisku w prawym dolnym rogu. FIGURY Z GEOMETRII, RYSOWANE
-# Z WYGLADZANIEM - a nie mapa pikseli, jak dotad. Przy boku 18 px na komorke mapy
-# przypadal jeden piksel, wiec luk sierpa i tarcza slonca wychodzily schodkami i ikonka
-# wygladala na poszarpana. Znak z czcionki odpada tak samo jak wczesniej: glifow ksiezyca
-# i slonca nie ma w Segoe UI, wiec Windows schodzi na czcionke zastepcza - a ta bywa inna
-# na kazdej stacji i inaczej wysrodkowana.
-#
-# WYMIARY SA ULAMKAMI BOKU, a nie pikselami: figura rosnie razem z pasem podpisu przy
-# DPI 125-150%, tak samo jak dotad rosla komorka mapy.
+# Ksiezyc albo slonce liczone z geometrii i rysowane z wygladzaniem; wymiary to ulamki boku.
 $Script:BokIkonyMotywu    = 18   # MINIMALNY bok ikonki - rosnie do wysokosci linii pisma
 
-# WYSOKOSC PASA PODPISU - wspolne pudelko ikonki motywu i obu napisow w dolnym rogu.
-# WARTOSC STARTOWA DLA ZWYKLEJ CZCIONKI, tak samo jak przy $Script:PanelBezListy wyzej:
-# New-JezykForm przelicza ja z faktycznej czcionki okna (wieksze z dwojga - bok ikonki
-# albo linia pisma). Stala musi tu stac, bo wysokosc okna liczy sie z niej jeszcze przed
-# zbudowaniem okna, a brak wartosci dalby w arytmetyce po cichu zero.
+# Wysokosc pasa podpisu (ikonka i dwa napisy) - start; New-JezykForm liczy ja z czcionki okna.
 $Script:WysokoscPasaPodpisu = $Script:BokIkonyMotywu
 
-# Przerwa miedzy pudelkiem ikonki a pudelkiem napisu z wersja. Widac wiecej: napis zaczyna
-# sie za wlasnym marginesem etykiety, a figura konczy przed krawedzia swojego kwadratu -
-# razem wychodzi okolo pieciu-szesciu pikseli, czyli mniej wiecej szerokosc spacji.
+# Przerwa miedzy ikonka a napisem z wersja (z marginesami wychodzi ok. szerokosci spacji).
 $Script:OdstepIkonyMotywu = 5
 
-# KSIEZYC pokazuje sie w motywie JASNYM - niesie to, co klikniecie WLACZY.
-# Sierp to tarcza minus drugie kolo, przesuniete w prawo i w gore - rogi patrza wtedy
-# w prawy gorny rog, jak w zwyklym znaku ksiezyca. Promien i przesuniecie kola
-# wycinajacego sa ulamkami PROMIENIA TARCZY, bo to one razem decyduja o grubosci sierpa.
-# 0.42 zostawialo po poltora piksela pustki z kazdej strony kwadratu, a sierp - ktory
-# zajmuje polowe tarczy - czytal sie wtedy jako plama w jego lewym dolnym narozniku.
+# KSIEZYC (w motywie jasnym): tarcza minus kolo przesuniete w prawo i w gore.
 $Script:KsiezycPromien      = 0.47   # promien tarczy - ulamek boku
 $Script:KsiezycWyciecie     = 0.85   # promien kola wycinajacego - ulamek promienia tarczy
 $Script:KsiezycPrzesuniecie = 0.60   # odleglosc srodkow obu kol - ulamek promienia tarczy
-# Kierunek wyciecia w stopniach; os Y rosnie W DOL, wiec kat ujemny kieruje rogi w gore.
-# NIE -45: przy pelnej przekatnej ciezar sierpa wypadal dwa piksele pod srodkiem pudelka
-# i ikonka czytala sie jako postawiona nizej niz napis obok niej. Przy -20 ksiezyc zostaje
-# pochylony, a srodek masy wraca pod srodek kwadratu (patrz Get-JezykPrzesuniecieNaSrodek).
+# Kat wyciecia; os Y rosnie w dol. -20, nie -45 - przy -45 sierp wypadal pod srodkiem pudelka.
 $Script:KsiezycKat          = -20
 $Script:KsiezycPunktyLuku   = 24     # odcinki na kazdym z dwoch lukow sierpa
 
@@ -263,71 +150,31 @@ $Script:SlonceRamieDo   = 0.48   # koniec promienia
 $Script:SlonceGrubosc   = 0.11   # grubosc promienia - ulamek boku; przy 18 px to 2 px
 $Script:SlonceIleRamion = 8
 
-# KOLORY IKONEK NIE ZALEZA OD MOTYWU, i to nie jest niedopatrzenie: kazda ikonka pokazuje
-# sie WYLACZNIE w swoim oknie - ksiezyc w jasnym, slonce w ciemnym - wiec kazda ma dobrany
-# odcien pod SWOJE tlo i nigdy nie trafi na to drugie. Ksiezyc jest indygo, bo zolty na
-# jasnoszarym tle wyplukuje sie do niewidocznosci; slonce zlote, bo na #202020 swieci.
-#
-# Klucze sa POJEDYNCZYMI LITERAMI i musza sie roznic takze bez wielkosci liter - tablica
-# mieszajaca ich nie rozroznia i @{} z 'k' oraz 'K' rzuca "Duplicate keys", wywracajac cala
-# czwarta czesc przy starcie. Zglasza to parser, wiec awaria wyglada na blad skladni
-# w miejscu niezwiazanym z przyczyna.
+# Kolory ikonek nie zaleza od motywu - kazda pokazuje sie tylko na swoim tle.
+# Uwaga: klucze musza sie roznic takze bez wielkosci liter ("Duplicate keys").
 $Script:PaletaIkonyMotywu = @{
     'k' = [System.Drawing.Color]::FromArgb(95, 110, 200)   # ksiezyc - indygo
     's' = [System.Drawing.Color]::FromArgb(255, 195, 55)   # slonce - tarcza
     'p' = [System.Drawing.Color]::FromArgb(255, 150, 40)   # slonce - promienie
 }
 
-# Bufor pedzli, zakladany przy pierwszym rysowaniu - tak samo jak $Script:PedzleJeza
-# i z tego samego powodu: kolory sa stale, wiec nie ma go po co uniewazniac.
+# Bufor pedzli ikonki - kolory stale, wiec bez uniewazniania.
 $Script:PedzleIkonyMotywu = $null
 
-# Pedzel GDI. Wydzielony, bo to JEDYNE miejsce rysowania ikonki, ktore wychodzi poza
-# proces - zestaw weryfikacyjny podstawia tutaj wlasna atrape i cala petla rysujaca
-# wykonuje sie naprawde, zamiast byc sprawdzana regeksem po tresci funkcji.
+# Pedzel GDI - styk z systemem, ktory zestaw weryfikacyjny zastepuje atrapa.
 function New-JezykPedzel {
     param($Kolor)
     [System.Drawing.SolidBrush]::new($Kolor)
 }
 
-# Widoczny obszar kontrolki. Wydzielony z tego samego powodu, co pedzel wyzej: Region to
-# obiekt GDI, czyli drugi styk z systemem w obcinaniu ramki listy - zestaw weryfikacyjny
-# podstawia tu wlasna atrape i cala arytmetyka obciecia wykonuje sie naprawde.
+# Region kontrolki (obcinanie ramki listy) - styk z systemem, jak pedzel wyzej.
 function New-JezykObszar {
     param([int]$X, [int]$Y, [int]$Szerokosc, [int]$Wysokosc)
     [System.Drawing.Region]::new([System.Drawing.Rectangle]::new($X, $Y, $Szerokosc, $Wysokosc))
 }
 
-<#
-.SYNOPSIS
-    Rysuje napis przycisku w CALYM jego prostokacie - dlatego wysokosc przycisku jest nasza.
-
-.DESCRIPTION
-    NAPIS RYSUJEMY SAMI I DZIEKI TEMU PRZYCISK MOZE BYC ROWNY POLU. WinForms uklada wlasny
-    napis w prostokacie POMNIEJSZONYM o ramke stylu Flat, o grubosc z FlatAppearance.BorderSize,
-    o staly margines wewnetrzny i o Padding - a gdy tego miejsca zabraknie, ucina mu ogonki
-    liter (g, j, y, a z ogonkiem). Tak zginely kiedys napisy na CZYNNYCH "Pinguj", "Polacz"
-    i "Szukaj". Pierwsza odpowiedzia byl wlasny wzor na te arytmetyke - mylil sie o piksel.
-    Druga: zapytac o wysokosc sama kontrolke (GetPreferredSize) - a ta oddaje, ile potrzebuje
-    NA SWOICH ZASADACH, czyli znacznie wiecej, niz ma pole obok, i przycisk wygladal przy
-    polach na przerosniety. Napis srodkowany w CALYM prostokacie nie ma sie gdzie uciac, wiec
-    pytanie o wysokosc przestaje istniec: przycisk dostaje tyle, ile ma pole.
-
-    WARUNKIEM JEST PUSTY Text PRZYCISKU - napis WinForms lezalby pod naszym, przesuniety
-    o te kilka pikseli ramki, i oba widac by bylo jako jeden rozmyty. Napis jedzie wiec
-    w Tag, tak samo jak tresc pod przyciskiem "!".
-
-    TLA ANI RAMKI NIE MALUJEMY. Rysowal je tu tylko ten, kto musial zetrzec napis narysowany
-    pod spodem - a pod spodem nie ma teraz nic. Dzieki temu tlo, ramka, podswietlenie pod
-    kursorem, wcisniecie i prostokat fokusu zostaja systemowe i dzialaja same.
-
-    KOLOR Z PALETY, a nie z przycisku. WinForms przy FlatStyle = Flat maluje napis wylaczonego
-    przycisku kolorem ControlPaint.Dark(BackColor) i nie ma wlasciwosci, ktora by to zmienila:
-    przy tle #2D2D2D wychodzila z tego niemal czern i przycisk wygladal jak pusty prostokat,
-    a operator nie wiedzial, czy jest wylaczony, czy to usterka narzedzia. Dlatego kolor
-    wybiera stan Enabled, a jedna sciezka obsluguje oba motywy - w jasnym KolorNieczynny to
-    systemowy GrayText, czyli dokladnie to, czego uzytkownik Windows sie spodziewa.
-#>
+# Rysuje napis przycisku (z Tag) w calym jego prostokacie - przycisk moze byc rowny polu.
+# Text przycisku pusty; tla i ramki nie malujemy; kolor z palety wg Enabled (README: Siatka okna).
 function Set-JezykRysunekNapisuPrzycisku {
     param($Przycisk, $Grafika)
 
@@ -346,9 +193,7 @@ function Set-JezykRysunekNapisuPrzycisku {
                            -Kolor $kolor
 }
 
-# Napis wysrodkowany w prostokacie. Wydzielony, bo TextRenderer to - obok pedzla - drugi
-# styk z systemem w rysowaniu przycisku; zestaw weryfikacyjny podstawia tu wlasna atrape
-# i cala reszta funkcji wyzej wykonuje sie naprawde, zamiast byc sprawdzana regeksem.
+# Napis wysrodkowany w prostokacie (TextRenderer) - styk z systemem, zastepowany w testach.
 function Set-JezykNapisNaSrodku {
     param($Grafika, [string]$Tekst, $Czcionka, [int]$Szerokosc, [int]$Wysokosc, $Kolor)
 
@@ -360,31 +205,14 @@ function Set-JezykNapisNaSrodku {
          [System.Windows.Forms.TextFormatFlags]::VerticalCenter))
 }
 
-# Bufor pedzli kwadratu ze strzalka. Tak samo jak przy wylaczonym przycisku kolory ida
-# z palety, wiec bufor pada przy kazdym przelaczeniu motywu - patrz Set-JezykMotyw.
+# Bufor pedzli kwadratu ze strzalka - kolory z palety, pada przy zmianie motywu.
 $Script:PedzleStrzalki = $null
 
-# NAJMNIEJSZA polowa podstawy trojkata. Przy 3 podstawa ma 7 px i wysokosc 4 px - tyle,
-# ile ma systemowa strzalka listy przy 100% DPI. Wyzej trojkat ROSNIE RAZEM Z KWADRATEM:
-# szerokosc przycisku listy liczy Windows i przy DPI 125-150% jest wieksza, a strzalka
-# wpisana na sztywno zostalaby przy niej znaczkiem wielkosci jednej trzeciej pola.
+# Najmniejsza polowa podstawy strzalki (3 - jak systemowa przy 100% DPI); wyzej rosnie z kwadratem.
 $Script:MinimalnaPolowaStrzalki = 3
 
-<#
-.SYNOPSIS
-    Maluje kwadrat ze strzalka, ktory zakrywa systemowy przycisk listy rozwijanej.
-
-.DESCRIPTION
-    ComboBox przy FlatStyle = Flat maluje swoj przycisk na sztywno kolorem
-    SystemColors.Control, a strzalke - SystemColors.ControlText. Zadna wlasciwosc tego nie
-    zmienia, wiec w ciemnym oknie przy ciemnej liscie zostawal jasny kwadrat. To ta sama
-    sytuacja, co przy napisie wylaczonego przycisku: skoro systemowego rysowania nie da sie
-    poprowadzic, nie uzywa sie go - kwadrat zaslania etykieta, ktora malujemy sami.
-
-    TROJKAT ZLOZONY Z POZIOMYCH PASKOW, a nie z FillPolygon. Pasek to ten sam
-    FillRectangle, ktorym maluje sie jez i ikonka motywu, wiec rysunek da sie odtworzyc ze
-    sladu i porownac z oczekiwanym ksztaltem zamiast sprawdzac tresc funkcji regeksem.
-#>
+# Maluje kwadrat ze strzalka zakrywajacy systemowy przycisk listy (jego kolorow nie da sie zmienic).
+# Trojkat z poziomych paskow - rysunek da sie odtworzyc ze sladu w testach.
 function Set-JezykRysunekStrzalkiListy {
     param($Strzalka, $Grafika)
 
@@ -402,12 +230,10 @@ function Set-JezykRysunekStrzalkiListy {
 
     $Grafika.FillRectangle($Script:PedzleStrzalki.Tlo, 0, 0, $szer, $wys)
 
-    # Szostka: przy kwadracie 19 px wychodzi z tego dokladnie systemowa polowa 3, a przy
-    # kazdym szerszym trojkat zajmuje stala czesc jego szerokosci.
+    # Szostka: przy kwadracie 19 px daje systemowa polowe 3.
     $polowa  = [Math]::Max($Script:MinimalnaPolowaStrzalki, [int][Math]::Floor($szer / 6))
     $srodekX = [int][Math]::Floor($szer / 2)
-    # Floor, nie [int]: [int] w PowerShellu zaokragla i przy nieparzystej wysokosci
-    # kwadratu strzalka schodzilaby o piksel nizej, niz wypada srodek.
+    # Floor, nie [int] - [int] zaokragla i strzalka schodzilaby o piksel.
     $gora    = [int][Math]::Floor(($wys - ($polowa + 1)) / 2)
 
     for ($i = 0; $i -le $polowa; $i++) {
@@ -417,39 +243,13 @@ function Set-JezykRysunekStrzalkiListy {
     }
 }
 
-# Grubosc pasa, ktorym zamalowujemy systemowa ramke wokol flag. Motyw rysuje ja jako linie
-# i jej rozjasnienie, wiec jeden piksel by nie wystarczyl.
+# Grubosc pasa zamalowujacego systemowa ramke flag (motyw rysuje linie z rozjasnieniem).
 $Script:ZamalowanieRamkiFlag = 3
 
 $Script:PedzleRamkiFlag = $null
 
-<#
-.SYNOPSIS
-    Przemalowuje ramke wokol flag konta - kolorem obramowki z biezacej palety.
-
-.DESCRIPTION
-    GroupBox rysuje swoj obrys motywem systemu i nie ma wlasciwosci, ktora nadalaby mu
-    kolor: w ciemnym oknie zostawala wokol trzech flag jasna, prawie biala obwodka. Trzeci
-    przypadek tej samej reguly, po napisie wylaczonego przycisku i przycisku listy
-    rozwijanej - systemowego rysowania nie da sie poprowadzic, wiec malujemy po nim.
-
-    NAJPIERW ZETRZEC, POTEM NARYSOWAC. Sama linia w naszym kolorze zostawilaby pod soba
-    systemowa: motyw rysuje ja grubsza niz piksel, wiec pas zamalowania musi byc szerszy
-    od linii, ktora po nim idzie.
-
-    ZAMALOWUJEMY CZTERY PASY, A NIE CALY PROSTOKAT - srodek ramki zajmuja znaczniki i ich
-    napisy, a te rysuja sie WCZESNIEJ, bo sa osobnymi kontrolkami.
-
-    PASY ZACZYNAJA SIE OD ZERA, A NIE OD NASZEJ LINII. Pierwsza wersja scierala dopiero od
-    wysokosci $gora i gorna krawedz zostawala biala, choc trzy pozostale wychodzily dobrze:
-    systemowa linia gorna lezy WYZEJ niz nasza i pas do niej nie siegal. Nad ramka jest
-    pusto, wiec zamalowanie tego miejsca nic nie kosztuje - a jest odporne na to, gdzie
-    dokladnie motyw systemu postawil swoja kreske.
-
-    GORNA KRAWEDZ NASZEJ LINII LEZY W POLOWIE PASKA TYTULU, tak samo jak przy srodkowaniu
-    znacznikow: GroupBox rezerwuje ten pasek nawet przy pustym tytule, a widoczna ramka
-    biegnie przez jego srodek.
-#>
+# Przemalowuje ramke "Flagi konta" kolorem palety: cztery pasy scierajace od krawedzi, potem linie.
+# Gorna linia w polowie paska tytulu GroupBoxa (README: Ciemny motyw).
 function Set-JezykRysunekRamkiFlag {
     param($Ramka, $Grafika)
 
@@ -478,27 +278,7 @@ function Set-JezykRysunekRamkiFlag {
     $Grafika.FillRectangle($Script:PedzleRamkiFlag.Linia, ($szer - 1), $gora, 1, ($wys - $gora))
 }
 
-<#
-.SYNOPSIS
-    Przesuniecie, ktore stawia SRODEK MASY wielokata w srodku kwadratu o podanym boku.
-
-.DESCRIPTION
-    SRODEK MASY, A NIE OBWIEDNIA. Obwiednia sierpa jest wysrodkowana sama z siebie - luk
-    zewnetrzny biegnie po okregu wokol srodka kwadratu - ale ciezar figury lezy po stronie
-    PRZECIWNEJ do wyciecia, a to ciezar czyta sie jako polozenie ikonki. Przy wycieciu
-    skierowanym w gore sierp wygladal wiec na postawiony NIZEJ niz napis, obok ktorego stoi,
-    choc arytmetyka obwiedni byla poprawna. To ta sama pomylka, co przy srodkowaniu etykiety
-    z AutoSize na sasiedniej kontrolce: rownamy prostokaty, a widac tresc.
-
-    PRZESUNIECIE PRZYCINAMY DO KWADRATU. Przy duzej tarczy pelne wyrownanie wyprowadzilo by
-    figure za krawedz przycisku, a ikonka ucieta jest gorsza od nieco przesunietej. Stad
-    Max/Min zamiast samej roznicy - i stad kat wyciecia dobrany tak, zeby reszta po
-    przycieciu byla mniejsza od piksela.
-
-    Pole liczone wzorem na powierzchnie wielokata (suma iloczynow skosnych): to samo, czym
-    zestaw weryfikacyjny mierzy pole figury, ale tam liczone NIEZALEZNIE - inaczej
-    sprawdzalby wzor samym soba.
-#>
+# Przesuniecie stawiajace srodek masy wielokata (nie obwiednie) w srodku kwadratu, przyciete do niego.
 function Get-JezykPrzesuniecieNaSrodek {
     param($Punkty, [int]$Bok)
 
@@ -541,52 +321,20 @@ function Get-JezykPrzesuniecieNaSrodek {
     [System.Drawing.PointF]::new($dx, $dy)
 }
 
-<#
-.SYNOPSIS
-    Figury ikonki motywu dla przycisku o podanym boku - sama geometria, bez GDI.
-
-.DESCRIPTION
-    Kazda figura to obiekt z Znak (klucz palety) i ALBO Punkty (wielokat), ALBO Kolo
-    (prostokat opisany na kole). Wynik WYCHODZI ROZWINIETY - owijaj @() na miejscu
-    wywolania, tak samo jak przy Get-JezykSpriteJeza.
-
-    SIERP TO WIELOKAT Z DWOCH LUKOW. Zewnetrzny biegnie po tarczy od rogu do rogu przez
-    strone oswietlona, wewnetrzny wraca po brzegu kola wycinajacego. Rogi to punkty
-    przeciecia obu okregow. Liczone w ukladzie, w ktorym wyciecie lezy na osi X - wzor na
-    przeciecie ma wtedy jeden wiersz - i dopiero na koncu obracane o $Script:KsiezycKat.
-    Wielokat, a nie tarcza zamalowana kolorem tla: tlo przycisku zmienia sie pod kursorem,
-    wiec zamalowane wyciecie pokazaloby sie wtedy jako drugie kolo.
-
-    SRODEK W POLOWIE BOKU, bez zaokraglania. Set-JezykRysunekMotywu rysuje z przesunieciem
-    pikseli o pol, wiec polowa boku wypada na granicy pikseli i figura ma po obu stronach
-    tyle samo miejsca.
-
-    SIERP DOSUWAMY SRODKIEM MASY (Get-JezykPrzesuniecieNaSrodek), bo sam w kwadracie stoi
-    krzywo: obwiednia jest wysrodkowana, ale caly ciezar lezy po stronie przeciwnej do
-    wyciecia. Slonce jest symetryczne wzgledem srodka i nie potrzebuje niczego takiego.
-    Figura sierpa oddaje przez to SRODEK TARCZY po przesunieciu - wszystko, co liczy sie
-    od tarczy, a nie od kwadratu, musi brac go stamtad.
-#>
+# Figury ikonki motywu (sama geometria, bez GDI): sierp z dwoch lukow albo tarcza i promienie slonca.
+# Wynik rozwiniety - owijaj @() u wolajacego; sierp dosuniety srodkiem masy.
 function Get-JezykFiguryMotywu {
     param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw, [int]$Bok)
 
     $srodek = $Bok / 2
 
     if ($Motyw -eq 'Jasny') {
-        # NAZWY W PELNYCH SLOWACH, I TO NIE JEST OZDOBA. Stalo tu $R, $r i $d - a PowerShELL
-        # NIE ROZROZNIA WIELKOSCI LITER W NAZWACH ZMIENNYCH, wiec $R i $r to JEDNA zmienna:
-        # druga linijka nadpisywala promien tarczy promieniem wyciecia. Sierp nadal wychodzil
-        # sierpem, tylko o 15% mniejszym i innego kroju niz mowia stale - a zadne sprawdzenie
-        # tego nie widzialo, bo kazde bylo prawdziwe dla dowolnego sierpa. To ta sama pulapka,
-        # co przy kluczach tablicy mieszajacej 'o' i 'O' w palecie jeza, tylko cichsza: tam
-        # parser rzucil "Duplicate keys", tutaj nie stalo sie nic.
+        # Uwaga: $R i $r to dla PowerShella jedna zmienna - nazwy w pelnych slowach (README: Siatka okna).
         $promien         = $Script:KsiezycPromien * $Bok
         $promienWyciecia = $Script:KsiezycWyciecie * $promien
         $odstepSrodkow   = $Script:KsiezycPrzesuniecie * $promien
 
-        # Przeciecie okregow: x0 - odleglosc cieciwy od srodka tarczy wzdluz osi wyciecia,
-        # h - polowa cieciwy. t0 i s0 to katy rogu widziane ze srodka tarczy i ze srodka
-        # kola wycinajacego.
+        # Przeciecie okregow: x0 - odleglosc cieciwy, h - polowa cieciwy, t0 i s0 - katy rogu.
         $x0 = ($promien * $promien - $promienWyciecia * $promienWyciecia +
                $odstepSrodkow * $odstepSrodkow) / (2 * $odstepSrodkow)
         $h  = [Math]::Sqrt($promien * $promien - $x0 * $x0)
@@ -640,8 +388,7 @@ function Get-JezykFiguryMotywu {
                                                   2 * $tarcza, 2 * $tarcza)
     }
 
-    # Ramiona to waskie czworokaty wzdluz promienia kola - u = kierunek ramienia,
-    # (-uy, ux) = kierunek w poprzek niego.
+    # Ramiona: waskie czworokaty wzdluz promienia (u - kierunek ramienia, (-uy, ux) - w poprzek).
     $od    = $Script:SlonceRamieOd * $Bok
     $do    = $Script:SlonceRamieDo * $Bok
     $pol   = $Script:SlonceGrubosc * $Bok / 2
@@ -658,23 +405,7 @@ function Get-JezykFiguryMotywu {
     }
 }
 
-<#
-.SYNOPSIS
-    Rysuje ikonke motywu na przycisku - kolorami z palety ikonki.
-
-.DESCRIPTION
-    WYGLADZANIE WLACZONE. Przy boku 18 px luk bez wygladzania wychodzi schodkami - to
-    wlasnie wygladalo na poszarpane. Krawedzie mieszaja sie z tlem przycisku, ktore
-    WinForms maluje przed zdarzeniem Paint, wiec wygladaja dobrze na kazdym tle, takze
-    na podswietleniu pod kursorem.
-
-    PRZESUNIECIE PIKSELI O POL (PixelOffsetMode HighQuality). Bez niego srodek piksela
-    lezy na liczbie calkowitej i figura wysrodkowana w polowie parzystego boku jest
-    o pol piksela krzywa - rozmyta z jednej strony, ostra z drugiej.
-
-    Jeden rodzaj obiektu GDI - pedzel - tak jak dotad: tarcza slonca to FillEllipse,
-    reszta to FillPolygon.
-#>
+# Rysuje ikonke motywu z wygladzaniem i przesunieciem pikseli o pol (bez nich schodki i krzywizna).
 function Set-JezykRysunekMotywu {
     param($Grafika, [int]$Bok)
 
@@ -702,28 +433,8 @@ function Set-JezykRysunekMotywu {
     }
 }
 
-<#
-.SYNOPSIS
-    Rysunek jeza dla zadanego stanu - gotowa mapa znakow, bez GDI.
-
-.DESCRIPTION
-    NA PLECACH TO ODBICIE W PIONIE, A NIE OBROT O 180 STOPNI. Jez ma zostac zwrocony w te
-    sama strone, co przy biegu - kolce maja lezec na ziemi, a lapy sterczec do gory.
-    Obrot odwrocilby go takze w poziomie i wygladalby jak inne zwierze.
-
-    SAMO ODBICIE NIE WYSTARCZA. Lapy zostawaly w tym samym ciemnym odcieniu, co grzbiet,
-    i przy osiemnastu pikselach wysokosci zlewaly sie z sylwetka - poza czytala sie jak
-    "jez z odchylona glowa", a nie jak "jez na plecach". Rysujemy je wiec na dwa piksele
-    i w jasnym odcieniu brzucha, zeby odcialy sie od kolcow.
-
-    JABLKO NAKLADAMY NA KOPIE, I TO NIE JEST OSTROZNOSC NA WYROST. Napisy w PowerShellu sa
-    niezmienne, ale TABLICA juz nie: podmiana wiersza w $Script:MapaJeza zatrulaby biegnacego
-    jeza na cala reszte sesji, a zobaczylby to dopiero ktos przy DRUGIM wyszukiwaniu. Rzutowanie
-    na [string[]] alokuje nowa tablice - @() wokol istniejacej tablicy tego NIE gwarantuje.
-
-    Wszystkie pozy maja te same wymiary, co $Script:MapaJeza. Na tym stoi cala arytmetyka
-    klatki, ktora szerokosc jeza liczy raz. Pilnuje tego Weryfikacja/testy-uklad.ps1.
-#>
+# Mapa jeza dla stanu, bez GDI: NaPlecach to odbicie w pionie z jasnymi lapami.
+# Uwaga: jablko na KOPII ([string[]]) - podmiana wiersza w MapaJeza zatrulaby reszte sesji.
 function Get-JezykSpriteJeza {
     param([ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan)
 
@@ -756,34 +467,8 @@ function Get-JezykSpriteJeza {
     @($sprite)
 }
 
-<#
-.SYNOPSIS
-    Gdzie i jak duzy stoi jez w zadanej klatce - czysta arytmetyka, bez GDI.
-
-.DESCRIPTION
-    CALA ARYTMETYKA JEST TUTAJ, A NIE W RYSOWANIU, I TO NIE JEST PORZADKOWANIE. Graphics
-    i SolidBrush wymagaja GDI, ktorego zestaw weryfikacyjny nie ma - funkcji rysujacej nie
-    wykona wiec nigdy, a liczba schowana w jej wnetrzu nie bylaby sprawdzona ani razu.
-    Rysowanie dostaje gotowe wspolrzedne i samo niczego nie liczy.
-
-    ROZMIAR KOMORKI PRZEZ [Math]::Floor, A NIE [int]. [int] w PowerShellu ZAOKRAGLA
-    (bankiersko), wiec przy pasie 30 px i osiemnastu wierszach mapy dalby 2 zamiast 1
-    i jez wystawalby poza pas gora i dolem.
-
-    DROGA OBEJMUJE SZEROKOSC JEZA, zeby wybiegl CALY za prawa krawedz, zanim wroci
-    z lewej. Bez tego znikalby w polowie kroku, uciety krawedzia pasa.
-
-    PODSKOK NIE MOZE PRZEKROCZYC ZAPASU nad jezem. Przy pasie akurat tak wysokim, jak mapa,
-    kolysanie wypchneloby go poza gorna krawedz i obcieloby mu kolce.
-
-    POZA Z WYNIKIEM ZOSTAJE TAM, GDZIE JEZ SKONCZYL BIEC - ale PRZYCIETA do pasa, i bez tego
-    przyciecia byloby jej nie widac wcale. Klatka zerowa stoi CALA za lewa krawedzia (jez ma
-    z niej dopiero wbiec), a wyszukanie po nazwisku trwa ulamek sekundy i zegar animacji nie
-    tyka ani razu - wiec kazda poza po zapytaniu synchronicznym siedzialaby poza pasem.
-
-    PRZYCINAMY OD GORY, POTEM OD DOLU. Odwrotna kolejnosc daje liczbe UJEMNA, gdy pas jest
-    wezszy od jeza: gorna granica jest wtedy sama w sobie ujemna.
-#>
+# Polozenie i komorka jeza w klatce - czysta arytmetyka (rysowania zestaw weryfikacyjny nie wykonuje).
+# Komorka przez Floor; poza z wynikiem przycinana do pasa (najpierw gorna granica, potem dolna).
 function Get-JezykKlatkaJeza {
     param([int]$Numer, [int]$Szerokosc, [int]$Wysokosc,
           [ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan = 'Szuka')
@@ -798,8 +483,7 @@ function Get-JezykKlatkaJeza {
     $krok  = $Script:KrokJeza * $komorka
     $droga = $Szerokosc + $szerokoscJeza
 
-    # Kolysanie o jedna komorke co dwie klatki - tyle wystarczy, zeby czytalo sie jako
-    # bieg, a nie jako przesuwany obrazek.
+    # Kolysanie o komorke co dwie klatki.
     $zapas   = $Wysokosc - $wierszy * $komorka
     $podskok = if (($Numer % 4) -lt 2) { 0 } else { 1 }
     if ($podskok -gt $zapas) { $podskok = $zapas }
@@ -823,18 +507,7 @@ function Get-JezykKlatkaJeza {
     }
 }
 
-<#
-.SYNOPSIS
-    Rysuje jeza na podanej powierzchni - jedyne miejsce w programie, ktore siega po GDI.
-
-.DESCRIPTION
-    NIC TU NIE LICZYMY - wspolrzedne przychodza gotowe z Get-JezykKlatkaJeza. Ta funkcja
-    nie wykona sie w zestawie weryfikacyjnym ani razu, wiec kazda liczba schowana w jej
-    wnetrzu bylaby liczba niesprawdzona.
-
-    Pedzle zakladamy leniwie i trzymamy w $Script:PedzleJeza: przy szesnastu klatkach na
-    sekunde nie ma po co powolywac ich od nowa, a zyja i tak tyle, co okno.
-#>
+# Rysuje jeza (jedyne siegniecie animacji po GDI) - wspolrzedne gotowe, pedzle leniwie w buforze.
 function Set-JezykRysunekJeza {
     param($Grafika, [int]$Szerokosc, [int]$Wysokosc)
 
@@ -873,79 +546,38 @@ function Get-JezykWiersz { param([int]$Numer) $Script:PierwszyWiersz + $Script:S
 # y POLA nalezacego do wiersza o podanym numerze.
 function Get-JezykWierszPole { param([int]$Numer) (Get-JezykWiersz $Numer) + $Script:OdstepPodEtykieta }
 
-# Skok wiersza dla pola o podanej wysokosci: etykieta, jej pole i przerwa do nastepnej
-# etykiety. Wydzielona z samego pomiaru, zeby arytmetyke dalo sie sprawdzic dla calego
-# zakresu czcionek, a nie tylko dla tej, ktora akurat ma maszyna.
+# Skok wiersza dla pola o podanej wysokosci: etykieta, pole i przerwa.
 function Get-JezykSkokWiersza {
     param([int]$WysokoscPola)
     $Script:OdstepPodEtykieta + $WysokoscPola + $Script:PrzerwaWierszy
 }
 
-# POLOWA WYSOKOSCI KONTROLKI, ZAOKRAGLONA W DOL. [int] w PowerShellu zaokragla BANKIERSKO,
-# a nie obcina: [int](21/2) daje 10, ale [int](23/2) daje 12. Z dwoch kontrolek stojacych
-# w jednym wierszu wyzsza dostawala przez to piksel W GORE ponad wspolny srodek - i tylko
-# przy niektorych wysokosciach, wiec przy jednej czcionce bylo widac, a przy innej nie.
-# Tak wychodzilo pole wyszukiwania i "Szukaj" nad liste trybu. Ta sama decyzja, co przy
-# $goraRamkiFlag w New-JezykForm; jedna funkcja, zeby zaokraglenie bylo wszedzie to samo.
+# Polowa wysokosci zaokraglona w dol - [int] zaokragla bankiersko (21/2 -> 10, 23/2 -> 12).
 function Get-JezykPolowaWysokosci {
     param([int]$Wysokosc)
     [int][math]::Floor($Wysokosc / 2)
 }
 
-# Srodek pierwszego wiersza okna dla pola o podanej wysokosci: gorny margines i polowa
-# kontrolki. LICZONY, A NIE WPISANY - kontrolka o wysokosci $WysokoscPola zaczyna sie wtedy
-# dokladnie $Script:MarginesGorny pod paskiem tytulu, przy kazdej czcionce systemu.
+# Srodek pierwszego wiersza: gorny margines + polowa kontrolki.
 function Get-JezykSrodekWiersza {
     param([int]$WysokoscPola)
     $Script:MarginesGorny + (Get-JezykPolowaWysokosci $WysokoscPola)
 }
 
-# Gorna krawedz panelu bez listy wyboru: gorny margines, dwa wiersze gornego pasa (domena
-# i wyszukiwanie) i przerwa pod nimi. Liczona z pomiaru z tego samego powodu, co skok
-# wiersza: gdy wiersze jada w gore razem z marginesem, pietro panelu musi jechac z nimi -
-# inaczej przerwa nad panelem rosnie dokladnie o tyle, o ile zwezil sie margines.
+# Gora panelu bez listy: margines, wiersz domeny, wiersz wyszukiwania i przerwa.
 function Get-JezykPietroBezListy {
     param([int]$WysokoscPola)
     $Script:MarginesGorny + $Script:PasekDomeny + $WysokoscPola + $Script:PrzerwaWierszy
 }
 
-<#
-.SYNOPSIS
-    Wysokosc obszaru roboczego okna dla panelu o podanej gornej krawedzi i wysokosci.
-
-.DESCRIPTION
-    JEDNA ARYTMETYKA NA OBA WIDOKI. Kazdy z paneli ma inna gorna krawedz (konto stoi pod
-    lista wyboru, komputer bez niej) i inna wysokosc, a okno konczy sie pod pasem podpisu,
-    ktory lezy PRZERWE WIERSZA pod ostatnim polem - tym samym odstepem, co miedzy wierszami.
-    Dotad ta liczba byla wpisana w New-JezykForm raz, dla widoku wyzszego; druga kopia dla
-    drugiego widoku rozjechalaby sie przy pierwszej zmianie siatki.
-
-    Koncowe "+ 2" to dolny margines pasa - ta sama dwojka, co przy stawianiu podpisu
-    w Set-JezykWysokoscOkna.
-#>
+# Wysokosc obszaru roboczego (oba widoki): panel, przerwa wiersza, pas podpisu i dolny margines.
 function Get-JezykWysokoscOkna {
     param([int]$GoraPanelu, [int]$WysokoscPanelu)
 
     $GoraPanelu + $WysokoscPanelu + $Script:PrzerwaWierszy + $Script:WysokoscPasaPodpisu + 2
 }
 
-<#
-.SYNOPSIS
-    Przycina wysokosc okna do obszaru roboczego ekranu.
-
-.DESCRIPTION
-    Siatka rosnie razem ze skalowaniem DPI, wiec przy 150% i ekranie 1080p okno moze nie
-    zmiescic sie w obszarze roboczym - a wtedy dolne pola bylyby NIE DO OBEJRZENIA, bo
-    kontrolki stoja na sztywnych wspolrzednych. Zapora dziala w parze z $form.AutoScroll:
-    WinForms pokazuje pasek przewijania WYLACZNIE wtedy, gdy kontrolki wychodza poza obszar
-    roboczy okna, wiec okno trzeba przyciac, zeby pasek mial sie kiedy pojawic.
-
-    Zapas 60 px na ramke okna i pasek tytulu - ClientSize ich nie obejmuje.
-
-    CALOSC POD TRY, bo to zabezpieczenie, a nie warunek dzialania: gdyby odczyt rozmiaru
-    ekranu zawiodl, okno ma dostac wysokosc policzona z siatki. Ten sam catch przepuszcza
-    zestaw weryfikacyjny, ktory typow okienkowych nie ma wcale.
-#>
+# Przycina wysokosc okna do obszaru roboczego ekranu (wtedy AutoScroll pokazuje pasek); pod try.
 function Get-JezykWysokoscWEkranie {
     param([int]$Wysokosc)
 
@@ -958,13 +590,7 @@ function Get-JezykWysokoscWEkranie {
     $Wysokosc
 }
 
-# Wysokosc pola tekstowego przy podanej czcionce. Styk z systemem, tak jak
-# Get-JezykSzerokoscStrzalki: PreferredHeight liczy WinForms z czcionki i z grubosci ramki,
-# czyli dokladnie tak, jak zrobi to kazde pole zalozone przez New-JezykPole. Od tej jednej
-# liczby zalezy caly rytm siatki - i wysokosc kazdego przycisku w oknie.
-#
-# Pole POWOLANE NA BOKU i od razu zwolnione - nie ma go w oknie i nie ma byc. Pytamy
-# o miare, zanim powstanie pierwsza kontrolka, bo od niej zalezy caly rytm siatki.
+# Wysokosc pola przy danej czcionce (PreferredHeight pola na boku) - od niej zalezy cala siatka.
 function Get-JezykWysokoscPola {
     param($Czcionka)
 
@@ -976,10 +602,7 @@ function Get-JezykWysokoscPola {
     finally { $pole.Dispose() }
 }
 
-# Wyrownuje kontrolki w PIONIE do wspolnego srodka wiersza. WinForms wylicza wysokosc listy
-# rozwijanej i przycisku z czcionki, a nie z tego, co wpiszemy w Size - wspolrzedne wpisane
-# recznie zgadzaja sie wiec tylko przy 100% DPI. Zamiast zgadywac liczby, pytamy kontrolki
-# o ich RZECZYWISTA wysokosc.
+# Wyrownuje kontrolki w pionie do wspolnego srodka wiersza (wg ich rzeczywistej wysokosci).
 function Set-JezykSrodekPionowy {
     param([object[]]$Kontrolki, [int]$Srodek)
     foreach ($kontrolka in $Kontrolki) {
@@ -987,10 +610,7 @@ function Set-JezykSrodekPionowy {
     }
 }
 
-# Dosuwa kontrolki PRAWA krawedzia do podanej wspolrzednej. Osobna funkcja, a nie linijka
-# w miejscu uzycia, z jednego powodu: zestaw weryfikacyjny nie buduje okna, wiec arytmetyke
-# wyrownania da sie sprawdzic tylko wtedy, gdy mozna ja zawolac na atrapie - tak samo jak
-# oba wyrownania powyzej.
+# Dosuwa kontrolki prawa krawedzia do podanej wspolrzednej (osobno - da sie sprawdzic na atrapie).
 function Set-JezykDoPrawej {
     param([object[]]$Kontrolki, [int]$Prawa)
     foreach ($kontrolka in $Kontrolki) {
@@ -998,10 +618,7 @@ function Set-JezykDoPrawej {
     }
 }
 
-# Zsuwa kontrolki w dol tak, zeby najwyzsza z nich nie weszla na pole wiersz wyzej.
-# Wszystkie o te sama liczbe, bo stoja jedna nad druga i odstep miedzy nimi ma zostac.
-# Osobna funkcja z tego samego powodu, co Set-JezykDoPrawej: arytmetyke da sie wtedy
-# sprawdzic na atrapie, bez budowania okna.
+# Zsuwa kontrolki w dol (wszystkie o tyle samo), zeby najwyzsza nie weszla na pole wiersz wyzej.
 function Set-JezykPonizejPola {
     param([object[]]$Kontrolki, $Pole, [int]$Odstep)
 
@@ -1018,11 +635,7 @@ function Set-JezykPonizejPola {
     }
 }
 
-# Szerokosc przycisku LICZONA Z NAPISU, a nie wpisana. Napis rysuje
-# Set-JezykRysunekNapisuPrzycisku w CALYM prostokacie kontrolki, wiec za waski przycisk
-# obcina napis od boku - a 90 px, ktore starcza na "Zamknij" przy zwyklej czcionce, nie
-# starcza na "Sprawdz nazwy" przy "Rozmiarze tekstu" 150%. Margines po bokach bierze sie
-# z szerokosci spacji, zeby rosl razem z czcionka zamiast zostawac stala liczba pikseli.
+# Szerokosc przycisku z napisu i czterech spacji (margines rosnie z czcionka).
 function Get-JezykSzerokoscPrzycisku {
     param([string]$Napis, $Czcionka)
 
@@ -1032,6 +645,7 @@ function Get-JezykSzerokoscPrzycisku {
     return ($pomiar.Width + 4 * (Get-JezykSzerokoscSpacji $Czcionka))
 }
 
+# Szerokosc spacji przy danej czcionce (roznica "x x" i "xx", bez marginesow).
 function Get-JezykSzerokoscSpacji {
     param($Czcionka)
 
@@ -1041,48 +655,18 @@ function Get-JezykSzerokoscSpacji {
     $zSpacja.Width - $bezSpacji.Width
 }
 
-<#
-.SYNOPSIS
-    Odstep miedzy pudelkiem znacznika a pudelkiem jego napisu: jedna spacja od konca kwadratu.
-
-.DESCRIPTION
-    NAPIS JEST OSOBNA ETYKIETA, a nie tekstem znacznika: WinForms rozklada wlasny napis
-    znacznika po swojemu i odstepu od kwadratu nie da sie podac zadna wlasciwoscia - napis
-    stal przez to za daleko i o piksel za nisko.
-
-    JEDNA SPACJA, bo tak wyglada przerwa miedzy dwoma slowami - i taka przerwe operator
-    zamowil. Stala -2 (napis na samym koncu kwadratu) wygladala jak przyklejona, a stala
-    dodatnia zgadzalaby sie tylko przy 100%: spacja rosnie razem z rozmiarem tekstu.
-
-    CZCIONKA NAPISU, nie okna: werdykt ma wlasna, wieksza i pogrubiona, wiec i jego spacja
-    jest szersza.
-#>
+# Odstep napisu od kwadratu znacznika: jedna spacja czcionki napisu (napis to osobna etykieta).
 function Get-JezykOdstepZnacznika {
     param($Czcionka)
     (Get-JezykSzerokoscSpacji $Czcionka) - $Script:PasZaZnacznikiem
 }
 
-# Szerokosc kwadratu kryjacego przycisk listy. Wydzielona, bo SystemInformation to styk
-# z systemem - pyta Windows o rozmiar elementu interfejsu, ktory przy DPI 125-150% jest
-# inny. Zestaw weryfikacyjny podstawia tu wlasna liczbe i cala arytmetyka oprawy list
-# wykonuje sie naprawde.
+# Szerokosc kwadratu kryjacego przycisk listy (SystemInformation - styk z systemem).
 function Get-JezykSzerokoscStrzalki {
     [System.Windows.Forms.SystemInformation]::VerticalScrollBarWidth + $Script:ZapasStrzalkiListy
 }
 
-<#
-.SYNOPSIS
-    Stawia kwadrat ze strzalka dokladnie na systemowym przycisku swojej listy rozwijanej.
-
-.DESCRIPTION
-    WSPOLRZEDNE BRANE OD LISTY, a nie wpisane: wysokosc listy WinForms wylicza z czcionki,
-    wiec przy DPI 125-150% rosnie, a kwadrat wpisany na sztywno przestalby zakrywac to,
-    po co powstal.
-
-    PIKSEL ZAPASU Z GORY I Z DOLU: skrajne piksele listy sa juz obciete (patrz
-    Set-JezykObciecieListy), wiec kwadrat ma stanac w jej wnetrzu, a nie na jej krawedzi.
-    W prawo idzie az do krawedzi listy, bo tam zakrywa i przycisk, i kawalek obrysu.
-#>
+# Stawia kwadrat ze strzalka na przycisku listy - od jej wymiarow, piksel wewnatrz z gory i z dolu.
 function Set-JezykStrzalkaListy {
     param($Lista, $Strzalka, [int]$Szerokosc)
 
@@ -1094,31 +678,8 @@ function Set-JezykStrzalkaListy {
     $Strzalka.Top    = $Lista.Top + 1
 }
 
-<#
-.SYNOPSIS
-    Rozklada kontrolki po rownych slupkach i srodkuje kazda w SWOIM slupku.
-
-.DESCRIPTION
-    Szerokosc dzielimy na tyle slupkow, ile jest kontrolek, i kazda ustawiamy na srodku
-    swojego. Wersja poprzednia stawiala je w slupkach liczonych od stalego lewego
-    marginesu, wiec caly rzad byl docisniety do lewej, a po prawej zostawala pustka
-    tym wieksza, im krotsze byly napisy.
-
-    LEWA KRAWEDZ I SZEROKOSC PODAJE WOLAJACY, bo przy GroupBoxie nie sa to zero i Width:
-    ramka rezerwuje u gory pasek na tytul i ma wlasne obramowanie, wiec prawdziwe wnetrze
-    zna wylacznie jej DisplayRectangle.
-
-    POMIAR MUSI BYC JUZ ZROBIONY: srodkowanie liczy sie z Width kazdej kontrolki, a ta
-    jest znana dopiero po Set-JezykSrodekTekstu i po odziedziczeniu czcionki okna.
-
-.PARAMETER Napisy
-    Etykiety stojace po prawej stronie kontrolek - po jednej na kazda. Podane, srodkuja sie
-    razem ze swoja kontrolka jako JEDNA CALOSC: inaczej rzad trzech par wyszedlby krzywo,
-    bo kazdy napis ma inna dlugosc, a slupek jest wspolny.
-
-.PARAMETER Odstep
-    Przerwa miedzy kontrolka a jej napisem. Ma znaczenie wylacznie razem z -Napisy.
-#>
+# Rozklada kontrolki po rownych slupkach i srodkuje kazda w swoim (pomiar musi byc juz zrobiony).
+# Z -Napisy srodkuje sie para: kontrolka, -Odstep i jej napis.
 function Set-JezykSrodekWSlupkach {
     param([object[]]$Kontrolki, [int]$Lewa, [int]$Szerokosc,
           [object[]]$Napisy = @(), [int]$Odstep = 0)
@@ -1129,14 +690,12 @@ function Set-JezykSrodekWSlupkach {
     $slupek = $Szerokosc / $ile
 
     for ($i = 0; $i -lt $ile; $i++) {
-        # SZEROKOSC CALEJ PARY, a nie samej kontrolki - patrz opis parametru -Napisy.
+        # Szerokosc calej pary.
         $napis = if ($i -lt @($Napisy).Count) { $Napisy[$i] } else { $null }
         $razem = $Kontrolki[$i].Width
         if ($napis) { $razem += $Odstep + $napis.Width }
 
-        # Srodek slupka lezy w jego polowie, stad + 0.5. Dzielenie idzie na liczbach
-        # zmiennoprzecinkowych - przy calkowitym polowka slupka znikalaby i rzad
-        # przesuwalby sie w lewo o kilka pikseli.
+        # Srodek slupka w jego polowie (+ 0.5), dzielenie zmiennoprzecinkowe.
         $srodek = $Lewa + [int]($slupek * ($i + 0.5))
         $Kontrolki[$i].Left = $srodek - [int]($razem / 2)
 
@@ -1144,23 +703,8 @@ function Set-JezykSrodekWSlupkach {
     }
 }
 
-<#
-.SYNOPSIS
-    Zdejmuje AutoSize i srodkuje tresc kontrolki w prostokacie o zadanej wysokosci.
-
-.DESCRIPTION
-    Kontrolka z AutoSize ma wysokosc SAMEGO TEKSTU, wiec wyrownanie ustawia w jednej linii
-    prostokaty, a nie linie pisma - lista rozwijana ma wlasne marginesy wewnetrzne i jej
-    tekst siedzi w nich nizej niz napis w ciasnej etykiecie obok. Przy checkboxie dochodzi
-    kwadrat o stalych 13 px, ktory w ciasnym prostokacie nie miesci sie razem z napisem.
-
-    POMIAR MUSI SIE ODBYC TUTAJ, a nie w fabryce kontrolki: swiezo utworzona kontrolka ma
-    jeszcze czcionke domyslna i dziedziczy czcionke okna dopiero po dodaniu do niego.
-
-.PARAMETER NajdluzszyTekst
-    Podawany dla werdyktu, ktorego tresc zmienia sie w trakcie dzialania - szerokosc mierzy
-    sie wtedy na najdluzszym mozliwym napisie, a nie na biezacym.
-#>
+# Zdejmuje AutoSize i srodkuje tresc w prostokacie o zadanej wysokosci - jedna linia pisma z sasiadami.
+# -NajdluzszyTekst: szerokosc mierzona na najdluzszym mozliwym napisie (werdykt).
 function Set-JezykSrodekTekstu {
     param($Kontrolka, [int]$Wysokosc, [string]$NajdluzszyTekst = '')
 
@@ -1182,29 +726,7 @@ function Set-JezykSrodekTekstu {
     $Kontrolka.Size = [System.Drawing.Size]::new($szerokosc, $Wysokosc)
 }
 
-<#
-.SYNOPSIS
-    Przycina etykiete stojaca NAD swoim polem tak, zeby nie siegala jego gornej ramki.
-
-.DESCRIPTION
-    Etykieta ma AutoSize, czyli wysokosc SAMEGO TEKSTU - a ta rosnie razem z czcionka
-    systemu. Pole lezy stale $Script:OdstepPodEtykieta ponizej etykiety, wiec gdy linia
-    pisma przekroczy ten odstep, prostokat etykiety nachodzi na gorna krawedz pola
-    i ZAKRYWA JEGO RAMKE - dokladnie na szerokosc napisu, bo tyle ma sama etykieta.
-    Widac to jako ramke urwana pod "Login:" czy "Status:" i wracajaca za koncem napisu.
-
-    Czcionke okna bierzemy z ustawien systemu (SystemFonts.MessageBoxFont), a Windows
-    potrafi ja powiekszyc NIEZALEZNIE od skalowania ekranu - stad usterka takze przy
-    skalowaniu 100%.
-
-    JEDNA FUNKCJA NA OBA OKNA. Okno grup ma to samo pole "Status:" pod etykieta, co okno
-    glowne, i ta sama usterka wrocila tam jako zgloszenie - druga kopia reguly rozjechalaby
-    sie z pierwsza przy pierwszej zmianie odstepu.
-
-    Etykiety, ktore juz przeszly przez Set-JezykSrodekTekstu (werdykt), maja AutoSize
-    zdjete i wlasna, celowo dobrana wysokosc - tych nie ruszamy. Przy zwyklej czcionce
-    etykieta sie miesci i tez zostaje nietknieta.
-#>
+# Przycina etykiete nad polem, zeby przy duzej czcionce nie zakrywala jego gornej ramki (oba okna).
 function Set-JezykEtykietaNadPolem {
     param($Etykieta)
 
@@ -1217,23 +739,7 @@ function Set-JezykEtykietaNadPolem {
 # Blokada zdarzen na czas programowego wypelniania listy - patrz Set-JezykListaKont.
 $Script:BlokadaZdarzen = $false
 
-<#
-.SYNOPSIS
-    Nadaje kontrolce styl ramki z biezacej palety - jesli kontrolka ramke w ogole ma.
-
-.DESCRIPTION
-    RAMKI NIE DA SIE POMALOWAC, da sie tylko wybrac jej styl. Domyslny Fixed3D rysuje motyw
-    systemu i nie wie nic o ciemnym tle - w ciemnym oknie kazde pole dostawalo przez to
-    jasna obwodke. FixedSingle jest jednopikselowa i ciemniejsza od pola, a przy tym
-    zostawia tekstowi wciecie od krawedzi, czego calkowity brak ramki juz nie robi.
-
-    STRAZ NA ISTNIENIE WLASCIWOSCI, A NIE NA TYP KONTROLKI. Role "Lista" nosi i ListBox,
-    ktory BorderStyle ma, i trzy ComboBoxy, ktore nie maja go WCALE - to nie jest
-    wlasciwosc klasy Control. Pytanie o typ zamknelo by te funkcje przed zestawem
-    weryfikacyjnym, ktory podstawia [pscustomobject].
-
-    ComboBox z FlatStyle = Flat maluje swoja ramke sam i tedy sie do niej nie dosiegnie.
-#>
+# Styl ramki z palety (ramki nie da sie pomalowac); straz na wlasciwosc BorderStyle, nie na typ.
 function Set-JezykRamkeKontrolki {
     param($Kontrolka)
 
@@ -1243,24 +749,8 @@ function Set-JezykRamkeKontrolki {
     $Kontrolka.BorderStyle = $Script:Config.RamkaPola
 }
 
-<#
-.SYNOPSIS
-    Zdejmuje z listy rozwijanej tyle pikseli krawedzi, ile kaze paleta.
-
-.DESCRIPTION
-    RAMKI LISTY NIE DA SIE ANI POMALOWAC, ANI WYBRAC JEJ STYLU. ComboBox nie ma
-    wlasciwosci BorderStyle wcale, a przy FlatStyle = Flat WinForms rysuje obrys na sztywno
-    kolorem SystemColors.Window - czyli bialym. W jasnym oknie bialy obrys przy bialym polu
-    jest niewidoczny, w ciemnym zostaje obwodka doklejona do ciemnej kontrolki.
-
-    Zostaje jedyne narzedzie, ktore dziala na KAZDA ramke: obciecie. Kontrolka o zwezonym
-    obszarze skrajnych pikseli nie rysuje wcale, wiec zamiast obrysu widac pod nimi tlo
-    okna. Ile ich zdjac, mowi paleta - w jasnym motywie zero, bo tam nie ma czego poprawiac.
-
-    STRAZ NA DropDownStyle, A NIE NA TYP KONTROLKI. Role "Lista" nosi takze ListBox okna
-    grup, ktory ramke ma zwyczajna i obcinac go nie ma po co. Pytamy o wlasciwosc, nie
-    o typ - z tego samego powodu, co przy Set-JezykRamkeKontrolki wyzej.
-#>
+# Obcina krawedz listy rozwijanej o tyle pikseli, ile mowi paleta (bialej ramki nie da sie pomalowac).
+# Straz na DropDownStyle, nie na typ.
 function Set-JezykObciecieListy {
     param($Kontrolka)
 
@@ -1269,8 +759,7 @@ function Set-JezykObciecieListy {
 
     $ile = [int]$Script:Config.ObciecieListy
 
-    # POWROT DO JASNEGO MOTYWU MUSI OBCIECIE ZDJAC, a nie tylko go nie nakladac - inaczej
-    # lista zostalaby zwezona na zawsze po pierwszym pobycie w ciemnym.
+    # Powrot do jasnego motywu musi obciecie zdjac.
     if ($ile -le 0) {
         $Kontrolka.Region = $null
         return
@@ -1281,36 +770,8 @@ function Set-JezykObciecieListy {
                                         ($Kontrolka.Height - 2 * $ile)
 }
 
-<#
-.SYNOPSIS
-    Maluje kontrolke wedlug jej ROLI w oknie, kolorami z biezacej palety.
-
-.DESCRIPTION
-    JEDNO MIEJSCE Z REGULAMI KOLORU, wolane dwa razy w zyciu kazdej kontrolki: przy budowie
-    okna i przy kazdym przelaczeniu motywu. Dwie kopie tych regul rozjechalyby sie przy
-    pierwszej zmianie, a rozjazd widac dopiero po powrocie z ciemnego motywu do jasnego.
-
-    ROLA, A NIE TYP KONTROLKI. Rozpoznawanie po [System.Windows.Forms.Button] zamykaloby te
-    funkcje przed zestawem weryfikacyjnym - ten podstawia [pscustomobject], wiec zaden
-    warunek na typ nie bylby w nim prawdziwy i petla malujaca nie wykonalaby sie ani razu.
-    To ta sama zasada, co przy czytaniu pol wyjatku przez PSObject.Properties.
-
-    -REJESTRUJ PODAJE WYLACZNIE New-JezykForm. Okno "Grupy AD" wola te same role bez niego:
-    jego kontrolki gina razem z oknem w finally { Dispose() }, a zarejestrowane zostawialyby
-    w $Script:KontrolkiMotywu martwe uchwyty, przybywajace po jednym komplecie na otwarcie.
-
-    Rejestr jest TABLICA kontrolka -> rola, a nie lista na kazda role: cztery niebieskie
-    przyciski "!" rodza sie czerwone i dopiero potem dostaja swoj kolor, wiec druga
-    rejestracja ma ZASTAPIC pierwsza. W liscie zostalyby w obu i kolor zalezalby od
-    kolejnosci przemalowania.
-
-    Kolor NIESIONY PRZEZ TRESC (werdykt, wygasle haslo, dostepnosc maszyny) nie nalezy do
-    zadnej roli - ustawia go Set-JezykKolorPola i to on ma ostatnie slowo, bo Set-JezykMotyw
-    odtwarza role kolorow PO rolach wygladu.
-
-    Przygaszony napis podpisu ("Autor:", "Wersja:") nalezy tu, a nie tam: jest WYGLADEM
-    - nie zmienia sie ze stanem niczego i niczego nie znaczy.
-#>
+# Maluje kontrolke wedlug ROLI (nie typu) kolorami z palety; -Rejestruj tylko z New-JezykForm.
+# Kolor niosacy znaczenie ustawia Set-JezykKolorPola - i on ma ostatnie slowo.
 function Set-JezykWyglad {
     param($Kontrolka,
           [ValidateSet('Okno', 'Pole', 'Lista', 'Przycisk', 'Podpis',
@@ -1327,16 +788,13 @@ function Set-JezykWyglad {
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
         }
         'Pole' {
-            # Tlo JAWNIE, bo pole ReadOnly bez tego rysuje sie na kolorze tla okna
-            # i wyglada jak nieczynne - i dlatego, ze pole moze wracac ze stanu, w ktorym
-            # Set-JezykKolorPola pomalowal mu tlo. Kolor tekstu jawnie z tego samego powodu.
+            # Tlo jawnie - pole ReadOnly rysowaloby sie na tle okna.
             $Kontrolka.BackColor = $Script:Config.KolorTla
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             Set-JezykRamkeKontrolki $Kontrolka
         }
         'Podpis' {
-            # Napis lezy na tle okna i ma byc przygaszony wzgledem wszystkiego, co w oknie
-            # cos znaczy.
+            # Podpis przygaszony wzgledem wszystkiego, co cos znaczy.
             $Kontrolka.BackColor = $Script:Config.KolorOkna
             $Kontrolka.ForeColor = $Script:Config.KolorNieznany
         }
@@ -1362,21 +820,13 @@ function Set-JezykWyglad {
             $Kontrolka.FlatAppearance.BorderColor = $Script:Config.KolorInfo
         }
         'Ikona' {
-            # Tlo okna, zeby ikonka siedziala w nim jak wpisana, a nie jak naklejka.
-            # Rysunek bierze kolor z palety przy KAZDYM przerysowaniu, wiec po zmianie
-            # motywu trzeba o nie poprosic - zmiana BackColor sama zdarzenia Paint nie
-            # wywoluje. BEZ FlatAppearance: te sama role dostaje takze PictureBox, ktory
-            # tego pola nie ma.
+            # Invalidate - zmiana BackColor nie wywoluje Paint; bez FlatAppearance (PictureBox go nie ma).
             $Kontrolka.BackColor = $Script:Config.KolorOkna
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             $Kontrolka.Invalidate()
         }
         'StrzalkaListy' {
-            # Kwadrat ze strzalka domalowany na wierzchu listy rozwijanej. Tlo ma WLASNY
-            # klucz palety, a nie KolorKontrolki: w jasnym motywie ma zostac dokladnie
-            # systemowe, bo tam przycisk listy wyglada dobrze i nie po to go zakrywamy.
-            # Invalidate z tego samego powodu, co przy ikonce motywu: rysunek bierze kolor
-            # przy kazdym przerysowaniu, a zmiana BackColor sama go nie zamawia.
+            # Kwadrat listy: wlasny klucz palety (w jasnym motywie systemowy); Invalidate jak wyzej.
             $Kontrolka.BackColor = $Script:Config.KolorPrzyciskuListy
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             $Kontrolka.Invalidate()
@@ -1395,10 +845,7 @@ function New-JezykEtykieta {
     $lbl
 }
 
-# Pole tekstowe tylko do odczytu. ReadOnly zamiast Enabled = $false, bo tresc ma dac sie
-# zaznaczyc i skopiowac; wylaczona kontrolka bylaby wyszarzona i niczego by nie oddala.
-# Ustawiamy SAMA szerokosc: wysokosc pole wylicza z czcionki, a wartosc podana na sztywno
-# przestaje pasowac przy skalowaniu DPI i litery obcinaja sie od dolu.
+# Pole tylko do odczytu: ReadOnly (tresc da sie skopiowac), sama szerokosc (wysokosc z czcionki).
 function New-JezykPole {
     param([int]$X, [int]$Y, [int]$Szerokosc)
 
@@ -1410,8 +857,7 @@ function New-JezykPole {
     $txt
 }
 
-# Checkbox tylko do odczytu. AutoCheck = $false zamiast Enabled = $false, bo wylaczona
-# kontrolka rysuje wyszarzony, slabo widoczny znacznik - a to wlasnie znacznik niesie informacje.
+# Znacznik tylko do odczytu: AutoCheck = $false zamiast Enabled = $false (wyszarzony slabo widac).
 function New-JezykCheckbox {
     param([string]$Tekst, [int]$X, [int]$Y, [int]$Szerokosc = 0)
 
@@ -1424,15 +870,7 @@ function New-JezykCheckbox {
     $chk
 }
 
-<#
-.SYNOPSIS
-    Kwadrat ze strzalka, ktory zakrywa systemowy przycisk listy rozwijanej.
-
-.DESCRIPTION
-    ETYKIETA, A NIE PRZYCISK: ma wylacznie przyjac klikniecie i dac sie pomalowac, a
-    przycisk dokladalby do tego wlasna ramke i wlasny stan wcisniecia. Rysunek powstaje
-    w Set-JezykRysunekStrzalkiListy, wspolrzedne - w Set-JezykStrzalkaListy.
-#>
+# Kwadrat ze strzalka kryjacy przycisk listy - etykieta, nie przycisk (bez ramki i wcisniecia).
 function New-JezykStrzalkaListy {
     $lbl          = New-Object System.Windows.Forms.Label
     $lbl.AutoSize = $false
@@ -1441,32 +879,9 @@ function New-JezykStrzalkaListy {
     $lbl
 }
 
-<#
-.SYNOPSIS
-    Maly przycisk "!" - nastepca dymka. Staje obok nazwy pola, ktorego dotyczy.
-
-.DESCRIPTION
-    Dymek niosl cala diagnostyke narzedzia, ale nic w oknie nie sygnalizowalo, ze tam
-    cokolwiek jest - kto nie wiedzial, ten nie najezdzal kursorem. Przycisk widac i widac
-    takze to, ze go nie ma: powstaje NIEWIDOCZNY i pokazuje sie dopiero wtedy, gdy
-    Set-JezykInfo odlozy pod nim tresc - a odklada ja WYLACZNIE wtedy, gdy cos naprawde
-    nie dziala (patrz wywolania Set-JezykInfo w Jezyk-3-Widok.ps1). To nie jest przycisk
-    pomocy ani stale dostepny opis - jego pojawienie sie samo w sobie jest komunikatem.
-
-    Kolor CZERWONY, nie neutralny szary reszty interfejsu: przycisk ma rzucac sie w oczy
-    jak werdykt problemu, a nie zlewac sie z tlem, bo widocznosc "!" JEST juz informacja
-    o usterce.
-
-    Klucz siedzi w Tag, wiec wszystkie przyciski obsluguje JEDNA procedura zdarzenia -
-    procedury zdarzen i tak nie widza zmiennych lokalnych funkcji budujacej okno.
-
-    TabStop wylaczony: przycisk jest dodatkiem i nie ma przerywac wedrowki tabulatorem
-    miedzy polami.
-#>
+# Przycisk "!" (nastepca dymka): powstaje niewidoczny, pokazuje go Set-JezykInfo; klucz w Tag.
 function New-JezykPrzyciskInfo {
-    # -BezRejestracji dla okna budowanego NA ZADANIE: zarejestrowana kontrolka zostaje
-    # w $Script:KontrolkiMotywu po Dispose() i pierwsze przelaczenie motywu probuje
-    # pomalowac martwy uchwyt.
+    # -BezRejestracji dla okna na zadanie - zarejestrowany przycisk zostalby w rejestrze po Dispose().
     param([string]$Klucz, [int]$Bok = 18, [switch]$BezRejestracji)
 
     $btn           = New-Object System.Windows.Forms.Button
@@ -1480,36 +895,13 @@ function New-JezykPrzyciskInfo {
     $btn.TabStop   = $false
     $btn.Visible   = $false
 
-    # Bez wyzerowanych marginesow wewnetrznych wykrzyknik nie miesci sie w kwadracie 18 px
-    # i rysuje sie uciety od dolu.
+    # Zerowe marginesy - inaczej "!" nie miesci sie w kwadracie 18 px.
     $btn.Padding = [System.Windows.Forms.Padding]::new(0)
     $btn.Margin  = [System.Windows.Forms.Padding]::new(0)
     $btn
 }
 
-<#
-.SYNOPSIS
-    Stawia przycisk "!" w linii etykiety pola - prawa krawedzia na jego WIDOCZNEJ krawedzi.
-
-.DESCRIPTION
-    POZIOM Z POLA, NIE Z ETYKIETY. Przycisk stal dawniej tuz za napisem, wiec kazdy
-    wykrzyknik w oknie konczyl sie gdzie indziej - tam, gdzie akurat konczyl sie tekst
-    jego etykiety, a ten rosnie z czcionka systemu. Koniec pola jest staly i wspolny dla
-    etykiety i pola, wiec wykrzyknik wyglada na czesc wiersza, a nie na dopisek do napisu.
-
-    Cena jest swiadoma: przy duzym tekscie wykrzyknik wchodzi na koniec dlugiej etykiety
-    ("Ostatnio uzywany komputer:" od okolo 125% DPI). Dlatego przyciski "!" leza w oknie
-    NAD etykietami (SetChildIndex w New-JezykForm) - przyciety ogon slowa da sie
-    przeczytac, zakryty przycisk przestaje istniec.
-
-    PION LICZONY Z CZCIONKI, NIE Z $Etykieta.Height. Etykiety, przy ktorych stoi ten
-    przycisk, MAJA WLACZONE AutoSize (nie przeszly przez Set-JezykSrodekTekstu - to wciaz
-    zwykle pola siatki, tylko z dodatkowym przyciskiem obok) - ich Height to zmierzona
-    wysokosc jednowierszowego tekstu, ktora bywa o kilka pikseli inna niz staly bok
-    przycisku (18 px), i to niedopasowanie bylo widac jako krzywy wykrzyknik. Font.GetHeight
-    daje stabilna, przewidywalna wysokosc linii - ta sama technika juz sprawdzona przy
-    liczeniu wysokosci checkboxow (patrz $wysokoscZnacznika nizej w tym pliku).
-#>
+# Stawia "!" w linii etykiety, prawa krawedzia na widocznej krawedzi pola; pion z linii pisma.
 function Set-JezykPrzyciskPrzyEtykiecie {
     param($Przycisk, $Etykieta, $Pole)
 
@@ -1521,29 +913,7 @@ function Set-JezykPrzyciskPrzyEtykiecie {
     $Przycisk.Top  = $Etykieta.Top + [int](($wysokoscLinii - $Przycisk.Height) / 2)
 }
 
-<#
-.SYNOPSIS
-    Nadaje oknu wysokosc pokazanego panelu i stawia pod nim pas podpisu.
-
-.DESCRIPTION
-    OKNO KONCZY SIE POD TYM PANELEM, KTORY WIDAC. Dotad rozmiar byl staly i wymierzony
-    widokiem wyzszym, czyli kontem - w trybie komputera zostawalo pod polem "Status:"
-    kilkaset pikseli pustki, a podpis autora stal oderwany na samym dole.
-
-    RUSZAMY WYLACZNIE ClientSize, nigdy Location: gorna krawedz okna ma zostac tam, gdzie
-    byla, wiec przy zmianie trybu jedzie sama dolna. Inaczej pasek tytulu i oba gorne
-    wiersze skakalyby po ekranie przy kazdym przelaczeniu.
-
-    PAS PODPISU JEDZIE RAZEM Z DOLEM. Lezy POZA panelami, wiec widac go w obu trybach -
-    i w obu ma lezec dokladnie $Script:PrzerwaWierszy pod ostatnim polem. Jego pion liczy
-    sie TUTAJ i tylko tutaj: druga kopia wzoru rozjechalaby sie przy pierwszej zmianie
-    wysokosci pasa, a rozjazd o kilka pikseli na dole okna jest dokladnie tym, czego nikt
-    nie zauwazy w kodzie.
-
-    PODPIS LICZY SIE Z WYSOKOSCI NIEPRZYCIETEJ, a przyciecie do ekranu dotyczy samego
-    okna: przy oknie wyzszym od ekranu pas ma zostac pod panelem i dac sie doscrollowac,
-    a nie wskoczyc na pole "Status:".
-#>
+# Wysokosc okna z pokazanego panelu (tylko ClientSize, nie Location) i pas podpisu pod nim.
 function Set-JezykWysokoscOkna {
     param([int]$GoraPanelu, [int]$WysokoscPanelu)
 
@@ -1559,46 +929,14 @@ function Set-JezykWysokoscOkna {
                                                     (Get-JezykWysokoscWEkranie $wysokosc))
 }
 
-# Wiersze obu paneli zasilane przez SCCM - opis zaklada New-JezykForm, patrz
-# Set-JezykUkladSccm. Uklad startowy jest PELNY, bo tak panele buduje New-JezykForm.
+# Wiersze paneli zasilane przez SCCM (opis zaklada New-JezykForm); uklad startowy pelny.
 $Script:WierszeSccm      = @()
 $Script:UkladBezSccm     = $false
-# Pary "kontrolka + wlasciwosc + o ile pojechala" - powrot cofa dokladnie te liczby.
+# Zapisane przesuniecia "kontrolka + wlasciwosc + piksele" - powrot cofa dokladnie je.
 $Script:PrzesunieciaSccm = @()
 
-<#
-.SYNOPSIS
-    Chowa wiersze zasilane przez SCCM i zsuwa pod nimi reszte panelu - albo cofa to co do piksela.
-
-.DESCRIPTION
-    DOMENA DECYDUJE, a nie wynik wyszukania: poza domenami z DomenyZSccm te pola nie
-    wypelnia sie NIGDY, dopoki ktos nie zmieni konfiguracji - ta sama zasada, co przy
-    "Odblokuj konto". Pusty wiersz w srodku panelu wygladalby jak nieudany odczyt, wiec
-    reszta panelu jedzie w gore, a okno kurczy sie razem z nim: Set-JezykWidok czyta
-    wysokosc panelu PO tej funkcji.
-
-    KAZDA KONTROLKA PANELU, A NIE LISTA. Jedzie o tyle skokow wiersza, ile usunietych
-    wierszy lezy nad nia. Lista przesuwanych kontrolek rozjechalaby sie przy pierwszym
-    nowym polu - zapomniane zostaloby na starym miejscu i weszlo na sasiada, bez zadnego
-    komunikatu.
-
-    PROGIEM JEST POLE USUNIETEGO WIERSZA. Wszystko z wierszy ponizej lezy nizej niz ono -
-    takze przycisk "!", ktory stoi do dwoch pikseli NAD swoja etykieta
-    (Set-JezykPrzyciskPrzyEtykiecie) - a wszystko z wierszy powyzej lezy wyzej, bo skok to
-    etykieta, pole i przerwa.
-
-    PRZESUNIECIA ZAPISANE, A NIE LICZONE DRUGI RAZ. Powrot odejmuje dokladnie to, co dodalo
-    zsuniecie - dzieki temu sklada sie z poprawka motywu (Set-JezykWyrownaniePol), ktora
-    takze przesuwa pola, a kolejne przelaczenia domeny wracaja na te same liczby, zamiast
-    je sumowac. Z tego samego powodu progi sa czytane z BIEZACEGO Top pol, a nie z siatki.
-
-    WRACA WIDOCZNOSC TYLKO STALYCH. Etykiety, pola i "Pinguj" sa widoczne zawsze, gdy jest
-    ich wiersz. Przyciski "!", "Polacz" i "Dyski" maja wlasnych wlascicieli (Set-JezykInfo,
-    Set-JezykPrzyciskiZdalne) i zostaja schowane: pokazane tutaj zapalilyby sie bez
-    powodu, a Clear-JezykKonto i Clear-JezykKomputer ustawily je przed chwila tak, jak trzeba.
-
-    Bez zmiany stanu nie robi nic - Set-JezykWidok wola ja przy KAZDEJ zmianie trybu.
-#>
+# Chowa wiersze SCCM poza DomenyZSccm i zsuwa pod nimi kazda kontrolke panelu, albo cofa to.
+# Przesuniecia zapisane, nie liczone drugi raz; przy powrocie wraca widocznosc tylko stalych.
 function Set-JezykUkladSccm {
     param([bool]$ZSccm)
 
@@ -1646,16 +984,13 @@ function Set-JezykUkladSccm {
     $Script:UkladBezSccm = $bezSccm
 }
 
-# Pokazuje widok wlasciwy dla wybranego trybu. Przy kazdej zmianie czyscimy OBA widoki -
-# bez tego po przejsciu z konta na komputer zostalyby dane poprzedniego wyszukania,
-# opisane etykietami z zupelnie innego widoku.
+# Pokazuje widok wybranego trybu; przy kazdej zmianie czysci OBA widoki.
 function Set-JezykWidok {
     $k    = $Script:Kontrolki
     $tryb = [string]$k.Tryb.SelectedItem
 
     $komputer = ($tryb -eq $Script:Config.TrybKomputer)
-    # Lista wyboru ma sens wylacznie przy wyszukiwaniu uzytkownikow - zapytanie o komputer
-    # zwraca zawsze najwyzej jeden obiekt.
+    # Lista wyboru tylko przy wyszukiwaniu kont.
     $zListą = (-not $komputer)
 
     $k.ListaKont.Visible = $zListą
@@ -1665,14 +1000,10 @@ function Set-JezykWidok {
     Clear-JezykKonto
     Clear-JezykKomputer
 
-    # Widok i lista wlasnie zniknely, wiec jez z jablkiem opowiadalby o wyniku, ktorego
-    # nikt juz nie widzi. Wolane takze przy starcie okna - stad stan poczatkowy.
+    # Jez gasnie - wynik, o ktorym mowil, zniknal.
     Set-JezykStanJeza 'Ukryty'
 
-    # WIERSZE SCCM PRZED WYSOKOSCIA OKNA - zsuniecie zmienia wysokosc paneli, a ta jest
-    # czytana nizej wprost z kontrolki. Zmiana domeny idzie wlasnie tedy, wiec innego
-    # miejsca, ktore by uklad przeliczalo, nie ma. Po obu Clear-: przyciski, ktorych ta
-    # funkcja nie pokazuje, maja juz stan wlasciwy dla pustego widoku.
+    # Wiersze SCCM przed wysokoscia okna - zsuniecie zmienia wysokosc paneli.
     Set-JezykUkladSccm (Test-JezykDomenaZSccm $Script:Config.Domena)
 
     $gora = if ($zListą) { $Script:PanelZListą } else { $Script:PanelBezListy }
@@ -1680,11 +1011,7 @@ function Set-JezykWidok {
     $k.PanelKonto.Visible    = (-not $komputer)
     $k.PanelKomputer.Visible = $komputer
 
-    # PANEL I WYSOKOSC OKNA RAZEM. Panel komputera ma trzy wiersze mniej niz panel konta
-    # i stoi o pas listy wyboru wyzej, wiec okno wymierzone kontem zostawialo pod nim
-    # kilkaset pikseli pustki. Wysokosc bierzemy z KONTROLKI panelu, a nie liczymy drugi
-    # raz z wierszy - obie dostaly ja w New-JezykForm z tej samej siatki, a druga kopia
-    # arytmetyki rozjechalaby sie przy dolozeniu pola.
+    # Panel i wysokosc okna razem; wysokosc z kontrolki panelu, nie liczona drugi raz.
     if ($komputer) {
         $k.PanelKomputer.Location = [System.Drawing.Point]::new(0, $gora)
         Set-JezykWysokoscOkna $gora $k.PanelKomputer.Height
@@ -1696,32 +1023,8 @@ function Set-JezykWidok {
 
 
 # --- ZADANIA W TLE -------------------------------------------------------------------
-# Dwie informacje sa WOLNE: dokladna data logowania wymaga odpytania wszystkich kontrolerow,
-# a ostatnio uzywany komputer - zapytania do SCCM. Liczone na watku interfejsu zamrazaly okno.
-#
-# Osobna przestrzen uruchomieniowa liczy w tle, a zegar WinForms co cwierc sekundy sprawdza,
-# czy skonczyla. Zegar, a nie BeginInvoke na kontrolce: zdarzenie zegara wykonuje sie NA
-# WATKU INTERFEJSU, wiec znika cala klasa bledow z dostepem z obcego watku.
-#
-# SZESC ZADAN, NIE JEDNO, i kazde z wlasnym LICZNIKIEM POKOLEN. Liczone razem oddawaly wynik
-# dopiero wtedy, gdy skonczyly wszystkie - data czekalaby na SCCM. Pokolenia odrzucaja wynik
-# starego zadania, ktory dotarl po przelaczeniu na inne konto: inaczej dane jednego
-# uzytkownika wpisalyby sie do okna opisujacego juz kogos innego.
-#
-# Zadanie uzytkownika maszyny nalezy do WIDOKU KOMPUTERA, a logowanie i komputer do widoku
-# konta - naraz pracuje wiec najwyzej jedna strona okna. Wlasny licznik i tak jest konieczny:
-# widoki przelaczaja sie w trakcie trwania zapytania.
-#
-# PIATE ZADANIE - NUMER TELEFONU - stoi obok pozostalych, bo nalezy do WYSZUKIWANIA, a nie
-# do wyswietlonego konta. Wlasny licznik pokolen jest tu szczegolnie potrzebny: operator
-# klika "Szukaj" dwa razy pod rzad, a to zapytanie trwa najdluzej ze wszystkich, wiec
-# odpowiedz na PIERWSZY numer potrafi dojsc juz po wpisaniu drugiego i dokleilaby do listy
-# kogos, kogo nikt nie szukal.
-#
-# SZOSTE ZADANIE - POLACZENIE Z UDZIALEM DYSKOWYM - jest jedyne, ktorego odpowiedz potrafi
-# WROCIC PO WIECEJ: gdy poswiadczenia operatora nie wystarczaja, okno pyta o konto oknem
-# systemowym, a to rysuje sie wylacznie na watku interfejsu. W tle idzie wiec sama proba
-# cicha - i tylko po to, zeby okno nie stalo przez cala rozmowe z serwerem.
+# Szesc niezaleznych zadan (Logowanie, Komputer, Uzytkownik, Ping, Numer, Dysk), kazde z wlasnym
+# licznikiem pokolen; wynik odbiera zegar WinForms na watku interfejsu (README: Praca w tle).
 $Script:PokolenieLogowania  = 0
 $Script:PokolenieKomputera  = 0
 $Script:PokolenieUzytkownika = 0
@@ -1736,80 +1039,37 @@ $Script:ZadanieNumeru       = $null
 $Script:ZadanieDysku        = $null
 $Script:ZegarTla            = $null
 
-# Czy pole "Status:" niesie w tej chwili NOTKE O TRWAJACYM szukaniu po numerze, a nie
-# odpowiedz. Po samej pustej liscie tego nie poznasz: pusta jest takze przy bledzie odczytu
-# i przy "zbyt wielu trafieniach", a tamte dwa zdania sa PRAWDZIWE i wazne - zakrycie ich
-# odpowiedzia o numerze skasowaloby jedyna wiadomosc o awarii.
-#
-# Zerowany na poczatku KAZDEGO wyszukiwania, nie po odebraniu wyniku: zapalony i zapomniany
-# z poprzedniego pozwolilby spoznionej odpowiedzi o numerze nadpisac opis konta, ktore
-# tym razem znalazlo sie juz po nazwie.
+# Czy Status niesie notke "trwa szukanie po numerze" (a nie odpowiedz); zerowany przy kazdym szukaniu.
 $Script:StatusCzekaNaNumer  = $false
 
-# Czy trzy pola czekajace na odpowiedz SCCM - "Ostatnio uzywany komputer", "Adres IP"
-# i "Adres MAC" - niosa w tej chwili NOTKE O TRWAJACYM zapytaniu, a nie odpowiedz. Po samej
-# tresci pola tego nie poznasz: "sprawdzanie" wyglada jak kazdy inny napis, a zostawione po
-# zakonczonej pracy klamie dokladnie tak samo jak zdanie nieprawdziwe, tylko odwrotnie
-# w czasie. Marker gasi KAZDA galaz, ktora odpowiedz moze wyjsc - patrz
-# Set-JezykNotkeSprawdzania w Jezyk-3-Widok.ps1.
+# Czy pola SCCM (komputer, IP, MAC) niosa notke "sprawdzanie" - marker gasi kazda galaz odpowiedzi.
 $Script:PolaCzekajaNaSccm   = $false
 
-# To samo dla pola "Ostatnie logowanie", ktore czeka na WLASNE, niezalezne zadanie i konczy
-# je w innej chwili niz zapytanie do SCCM. Jeden wspolny marker gasilby napis nad praca,
-# ktora jeszcze trwa - albo zostawialby go nad ta, ktora juz sie skonczyla.
+# To samo dla pola "Ostatnie logowanie" - osobne zadanie, osobny marker.
 $Script:PoleCzekaNaLogowanie = $false
 
-# Czy pole "Status:" widoku komputera niesie w tej chwili NOTKE O TRWAJACYM laczeniu
-# z udzialem dyskowym, a nie odpowiedz. Powod jest ten sam, co przy dwoch markerach wyzej:
-# po samej tresci pola tego nie poznasz, a notka zostawiona po zakonczonej pracy klamie
-# dokladnie tak samo, jak zdanie nieprawdziwe - tylko odwrotnie w czasie.
+# Czy Status widoku komputera niesie notke "Łączenie".
 $Script:StatusCzekaNaDysk    = $false
 
-# Zdanie, ktore stalo w polu "Status:", ZANIM notka je zakryla. Potrzebne tylko na jednej
-# drodze - rezygnacji z okna poswiadczen: powodzenie i niepowodzenie maja wlasne komunikaty,
-# wiec zastepuja notke odpowiedzia i nie maja czego przywracac. Rezygnacja nie ma nic do
-# powiedzenia i pole musi wrocic tam, gdzie bylo, zamiast zostac z kropkami na zawsze.
+# Zdanie sprzed notki "Łączenie" - wraca przy rezygnacji z okna poswiadczen.
 $Script:StatusPrzedLaczeniem = ''
 
-# Numer klatki animacji kropek - WSPOLNY dla obu notek, zeby kropki szly w oknie rownym
-# krokiem. Trzymany osobno od markerow, bo zegar podbija go w innym miejscu, niz notka
-# sie zapala.
+# Numer klatki kropek - wspolny dla wszystkich notek.
 $Script:KlatkaKropek        = 0
 
-# Ile TAKTOW ZEGARA przypada na jedna klatke kropek. Zegar tla budzi sie co 250 ms, a kropki
-# maja zmieniac sie co 500: cztery zmiany na sekunde czytaja sie jak migotanie, a nie jak
-# trwajaca praca.
+# Taktow zegara (250 ms) na klatke kropek - kropki co 500 ms.
 $Script:TaktowNaKlatkeKropek = 2
 
-# Nazwa maszyny pokazanej w oknie - jedyne zrodlo prawdy dla przyciskow "Pinguj" i "Polacz".
-# Pole tekstowe niesie ja razem z data, wiec nie nadaje sie do przeniesienia stanu.
-# WSPOLNA DLA OBU WIDOKOW i tak ma zostac: panele nigdy nie sa widoczne naraz, a zmiana
-# trybu czysci oba. W widoku konta maszyne podaje SCCM, w widoku komputera - Active
-# Directory, i to jedyna roznica.
+# Nazwa pokazanej maszyny - zrodlo prawdy dla "Pinguj", "Polacz" i "Dyski" (wspolna dla obu widokow).
 $Script:OstatniKomputer = ''
 
-# Ktory widok zamowil sonde z przycisku "Pinguj". Wynik wraca osobnym zadaniem po sekundach
-# i nie ma na sobie zadnego sladu po tym, skad przyszedl - a obie polowki okna maja wlasne
-# pola adresu. Odczytanie tego z listy trybu byloby zgadywaniem: tryb da sie przestawic,
-# zanim odpowiedz wroci.
+# Ktory widok zamowil sonde z "Pinguj" - odpowiedz wraca bez sladu po zamawiajacym.
 $Script:WidokSondy = 'Konto'
 
-# Adres IP, do ktorego dopasowano pokazany adres MAC. Bez niego ponowny ping nie mialby
-# jak zauwazyc, ze maszyna odpowiada juz spod innego adresu - a wtedy pokazany MAC
-# opisuje karte, ktorej pod tym adresem nie ma.
+# Adres IP, do ktorego dopasowano pokazany MAC.
 $Script:MacDlaAdresu = ''
 
-# Ostatnia odpowiedz sondy dla POKAZANEJ maszyny - zrodlo prawdy dla przyciskow "Polacz"
-# i "Dyski". Dotad wynik sondy zyl wylacznie w kolorze kontrolki, a kolor nie nadaje sie
-# na warunek: przechowuje go rejestr rol i odtwarza go motyw.
-#
-# TROJSTANOWA I TAK MA ZOSTAC. $false znaczy "nazwa rozpoznana, ale maszyna milczy",
-# a $null - "nie wiadomo"; splaszczenie do [bool] zamienilo by drugie w pierwsze.
-# Obie akcje zdalne wymagaja jednak POTWIERDZONEJ odpowiedzi, wiec gasna tak samo przy
-# $false i przy $null - patrz Set-JezykPrzyciskiZdalne.
-#
-# WSPOLNA DLA OBU WIDOKOW, jak $Script:OstatniKomputer: panele nigdy nie sa widoczne
-# naraz, a zmiana trybu czysci oba.
+# Odpowiedz sondy dla pokazanej maszyny - $true, $false albo $null (wspolna dla obu widokow).
 $Script:MaszynaOdpowiada = $null
 
 # Gotowe teksty skryptow dla wszystkich zadan - skladane raz, patrz New-JezykSkryptTla.
@@ -1818,43 +1078,19 @@ $Script:SkryptyTla = @{}
 # Zadania PORZUCONE w polowie, czekajace na zwolnienie - patrz Stop-JezykZadanieTla.
 $Script:ZadaniaPorzucone = @()
 
-# Po ilu milisekundach porzucone zadanie przestaje byc sprawdzane co takt zegara.
-# Przestrzen tkwiaca w nieprzerywalnym wywolaniu sieciowym moze sie nie zglosic przez
-# dlugie minuty, a lista przegladana na watku interfejsu co cwierc sekundy nie moze rosnac.
+# Po ilu ms porzucone zadanie przestaje byc sprawdzane co takt (przechodzi do spisanych).
 $Script:TerminPorzuconegoMs = 120000
 
-# Zadania SPISANE - te, ktore przekroczyly termin wyzej. Nie przepadaja: przestrzen
-# uruchomieniowa zadania daty logowania potrafi miec w srodku zaladowany modul AD, czyli
-# kilkadziesiat megabajtow, i dotad zostawala w pamieci do konca zycia procesu, bo po
-# wykresleniu z listy NIKT JUZ NIGDY nie probowal jej zwolnic - nawet gdy zawieszone
-# wywolanie w koncu wracalo. Teraz czekaja tutaj i sa zwalniane przy pierwszym przegladzie
-# PO tym, jak sie faktycznie zakoncza.
-#
-# Sufit jest ostatnia zapora: powyzej niego wypadaja najstarsze, czyli te, ktore nie
-# odpuscily najdluzej. Lista pilnujaca pamieci nie moze sama stac sie wyciekiem.
+# Zadania spisane - zwalniane dopiero po faktycznym zakonczeniu; ponad limit wypadaja najstarsze.
 $Script:ZadaniaSpisane  = @()
 $Script:LimitSpisanych  = 50
 
-# Slad po wywolaniach cyklu zycia zadan, ktore ZA DLUGO trzymaly watek interfejsu.
-# Ograniczony do ostatnich kilkunastu - to nie jest dziennik, tylko odpowiedz na pytanie
-# "co wlasnie zamulilo okno".
+# Slad wywolan, ktore za dlugo trzymaly watek interfejsu (ostatnie 20, prog 250 ms).
 $Script:DiagnostykaTla    = @()
 $Script:ProgDiagnostykiMs = 250
 $Script:LimitDiagnostyki  = 20
 
-<#
-.SYNOPSIS
-    Zapisuje wywolanie, ktore trzymalo watek interfejsu dluzej niz prog.
-
-.DESCRIPTION
-    Open, BeginInvoke, BeginStop i Dispose wykonuja sie NA WATKU INTERFEJSU i kazde z nich
-    potrafi zablokowac sie na przestrzeni tkwiacej w wywolaniu, ktorego PowerShell nie umie
-    przerwac - polaczenie DCOM z milczacym hostem jest tego wzorcowym przykladem. Kiedy
-    okno zamiera, samo odczucie nie mowi, ktore z czterech zawinilo.
-
-    Slad jest widoczny pod przyciskiem "!" przy polu Status, wiec zamarcie przestaje byc
-    odczuciem, a staje sie zmierzonym faktem z nazwa wywolania.
-#>
+# Zapisuje wywolanie (Open, BeginInvoke, BeginStop, Dispose), ktore trzymalo watek dluzej niz prog.
 function Add-JezykDiagnostyke {
     param([string]$Nazwa, [long]$Ms)
 
@@ -1865,50 +1101,27 @@ function Add-JezykDiagnostyke {
         $Script:DiagnostykaTla = @($Script:DiagnostykaTla | Select-Object -Last $Script:LimitDiagnostyki)
     }
 
-    # Przycisk "!" przy polu Status pokazuje ten slad, wiec ma sie pojawic TERAZ, a nie
-    # dopiero przy nastepnym wyszukaniu. Wszystkie wywolania tej funkcji ida z watku
-    # interfejsu, wiec dotkniecie kontrolki jest tu bezpieczne.
+    # "!" przy Status pokazuje slad od razu (wolane zawsze z watku interfejsu).
     $przycisk = $Script:Kontrolki['InfoStatus']
     if ($przycisk) { $przycisk.Visible = $true }
 }
 
-# Lista kontrolerow per domena, zapamietana z poprzedniego wyszukania. Nie jest to pamiec
-# trwala - przy kazdym uruchomieniu pierwsze wyszukanie znow rozpoznaje kontrolery.
+# Lista kontrolerow per domena z poprzedniego wyszukania (tylko w pamieci).
 $Script:KontroleryCache = @{}
 
-# Ostatni odczyt z AD - zrodlo prawdy dla operacji zapisu. Kontrolki sluza do pokazywania
-# danych, nie do ich przenoszenia.
+# Ostatni odczyt z AD - zrodlo prawdy dla zapisu.
 $Script:OstatnieKonto = $null
 
-# Data przyblizona z ostatniego pokazanego konta. Trzymana osobno, bo potrzebuja jej oba
-# etapy wypelniania pola, a drugi z nich (zegar) nie widzi juz obiektu wyniku.
+# Data przyblizona pokazanego konta - potrzebna obu etapom wypelniania pola.
 $Script:LogowaniePrzyblizone = $null
 
-<#
-.SYNOPSIS
-    Sklada tekst skryptu dla przestrzeni w tle. Wynik jest zapamietywany.
-
-.DESCRIPTION
-    Tekst zalezy wylacznie od definicji funkcji, a te sa stale przez cale zycie procesu -
-    skladanie go przy kazdym klinieciu "Szukaj" bylo praca wykonywana od nowa po to, zeby
-    otrzymac ten sam wynik.
-
-    KOMPLET FUNKCJI JEST WARUNKIEM DZIALANIA: przestrzen startuje pusta, wiec funkcja
-    pominieta na liscie konczy zadanie wyjatkiem "nie rozpoznano nazwy polecenia" WEWNATRZ
-    przestrzeni, a wolajacy widzi tylko brak wyniku. Kolejnosc tez jest krytyczna - param()
-    musi byc PIERWSZA instrukcja skryptu.
-#>
+# Sklada (raz) tekst skryptu dla przestrzeni w tle: KOMPLET wstrzykiwanych funkcji, param() pierwsze.
 function New-JezykSkryptTla {
     param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer', 'Dysk')][string]$Zadanie)
 
     if ($Script:SkryptyTla.ContainsKey($Zadanie)) { return $Script:SkryptyTla[$Zadanie] }
 
-    # KOMPLET zaleznosci obu zapytan do SCCM, policzony z ich tresci, a nie z pamieci.
-    # Oba wchodza tam ta sama droga (sonda portu, sesja, zapytanie z droga zapasowa,
-    # klasyfikacja bledu, przeliczenie czasu) i roznia sie WYLACZNIE funkcja wejsciowa,
-    # wiec lista jest jedna - dwie kopie rozjechalyby sie przy pierwszej zmianie. Na tej samej
-    # liscie stoi komplet dopasowania karty sieciowej: oba zapytania konczy Set-JezykMacWWyniku,
-    # a ono siega po cale domkniecie - az do arytmetyki maski.
+    # Komplet zaleznosci obu zapytan do SCCM (z dopasowaniem karty sieciowej) - jedna lista dla obu.
     $sccm = @('Test-JezykNazwaKonta', 'Test-JezykNazwaHosta',
               'Get-JezykSccmPolaczenie', 'Test-JezykPortOtwarty',
               'Get-JezykOpisBleduWmi', 'Open-JezykSesjaSccm',
@@ -1920,46 +1133,26 @@ function New-JezykSkryptTla {
               'Set-JezykMacWWyniku')
 
     if ($Zadanie -eq 'Numer') {
-        # WYSZUKIWANIE PO NUMERZE TELEFONU. Najwolniejsze z pieciu zadan i jedyne, ktorego
-        # czasu nie da sie skrocic: telephoneNumber i mobile NIE SA w AD indeksowane, wiec
-        # kontroler przeglada konto po koncie. -ResultPageSize przerywa to przegladanie
-        # tylko przy numerze nalezacym do wielu osob; numer jednej osoby zmusza kontroler
-        # do przejscia calej domeny i tego nie obejdzie zaden filtr.
-        #
-        # DOMKNIECIE PRZECHODNIE, nie pierwszy poziom: Find-JezykPozycjePoNumerze wola
-        # Find-JezykUsersPoNumerze i New-JezykPozycjaKonta, ta pierwsza wola Get-JezykCyfry
-        # i Test-JezykNumerPasuje, a druga Get-JezykOsoba. Pominiecie ktorejkolwiek konczy
-        # sie wyjatkiem WEWNATRZ przestrzeni, ktorego okno nie zobaczy - zobaczy tylko brak
-        # wyniku.
+        # Numer telefonu: najwolniejsze zadanie (atrybuty bez indeksu). Lista to domkniecie przechodnie.
         $funkcje = 'Get-JezykCyfry', 'Test-JezykNumerPasuje', 'Get-JezykOsoba',
                    'New-JezykPozycjaKonta', 'Find-JezykUsersPoNumerze',
                    'Find-JezykPozycjePoNumerze'
 
-        # IMPORT BEZWARUNKOWY, inaczej niz przy dacie logowania. Tam modul AD bywa
-        # niepotrzebny i dlatego import jest pod warunkiem; tutaj Get-ADUser jest JEDYNA
-        # droga, wiec warunek tylko odsuwalby ten sam koszt o jedna linijke.
+        # Import modulu AD bezwarunkowo - Get-ADUser jest tu jedyna droga.
         $naglowek  = 'param($Cyfry, $Limit, $Serwer, $SzukajOd)'
         $naglowek += "`r`n" + 'Import-Module ActiveDirectory -ErrorAction SilentlyContinue'
         $wywolanie = 'Find-JezykPozycjePoNumerze -Cyfry $Cyfry -Limit $Limit' +
                      ' -Serwer $Serwer -SzukajOd $SzukajOd'
     }
     elseif ($Zadanie -eq 'Ping') {
-        # NAJLZEJSZE Z CZTERECH ZADAN: sama sonda ICMP na znanej juz nazwie maszyny.
-        # Osobne, bo przycisk "Pinguj" ma sprawdzic dostepnosc PONOWNIE, nie powtarzac
-        # calego zapytania do SCCM - tamto trwa sekundy i pytaloby o to samo, co juz wiadomo.
+        # Sama sonda ICMP ("Pinguj") - bez powtarzania zapytania do SCCM.
         $funkcje = 'Test-JezykNazwaHosta', 'Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera'
 
         $naglowek  = 'param($Netbios)'
         $wywolanie = 'Get-JezykPingKomputera -Nazwa $Netbios'
     }
     elseif ($Zadanie -eq 'Dysk') {
-        # PROBA CICHA POLACZENIA Z UDZIALEM - bez pytania o konto, wiec nie ma tu czego
-        # rysowac i cala rozmowa z serwerem moze isc w tle. O to w tym zadaniu chodzi:
-        # dotad szla przez ShellExecute na watku interfejsu i okno stalo.
-        #
-        # Odpowiedz "potrzeba poswiadczen" wraca STAD NA WATEK INTERFEJSU i dopiero tam
-        # pada pytanie o konto - systemowe okno poswiadczen potrzebuje rodzica i petli
-        # komunikatow, a przestrzen w tle nie ma ani jednego, ani drugiego.
+        # Cicha proba polaczenia z udzialem; "potrzeba poswiadczen" wraca na watek interfejsu.
         $funkcje = 'Test-JezykNazwaKonta', 'Get-JezykSciezkaUdzialu',
                    'Get-JezykStanPolaczeniaUdzialu', 'Invoke-JezykPolaczenieUdzialu',
                    'Connect-JezykUdzialDysku'
@@ -1972,22 +1165,14 @@ function New-JezykSkryptTla {
                    'Get-JezykLastLogonZKontrolera', 'Invoke-JezykRownolegle',
                    'Get-JezykOstatnieLogowanie'
 
-        # MODUL AD LADOWANY WARUNKOWO - to najdrozsza rzecz w calym wyszukiwaniu.
-        # Import w swiezej przestrzeni trwa sekunde do trzech, a potrzebny jest tylko wtedy,
-        # gdy trzeba rozpoznac kontrolery (Get-ADDomainController) albo skorzystac z drogi
-        # zapasowej przez Get-ADUser. Sam odczyt lastLogon idzie surowym LDAP-em. Lista
-        # kontrolerow jest pamietana, wiec od drugiego wyszukania importu nie ma wcale.
+        # Modul AD tylko gdy trzeba rozpoznac kontrolery albo isc droga zapasowa (import trwa 1-3 s).
         $naglowek  = 'param($Login, $Domena, $Dn, $Kontrolery)'
         $naglowek += "`r`n" + 'if (-not $Dn -or @($Kontrolery).Count -eq 0) {' +
                      ' Import-Module ActiveDirectory -ErrorAction SilentlyContinue }'
         $wywolanie = 'Get-JezykOstatnieLogowanie -Login $Login -Domena $Domena -Dn $Dn -Kontrolery $Kontrolery'
     }
     elseif ($Zadanie -eq 'Komputer') {
-        # Wejsciem jest droga OD LOGINU DO MASZYNY. Get-JezykPingKomputera dochodzi TYLKO
-        # tutaj, a nie do wspolnej listy $sccm: droga odwrotna (uzytkownik maszyny) nie
-        # pinguje niczego, a funkcja wstrzyknieta bez potrzeby to martwy kod w przestrzeni.
-        # Get-JezykKontaMaszyny dochodzi tu z tego samego powodu, co Get-JezykPingKomputera -
-        # wola ja Get-JezykOstatnioUzywanyKomputer, wiec bez niej zadanie konczy sie cisza.
+        # Droga od loginu do maszyny; rozbior pol z kontami (Get-JezykKontaMaszyny) tylko tutaj.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
                              'Get-JezykKontaZPola', 'Get-JezykKontaMaszyny',
                              'Select-JezykMaszyneDlaLoginu',
@@ -2000,9 +1185,7 @@ function New-JezykSkryptTla {
                      ' -ProtokolZapasowy $SccmProtokolZapasowy'
     }
     else {
-        # Wejsciem jest droga ODWROTNA: OD MASZYNY DO UZYTKOWNIKA.
-        # Sonda i dopasowanie karty sieciowej jada w tym samym zadaniu, tak samo jak po
-        # drugiej stronie okna - Test-JezykNazwaHosta jest juz w $sccm.
+        # Droga odwrotna: od maszyny do uzytkownika (z sonda i dopasowaniem karty).
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
                              'Get-JezykUzytkownikKomputera')
 
@@ -2021,9 +1204,7 @@ function New-JezykSkryptTla {
     $Script:SkryptyTla[$Zadanie]
 }
 
-# Otwiera przestrzen uruchomieniowa z gotowym skryptem, jeszcze bez argumentow.
-# MTA, bo tylko watek interfejsu musi byc STA. Przestrzen dostaje WYLACZNIE tekst -
-# zadnych kontrolek ani obiektow interfejsu.
+# Przestrzen uruchomieniowa (MTA) z gotowym skryptem - dostaje wylacznie tekst, zadnych kontrolek.
 function New-JezykPrzestrzenTla {
     param([string]$Tresc)
 
@@ -2043,16 +1224,14 @@ function Start-JezykZadanieLogowania {
     param([string]$Login, [string]$Dn = '')
 
     Stop-JezykZadanieLogowania
-    # Bez loginu zadanie nie ruszy WCALE, wiec notka o trwajacym precyzowaniu daty mrugalaby
-    # nad praca, ktorej nikt nie zaczal. Pole wraca do samej daty przyblizonej.
+    # Bez loginu zadanie nie rusza - pole wraca do samej daty przyblizonej.
     if (-not $Login) { Set-JezykPoleLogowaniaBezTla; return }
 
     $Script:PokolenieLogowania++
     $mojePokolenie = $Script:PokolenieLogowania
     $domena        = $Script:Config.Domena
 
-    # Lista z konfiguracji ma pierwszenstwo; pusta = bierzemy zapamietana z poprzedniego
-    # wyszukania, a gdy i jej nie ma, zadanie zapyta o nia katalog.
+    # Kontrolery: z konfiguracji, potem z pamieci poprzedniego wyszukania, na koncu z katalogu.
     $kontrolery = @($Script:Ustawienia.Kontrolery)
     if ($kontrolery.Count -eq 0) { $kontrolery = @($Script:KontroleryCache[$domena]) }
 
@@ -2080,8 +1259,7 @@ function Start-JezykZadanieLogowania {
         if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
     }
     catch {
-        # Awaria uruchomienia nie moze przerwac pracy okna - konto jest juz pokazane,
-        # a data przyblizona siedzi w polu.
+        # Awaria uruchomienia nie przerywa okna - data przyblizona juz stoi w polu.
         Set-JezykPoleLogowaniaBezTla
     }
 }
@@ -2094,10 +1272,7 @@ function Start-JezykZadanieKomputera {
     # Jak wyzej: bez loginu nie ma o co pytac SCCM, a zapalona notka mrugalaby bez konca.
     if (-not $Login) { Set-JezykPoleKomputeraBezTla -Blad ''; return }
 
-    # Brak ustawien SCCM rozstrzygamy TUTAJ, przed zbudowaniem czegokolwiek: inaczej kazde
-    # znalezione konto powolywaloby pelna przestrzen uruchomieniowa po odpowiedz znana
-    # z gory. Wynik skladamy w ksztalcie, jaki oddaloby zadanie, i puszczamy przez te sama
-    # funkcje renderujaca - dzieki temu nie ma drugiej sciezki wyswietlania.
+    # Brak ustawien SCCM - odpowiedz od razu, ta sama droga renderowania (bez przestrzeni w tle).
     $polaczenie = Get-JezykSccmPolaczenie -Serwer     ([string]$Script:Ustawienia.SccmSerwer) `
                                           -KodLokacji ([string]$Script:Ustawienia.SccmKodLokacji) `
                                           -Protokol   ([string]$Script:Ustawienia.SccmProtokol)
@@ -2138,25 +1313,19 @@ function Start-JezykZadanieKomputera {
     }
 }
 
-# Uruchamia w tle zapytanie do SCCM o ostatnio zalogowanego uzytkownika podanej maszyny.
-# Blizniacze do Start-JezykZadanieKomputera i z tego samego powodu: to zapytanie sieciowe,
-# a policzone na watku interfejsu zamrozilo by okno na czas odpowiedzi SCCM.
+# Uruchamia w tle zapytanie SCCM o ostatnio zalogowanego uzytkownika maszyny (z sonda i MAC).
 function Start-JezykZadanieUzytkownika {
     param([string]$Netbios)
 
     Stop-JezykZadanieUzytkownika
     if (-not $Netbios) { return }
 
-    # Brak ustawien SCCM rozstrzygamy TUTAJ, przed zbudowaniem czegokolwiek - tak samo jak
-    # przy drodze odwrotnej. Wynik skladamy w ksztalcie, jaki oddaloby zadanie, i puszczamy
-    # przez te sama funkcje renderujaca.
+    # Brak ustawien SCCM - odpowiedz od razu, ta sama droga renderowania.
     $polaczenie = Get-JezykSccmPolaczenie -Serwer     ([string]$Script:Ustawienia.SccmSerwer) `
                                           -KodLokacji ([string]$Script:Ustawienia.SccmKodLokacji) `
                                           -Protokol   ([string]$Script:Ustawienia.SccmProtokol)
     if ($polaczenie.Blad) {
-        # Ksztalt CALY, razem z polami sondy - renderer jest jeden i czyta je wszystkie.
-        # Sonda odbedzie sie osobnym zadaniem, bo ICMP nie potrzebuje SCCM; tu oddajemy
-        # tylko "nie sprawdzono", zeby pola nie zostaly z poprzedniego wyszukania.
+        # Pelny ksztalt z polami sondy - renderer czyta je wszystkie; sonda pojdzie osobnym zadaniem.
         Update-JezykUzytkownikaWTle -Uzytkownik ([pscustomobject]@{
             Uzytkownik = ''; Data = $null; Blad = 'brak ustawień SCCM'; Szczegoly = $polaczenie.Blad
             Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
@@ -2195,11 +1364,7 @@ function Start-JezykZadanieUzytkownika {
     }
 }
 
-# Uruchamia w tle sonde ICMP na maszynie, ktora jest juz na ekranie - obsluga przycisku
-# "Pinguj". Czwarte zadanie, a nie ponowienie zadania SCCM: tamto trwa sekundy i pytaloby
-# o nazwe maszyny, ktora juz znamy. Wlasny licznik pokolen, bo operator potrafi kliknac
-# dwa razy pod rzad, a spozniona odpowiedz pierwszej sondy pomalowalaby pole wynikiem
-# nieaktualnym.
+# Uruchamia w tle sonde ICMP maszyny z ekranu (przycisk "Pinguj"); wlasny licznik pokolen.
 function Start-JezykZadaniePingu {
     param([string]$Netbios)
 
@@ -2229,26 +1394,13 @@ function Start-JezykZadaniePingu {
         if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
     }
     catch {
-        # Nieudane uruchomienie zostawia stan "nie wiadomo", a nie czerwony napis: sonda
-        # sie nie odbyla, wiec o maszynie nadal nic nie wiemy.
+        # Nieudane uruchomienie - stan "nie wiadomo", nie czerwony napis.
         Update-JezykPingWTle -Ping ([pscustomobject]@{
             Odpowiada = $null; Adres = ''; Blad = 'nie sprawdzono'; Szczegoly = $_.Exception.Message })
     }
 }
 
-<#
-.SYNOPSIS
-    Uruchamia w tle wyszukiwanie kont po NUMERZE TELEFONU.
-
-.DESCRIPTION
-    Piate zadanie i jedyne, ktore nalezy do WYSZUKIWANIA, a nie do konta juz pokazanego
-    w oknie. Wczesniej to zapytanie szlo wprost z Find-JezykUsers, czyli na watku
-    interfejsu, i okno stalo przez cale przegladanie katalogu - takze wtedy, gdy konta po
-    nazwie byly gotowe od razu.
-
-    ZADNEGO ODCZYTU ZE $Script:Config PO STRONIE PRZESTRZENI: adres domeny, limit
-    i poddrzewo ida jako ARGUMENTY. Przestrzen startuje pusta i o konfiguracji nie wie nic.
-#>
+# Uruchamia w tle wyszukiwanie po numerze telefonu - konfiguracja idzie argumentami.
 function Start-JezykZadanieNumeru {
     param([string]$Cyfry)
 
@@ -2281,34 +1433,20 @@ function Start-JezykZadanieNumeru {
         if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
     }
     catch {
-        # Nieudane uruchomienie to PRZERWANIE, a nie pusty wynik: nie sprawdzilismy niczego,
-        # wiec okno nie moze powiedziec, ze nikogo nie ma.
+        # Nieudane uruchomienie to przerwanie, nie pusty wynik.
         Update-JezykNumerWTle -Wynik ([pscustomobject]@{
             Trafienia = @(); ZaDuzo = $false; Przerwane = $true
             Powod     = 'Nie udało się uruchomić wyszukiwania po numerze telefonu: {0}' -f $_.Exception.Message })
     }
 }
 
-<#
-.SYNOPSIS
-    Uruchamia w tle ciche polaczenie z udzialem dyskowym maszyny.
-
-.DESCRIPTION
-    SZOSTE ZADANIE i jedyne, ktore nalezy do KLIKNIECIA - nie do pokazanego konta ani do
-    wyszukiwania. Wlasny licznik pokolen jest i tak konieczny: operator klika "Dyski" drugi
-    raz (choćby po to, zeby wybrac inna litere), a odpowiedz na pierwsza probe potrafi dojsc
-    juz po tym i otworzylaby udzial, ktorego nikt juz nie chce.
-
-    ODPOWIEDZ BYWA POL-ODPOWIEDZIA: "potrzeba poswiadczen" znaczy, ze pytanie trzeba zadac
-    jeszcze raz, tyle ze z watku interfejsu i oknem systemowym - patrz Update-JezykDyskWTle.
-#>
+# Uruchamia w tle cicha probe polaczenia z udzialem (przycisk "Dyski"); wlasny licznik pokolen.
 function Start-JezykZadanieDysku {
     param([string]$Netbios, [string]$Litera)
 
     Stop-JezykZadanieDysku
 
-    # Bez maszyny albo bez litery zadanie nie ruszy WCALE, wiec notka o trwajacym laczeniu
-    # migalaby nad praca, ktorej nikt nie zaczal.
+    # Bez maszyny albo litery zadanie nie rusza - notka gasnie.
     if (-not $Netbios -or -not $Litera) { Set-JezykNotkeLaczenia -Wylacz; return }
 
     $Script:PokolenieDysku++
@@ -2334,9 +1472,7 @@ function Start-JezykZadanieDysku {
         if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
     }
     catch {
-        # Nieudane URUCHOMIENIE to awaria tej drogi, a nie odmowa serwera. Idzie ta sama
-        # droga powrotu co odpowiedz, bo notke trzeba zgasic tak czy owak - zostawiona
-        # migalaby kropkami nad niczym do konca zycia okna.
+        # Nieudane uruchomienie - ta sama droga co odpowiedz (notke trzeba zgasic).
         Update-JezykDyskWTle -Wynik ([pscustomobject]@{
             Stan = 'Blad'; Kod = $null; Sciezka = ''
             Komunikat = 'Nie udało się zacząć łączenia z udziałem.'
@@ -2344,8 +1480,7 @@ function Start-JezykZadanieDysku {
     }
 }
 
-# Odbiera wynik zadania daty logowania, jesli juz jest gotowy. Wynik z niezgodnego pokolenia
-# jest odrzucany - dotyczylby konta, ktorego nie ma juz na ekranie.
+# Odbiera wynik zadania daty, jesli gotowy; wynik z innego pokolenia odrzucany.
 function Receive-JezykZadanieLogowania {
     $zadanie = $Script:ZadanieLogowania
     if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
@@ -2420,8 +1555,7 @@ function Receive-JezykZadaniePingu {
     finally { Stop-JezykZadaniePingu }
 }
 
-# Odbiera trafienia po numerze telefonu. Wynik z niezgodnego pokolenia jest odrzucany -
-# dotyczylby numeru, ktorego operator juz nie szuka.
+# Odbiera trafienia po numerze; wynik z innego pokolenia odrzucany.
 function Receive-JezykZadanieNumeru {
     $zadanie = $Script:ZadanieNumeru
     if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
@@ -2442,21 +1576,8 @@ function Receive-JezykZadanieNumeru {
     finally { Stop-JezykZadanieNumeru }
 }
 
-<#
-.SYNOPSIS
-    Odbiera odpowiedz cichej proby polaczenia z udzialem.
-
-.DESCRIPTION
-    ZADANIE ZDEJMUJEMY Z REJESTRU PRZED RENDEROWANIEM, inaczej niz w pozostalych pieciu -
-    i to nie jest kosmetyka. Ta odpowiedz potrafi postawic MODALNE okno poswiadczen, a ono
-    pompuje komunikaty watku, w tym takt zegara tla. Drugi takt wszedlby wiec tutaj jeszcze
-    raz, zawolal EndInvoke po raz kolejny na tym samym uchwycie i postawil DRUGIE okno
-    poswiadczen nad pierwszym. Zdjete z rejestru zadanie nie ma jak wpasc w ten cykl.
-
-    Wynik z niezgodnego pokolenia odrzucamy tak samo jak wszedzie - dotyczylby litery albo
-    maszyny, ktorej operator juz nie wybral. NOTKI WTEDY NIE GASIMY: nalezy juz do zadania,
-    ktore biegnie, a nie do tego, ktore wlasnie wrocilo.
-#>
+# Odbiera odpowiedz proby polaczenia z udzialem - zadanie zdjete z rejestru PRZED renderowaniem.
+# Uwaga: okno poswiadczen pompuje takty zegara - bez tego stanelo by drugie okno nad pierwszym.
 function Receive-JezykZadanieDysku {
     $zadanie = $Script:ZadanieDysku
     if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
@@ -2479,8 +1600,7 @@ function Receive-JezykZadanieDysku {
 
     if ($zadanie.Pokolenie -ne $Script:PokolenieDysku) { return }
 
-    # PUSTA ODPOWIEDZ TEZ JEST ODPOWIEDZIA. Zadanie, ktore nie oddalo nic, zostawiloby
-    # migajaca notke nad praca, ktora sie skonczyla - a operator czyta to pole raz.
+    # Pusta odpowiedz tez jest odpowiedzia - notka nie moze zostac.
     if ($null -eq $wynik) {
         $wynik = [pscustomobject]@{
             Stan = 'Blad'; Kod = $null; Sciezka = ''
@@ -2491,25 +1611,8 @@ function Receive-JezykZadanieDysku {
     Update-JezykDyskWTle -Wynik $wynik
 }
 
-<#
-.SYNOPSIS
-    Przerywa i sprzata zadanie w tle - zakonczone albo porzucone w polowie.
-
-.DESCRIPTION
-    Zadanie ZAKONCZONE zwalniamy wprost. Zadanie PORZUCONE (ponowne klikniecie "Szukaj",
-    zamkniecie okna) biegnie jeszcze w tle i trzyma otwarte polaczenie w kontekscie
-    operatora, wiec prosimy o przerwanie - ale przez BeginStop, czyli ASYNCHRONICZNIE.
-    Stop() jest blokujacy i zamrozilby okno na czas trwajacego zapytania.
-
-    O PRZERWANIE PROSIMY DOKLADNIE RAZ. Przestrzen tkwiaca w wywolaniu, ktorego PowerShell
-    nie umie przerwac (polaczenie DCOM z milczacym hostem jest tego wzorcowym przykladem),
-    nie zatrzyma sie, dopoki to wywolanie samo nie odpusci - a kazda kolejna prosba
-    o zatrzymanie zajmuje na ten czas watek z puli. Kilka takich prosb pod rzad wyczerpuje
-    pule i okno przestaje odpowiadac. Znacznik Przerwane pilnuje, zeby prosba padla raz.
-
-    Zwolnienia nie robimy od razu, bo przypadloby na moment, w ktorym przestrzen jest
-    w trakcie zatrzymywania. Zadanie trafia na liste, ktora oprozia zegar.
-#>
+# Sprzata zadanie: zakonczone zwalnia od razu, biegnace przerywa asynchronicznie (BeginStop, raz)
+# i odklada na liste porzuconych - Stop() zamrozilby okno.
 function Stop-JezykZadanieTla {
     param($Zadanie)
 
@@ -2538,32 +1641,8 @@ function Stop-JezykZadanieTla {
     Add-JezykDiagnostyke 'zwolnienie zakończonego zadania (Dispose)' $zegar.ElapsedMilliseconds
 }
 
-<#
-.SYNOPSIS
-    Zwalnia zadania w tle, ktore zdazyly sie juz zatrzymac - z obu list naraz.
-
-.DESCRIPTION
-    Wolane z zegara, czyli NA WATKU INTERFEJSU - nie ma tu wiec ani dostepu z obcego watku,
-    ani wyscigu z zatrzymywaniem. I wlasnie dlatego lista porzuconych nie moze rosnac bez
-    konca: przegladamy ja co cwierc sekundy.
-
-    Zadanie, ktore po TERMINIE nadal sie nie zatrzymalo, schodzi z tej listy na liste
-    SPISANYCH. Nie jest zwalniane od razu i nie moze byc: jego przestrzen tkwi
-    w wywolaniu, ktorego nikt nie przerwie, a Dispose na takim obiekcie schodzi do
-    zatrzymania SYNCHRONICZNEGO i zablokowalby okno - dokladnie to, czemu zadania w tle
-    mialy zapobiegac. Ten zakaz obowiazuje bez wyjatku.
-
-    ALE PRZESTAJEMY JE TRACIC. Wczesniej spisane zadanie znikalo z listy i nikt juz nigdy
-    nie probowal go zwolnic, nawet gdy zawieszone wywolanie w koncu wracalo - przestrzen
-    (przy dacie logowania z modulem AD w srodku) zostawala w pamieci do konca zycia
-    procesu. Teraz czeka na drugiej liscie i zostaje zwolniona przy pierwszym przegladzie
-    po tym, jak sie faktycznie zakonczy.
-
-    Drugiej listy NIE trzymamy zegarem przy zyciu: zadanie, ktore nie odpuscilo przez dwie
-    minuty, nie zglosi sie w nastepnej cwiartce sekundy, a chodzacy bez przerwy zegar
-    kosztowalby wiecej niz zwloka. Przeglada sie ona razem z pierwsza, czyli przy okazji
-    kazdego kolejnego wyszukiwania - a wlasnie wtedy pamiec zaczyna byc potrzebna.
-#>
+# Zwalnia zadania, ktore juz sie zatrzymaly: porzucone co takt, po terminie przenosi do spisanych.
+# Uwaga: Dispose wylacznie na zakonczonym - na biegnacym zablokowalby okno (README: Praca w tle).
 function Clear-JezykZadaniaPorzucone {
 
     $teraz = [datetime]::UtcNow
@@ -2606,8 +1685,7 @@ function Clear-JezykZadaniaPorzucone {
 
     $czekaja = @()
     foreach ($zadanie in @($Script:ZadaniaSpisane)) {
-        # WARUNEK JEST TU CALA OSTROZNOSCIA: Dispose wolamy WYLACZNIE na zadaniu, ktore
-        # samo sie juz zakonczylo. Na biegnacym zablokowaloby watek interfejsu.
+        # Dispose wylacznie na zadaniu zakonczonym.
         if ($zadanie.Uchwyt -and -not $zadanie.Uchwyt.IsCompleted) { $czekaja += $zadanie; continue }
 
         $zegar = [System.Diagnostics.Stopwatch]::StartNew()
@@ -2616,8 +1694,7 @@ function Clear-JezykZadaniaPorzucone {
         Add-JezykDiagnostyke 'zwolnienie spisanego zadania (Dispose)' $zegar.ElapsedMilliseconds
     }
 
-    # Sufit: powyzej niego wypadaja NAJSTARSZE, czyli te, ktore nie odpuscily najdluzej.
-    # Dopiero one przepadaja bez zwolnienia - tak jak dawniej przepadaly wszystkie.
+    # Sufit - ponad nim przepadaja najstarsze.
     if ($czekaja.Count -gt $Script:LimitSpisanych) {
         $ilePrzepada = $czekaja.Count - $Script:LimitSpisanych
         Add-JezykDiagnostyke ('spisane porzucone bez zwolnienia (sufit {0}): {1}' -f
@@ -2628,8 +1705,8 @@ function Clear-JezykZadaniaPorzucone {
     $Script:ZadaniaSpisane = $czekaja
 }
 
-# Przypisanie $null idzie PIERWSZE, zeby ponowne wejscie tutaj nie zabralo sie za ten sam
-# obiekt drugi raz.
+# Porzucenie zadania danego rodzaju (szesc blizniakow ponizej).
+# $null najpierw - ponowne wejscie nie wezmie tego samego obiektu drugi raz.
 function Stop-JezykZadanieLogowania {
     if (-not $Script:ZadanieLogowania) { return }
     $zadanie = $Script:ZadanieLogowania
@@ -2672,9 +1749,7 @@ function Stop-JezykZadanieDysku {
     Stop-JezykZadanieTla $zadanie
 }
 
-# Sprzatanie przy zamykaniu okna. Zatrzymanie zegara musi byc OSTATNIE: porzucenie
-# trwajacego zadania dopisuje je do listy i samo URUCHAMIA zegar, wiec zatrzymany najpierw
-# wstawalby z powrotem - w trakcie zamykania okna, gdy kontrolki sa juz zwalniane.
+# Sprzatanie przy zamykaniu okna; zegar zatrzymywany na koncu (porzucenie zadania go uruchamia).
 function Stop-JezykZadaniaTla {
     Stop-JezykZadanieLogowania
     Stop-JezykZadanieKomputera
@@ -2689,23 +1764,11 @@ function Stop-JezykZadaniaTla {
     if ($Script:ZegarTla) { $Script:ZegarTla.Stop() }
 }
 
-<#
-.SYNOPSIS
-    Sklada tytul okna grup: podpis konta i licznik pozycji.
-
-.DESCRIPTION
-    JEDNO MIEJSCE, bo tytul powstaje dwa razy - przy budowie okna i po kazdym znaku wpisanym
-    do pola filtra. Dwa miejsca skladajace ten sam napis rozjechalyby sie przy pierwszej zmianie.
-
-    Licznik ma dwie postaci celowo. Przy pelnej liscie sama liczba odpowiada na pytanie "do ilu
-    grup nalezy to konto"; przy zawezonej dopiero "X z Y" mowi, ze reszta nie znikla, tylko jest
-    odfiltrowana - bez tego zawezona lista wygladalaby jak konto o trzech grupach.
-#>
+# Tytul okna grup: podpis konta i licznik - "42" przy pelnej liscie, "3 z 42" po zawezeniu.
 function Get-JezykTytulGrup {
     param([string]$Podpis, [int]$Ile, [int]$Wszystkich)
 
-    # Napisy skladamy do zmiennych, a nie w argumencie metody: w wywolaniu metody przecinki
-    # naleza do listy argumentow METODY, wiec operator -f dostalby tylko pierwsza wartosc.
+    # Uwaga: napisy do zmiennych - w argumencie metody przecinki naleza do metody.
     $licznik = if ($Ile -eq $Wszystkich) { [string]$Wszystkich }
                else                      { '{0} z {1}' -f $Ile, $Wszystkich }
 
@@ -2713,41 +1776,17 @@ function Get-JezykTytulGrup {
     return $tytul
 }
 
-<#
-.SYNOPSIS
-    Wybiera grupy pasujace do wpisanego fragmentu nazwy i numeruje je do pokazania na liscie.
-
-.DESCRIPTION
-    DOPASOWANIE PRZEZ IndexOf, A NIE PRZEZ -like. Operator wpisuje TEKST, nie wzorzec: w -like
-    znaki '*', '?' i '[' z pola filtra bylyby wieloznacznikami, wiec sama gwiazdka pokazywalaby
-    komplet, a nawias kwadratowy nie pokazywalby nic i wygladaloby to na zgubione grupy.
-    OrdinalIgnoreCase odpowiada przy tym na pytanie operatora ("czy ten ciag znakow w niej jest"),
-    a nie na pytanie o kolejnosc alfabetu.
-
-    FRAGMENT W DOWOLNYM MIEJSCU, a nie od poczatku nazwy. Nazwy grup zaczynaja sie od przedrostka
-    typu "GG_" albo "DL_", ktorego nikt nie chce przepisywac, zeby dojsc do slowa niosacego sens.
-
-    ODDAJE PARY, A NIE GOTOWE NAPISY - i to jest tu rzecz najwazniejsza. Okno usuwa konto
-    z grupy ZAZNACZONEJ NA LISCIE, czyli odwzorowuje numer pozycji na grupe; gdyby ta funkcja
-    oddawala same napisy, wolajacy musialby odtworzyc to odwzorowanie drugi raz i przy
-    pierwszej zmianie filtra usunieto by konto z INNEJ grupy niz zaznaczona. Numeracja stoi
-    osobno, w Get-JezykWierszeGrup, i jedzie po TEJ SAMEJ tablicy.
-
-    ODSIEW PUSTYCH I NORMALIZACJA STOJA TUTAJ, a nie u wolajacego: Get-JezykParyGrup przyjmuje
-    i pary, i same nazwy, wiec ta sama droga obsluguje liste grup konta i trafienia z AD.
-    @($null) to w PowerShellu tablica JEDNOELEMENTOWA, wiec pusty wpis dokladalby do listy
-    ponumerowany, pusty wiersz.
-#>
+# Grupy pasujace do fragmentu nazwy (IndexOf, nie -like - tekst, nie wzorzec; w dowolnym miejscu).
+# Oddaje PARY - numeruje je Get-JezykWierszeGrup z tej samej tablicy (README: Usuniecie bierze grupe).
 function Select-JezykGrupyDoPokazania {
     param([object[]]$Grupy, [string]$Fraza)
 
-    # JEDNA PISOWNIA - patrz Weryfikacja/spojnosc.ps1: $fraza i $Fraza to ta sama zmienna.
+    # Jedna pisownia - $fraza i $Fraza to ta sama zmienna.
     $Fraza = ([string]$Fraza).Trim()
     $wynik = @()
 
     foreach ($grupa in @(Get-JezykParyGrup $Grupy)) {
-        # PO NAZWIE, A NIE PO PODPISIE: grupy o tej samej nazwie zostaja albo znikaja RAZEM,
-        # wiec zawezenie nie zostawi jednej bez drugiej, a folder z podpisu trafieniem nie jest.
+        # Po nazwie, nie po podpisie - grupy o tej samej nazwie zostaja albo znikaja razem.
         $nazwa = [string]$grupa.Nazwa
         if ($Fraza -and ($nazwa.IndexOf($Fraza, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
             continue
@@ -2755,24 +1794,12 @@ function Select-JezykGrupyDoPokazania {
         $wynik += $grupa
     }
 
-    # NAWIASY TU NIE WYSTARCZA I NIE MOGA WYSTARCZYC. PowerShell ROZWIJA tablice w wyniku, wiec
-    # przy zerze trafien nie wyjdzie stad nic (i @() u wolajacego da Count 0), a przy jednym -
-    # sam obiekt. Owiniecie @() musi stac na miejscu wywolania.
+    # Wolajacy owija wynik w @() - PowerShell rozwija tablice.
     return @($wynik)
 }
 
-# NUMERACJA W JEDNYM MIEJSCU. Widoczne pozycje zawsze ida 1, 2, 3..., wiec ostatni numer jest
-# od razu liczba trafien; numer z pelnej listy nie powiedzialby nic komus, kto tej pelnej listy
-# juz nie widzi. Funkcja jest wspolna dla listy grup konta i dla okna wyboru grupy - druga
-# kopia numerowania rozjechalaby sie z pierwsza, a widac to dopiero na zawezonej liscie.
-#
-# KOLEJNOSC MUSI BYC TA SAMA, CO W TABLICY PODANEJ NA WEJSCIU: to po niej okno odnajduje
-# zaznaczona grupe (Get-JezykZaznaczonaGrupe), wiec przestawienie wierszy znaczy usuniecie
-# konta z innej grupy niz ta, ktora operator zobaczyl.
-#
-# WIERSZ NIESIE PODPIS, A NIE SAMA NAZWE (Get-JezykPodpisyGrup): dwie grupy o tej samej
-# nazwie z dwoch OU dostaja w nim folder AD. Bez tego to dwa identyczne wiersze, a wybor
-# jednego z nich - zgadywanie, ktore konczy sie zapisem w nie tej grupie.
+# Numeruje wiersze listy (1, 2, 3...) - jedyne miejsce numeracji; kolejnosc jak w tablicy wejsciowej.
+# Wiersz niesie podpis (z folderem przy powtorzonej nazwie).
 function Get-JezykWierszeGrup {
     param([object[]]$Grupy)
 
@@ -2787,32 +1814,15 @@ function Get-JezykWierszeGrup {
     return @($wiersze)
 }
 
-<#
-.SYNOPSIS
-    Liczy nowy pierwszy widoczny wiersz listy po ruchu kolkiem myszy.
-
-.DESCRIPTION
-    Sama arytmetyka, bez kontrolki - dzieki temu da sie ja zawolac w zestawie weryfikacyjnym,
-    ktory okna nie buduje.
-
-    KROK JEST STALY I WLASNY. Lista pozostawiona sama sobie przewija tyle wierszy, ile mowi
-    ustawienie Windows "Przewin o:", a przy wartosci "jeden ekran naraz" system oddaje -1
-    i jedno klikniecie kolka przerzuca CALA strone. Stad wrazenie, ze lista sie rozpedza
-    i nie da sie zatrzymac na wlasciwej pozycji.
-
-    [Math]::Truncate, A NIE SAMO [int]: [int] w PowerShellu zaokragla (bankiersko), wiec
-    [int](60/120) dalo by 1 zamiast 0, a [int](-60/120) - 0 zamiast -1.
-
-    Delta DODATNIA to ruch kolka od siebie, czyli patrzenie WYZEJ - numer pierwszego wiersza maleje.
-#>
+# Nowy pierwszy widoczny wiersz po ruchu kolkiem - staly krok (3 wiersze), bez kontrolki.
+# Truncate, nie [int] (zaokragla); dodatnia Delta = w gore listy.
 function Get-JezykNowyWierszListy {
     param([int]$Gora, [int]$Delta, [int]$Ile, [int]$Widoczne, [int]$WierszeNaObrot = 3)
 
     if ($Delta -eq 0) { return $Gora }
 
     $obroty = [int][Math]::Truncate($Delta / 120)
-    # Kolko o drobniejszym skoku oddaje mniej niz pelne 120 na jedno zdarzenie. Bez tej linii
-    # lista stalaby w miejscu az do uzbierania calego obrotu, czyli wygladalaby na zawieszona.
+    # Drobny skok kolka (ponizej 120) liczy sie jako jeden obrot - inaczej lista stalaby w miejscu.
     if ($obroty -eq 0) {
         if ($Delta -gt 0) { $obroty = 1 } else { $obroty = -1 }
     }
@@ -2827,18 +1837,7 @@ function Get-JezykNowyWierszListy {
     return $nowa
 }
 
-<#
-.SYNOPSIS
-    Przewija liste kolkiem myszy wlasnym, stalym krokiem. Procedura zdarzenia MouseWheel.
-
-.DESCRIPTION
-    Handled USTAWIAMY PRZEZ PSObject.Properties, a nie po sprawdzeniu typu zdarzenia: zestaw
-    weryfikacyjny wola te funkcje na atrapie, bez WinForms, a odwolanie do typu zamkneloby ja
-    przed nim. Wzor: Get-JezykOpisBleduWmi.
-
-    Bez Handled obsluga wlasna nie ZASTEPUJE domyslnej, tylko sie z nia DODAJE - lista skacze
-    wtedy dalej niz przedtem, czyli poprawka pogarsza dokladnie to, co miala naprawic.
-#>
+# Przewija liste kolkiem wlasnym krokiem; Handled = $true, inaczej obsluga domyslna dodaje swoj.
 function Set-JezykPrzewijanieListy {
     param($Lista, $Zdarzenie)
 
@@ -2854,26 +1853,8 @@ function Set-JezykPrzewijanieListy {
                                               -Ile $Lista.Items.Count -Widoczne $widoczne
 }
 
-<#
-.SYNOPSIS
-    Nadaje liscie wysokosc z calych wierszy, zanim ktokolwiek zmierzy sie od jej dolu.
-
-.DESCRIPTION
-    IntegralHeight PRZYCINA LISTE DOPIERO PRZY TWORZENIU UCHWYTU, a wspolrzedne okna grup
-    licza sie wczesniej. Wiersz pod lista liczyl sie wiec od wysokosci ZAMOWIONEJ, a lista
-    kurczyla sie potem o ulamek wiersza - i o tyle rosla szpara pod nia, bez zadnego
-    komunikatu. Wrocilo to jako zgloszenie "za duzo miejsca miedzy lista a polem nazwy".
-
-    Przyciecie liczymy wiec SAMI, z faktycznej wysokosci wiersza. Ta jest prawdziwa dopiero
-    z uchwytem (przed nim ItemHeight oddaje wartosc zastepcza, a nie te z czcionki okna) -
-    stad siegniecie po Handle, ktore uchwyt tworzy. Wysokosc wychodzi juz calowierszowa,
-    wiec systemowe przyciecie nie ma potem czego ruszac, a Bottom listy jest prawdziwy
-    w chwili, w ktorej mierzy sie od niego nastepny wiersz.
-
-    RAMKA TO POMIAR, A NIE LICZBA: roznica wysokosci kontrolki i jej obszaru roboczego zalezy
-    od stylu ramki i od DPI. Minimum jeden wiersz - lista bez zadnego widocznego wiersza nie
-    dalaby sie ani czytac, ani przewinac.
-#>
+# Nadaje liscie wysokosc z calych wierszy, zanim ktos zmierzy sie od jej dolu.
+# IntegralHeight tnie dopiero przy tworzeniu uchwytu, a ItemHeight jest prawdziwy dopiero z uchwytem.
 function Set-JezykWysokoscListy {
     param($Lista, [int]$Wysokosc)
 
@@ -2893,25 +1874,8 @@ function Set-JezykWysokoscListy {
     $Lista.Height = $ramka + $wiersze * $wiersz
 }
 
-<#
-.SYNOPSIS
-    Wypelnia liste grup wedlug tresci pola filtra i uaktualnia licznik w tytule okna.
-
-.DESCRIPTION
-    JEDNA SCIEZKA DLA PIERWSZEGO WYPELNIENIA I DLA KAZDEGO ZNAKU. Osobny kod na start i osobny
-    na filtrowanie rozjechalby sie przy pierwszej zmianie, a roznicy nie widac: okno po prostu
-    otwieraloby sie inaczej, niz wyglada po skasowaniu filtra.
-
-    STAN IDZIE PRZEZ Tag. Procedury zdarzen nie sa domknieciami i nie widza zmiennych lokalnych
-    Show-JezykGrupyAd, a $Script:Kontrolki opisuje okno GLOWNE. Tag ginie razem z oknem, wiec
-    ani pelna lista grup, ani rozpoznana grupa nie staja sie rzeczami, ktore trzeba pamietac
-    o wyczyszczeniu przy zmianie konta - inaczej niz zmienna skryptowa. Na oknie wisi cala
-    tablica skrotow (podpis, kontrolki, rozpoznana grupa), bo kontrolki tego okna musza
-    odnalezc sie nawzajem.
-
-    BeginUpdate/EndUpdate: bez nich lista przerysowuje sie przy kazdej dokladanej pozycji, czyli
-    kilkadziesiat razy na jedno nacisniecie klawisza.
-#>
+# Wypelnia liste grup wg filtra i uaktualnia tytul - jedna sciezka dla startu i kazdego znaku.
+# Stan okna na Tag (ginie z oknem); BeginUpdate/EndUpdate - jedno przerysowanie.
 function Update-JezykFiltrGrup {
     param($Pole)
 
@@ -2924,10 +1888,7 @@ function Update-JezykFiltrGrup {
 
     $okno = $Pole.FindForm()
 
-    # WIDOCZNE PARY ODKLADAMY Z TEJ SAMEJ TABLICY, z ktorej powstaly napisy, i PRZED
-    # narysowaniem listy. Stad Get-JezykZaznaczonaGrupe odwzorowuje SelectedIndex na grupe;
-    # gdyby to pole zostalo z poprzedniego filtra, "Usun z grupy" wypisalo by konto z grupy,
-    # ktorej na liscie juz nie ma - i nic by tego nie zglosilo.
+    # Widoczne pary odkladane z tej samej tablicy i PRZED narysowaniem listy (zaznaczenie -> grupa).
     if ($okno -and $okno.Tag) { $okno.Tag.WidoczneGrupy = $widoczne }
 
     $lista.BeginUpdate()
@@ -2943,57 +1904,26 @@ function Update-JezykFiltrGrup {
     $okno.Text = Get-JezykTytulGrup -Podpis ([string]$okno.Tag.Podpis) -Ile $widoczne.Count `
                                     -Wszystkich $grupy.Count
 
-    # Wyczyszczenie listy gasi zaznaczenie, a razem z nim powod, dla ktorego "Usun z grupy"
-    # bylo czynne. Bez tego przycisk zostaje zapalony nad pusta liscie.
+    # Wyczyszczenie listy gasi zaznaczenie - przelicz "Usun z grupy".
     Set-JezykPrzyciskUsunGrupe -Okno $okno
 }
 
-<#
-.SYNOPSIS
-    Pokazuje grupy AD zalezionego konta w osobnym oknie z lista. Wolane z przycisku "Grupy AD".
-
-.DESCRIPTION
-    OSOBNE OKNO, A NIE MessageBox jak przy przycisku "!". Konto potrafi nalezec do
-    kilkudziesieciu grup, a okno komunikatu rosnie z trescia i nie przewija sie - koniec
-    listy wypadalby poza ekran i nie dalo by sie do niego dojsc. Lista przewija sie sama.
-
-    ZRODLEM JEST $Script:OstatnieKonto, a nie osobna zmienna z grupami. Pokazane konto ma
-    juz swoje jedno miejsce w pamieci i jest zerowane w Clear-JezykKonto, wiec druga kopia
-    byla by wylacznie kolejna rzecza, ktora mozna zapomniec wyczyscic - a lista grup
-    poprzedniego konta opisywala by KOGOS INNEGO niz reszta widoku.
-
-    STRAZ STOI PRZED PIERWSZA KONTROLKA. Przycisk bywa czynny wylacznie wtedy, gdy grupy
-    sa (Set-JezykPrzyciskGrupy), ale warunek sprawdzamy takze tutaj: puste okno z tytulem
-    "(0)" nie mowiloby nic ponad to, co mowi wyszarzony przycisk.
-
-    Nazwy grup przychodza z logiki JUZ POSORTOWANE (Get-JezykCzlonkostwaGrup) - okno nie sortuje
-    ich po raz drugi, bo dwa miejsca ustalajace kolejnosc rozjezdzaja sie przy pierwszej zmianie.
-
-    GEOMETRIA LICZY SIE PO DODANIU KONTROLEK DO OKNA. Wysokosc pola tekstowego i szerokosc
-    etykiety wychodza dopiero z czcionki, a te kontrolka dziedziczy po oknie w chwili dodania;
-    wysokosc listy przycina do calych wierszy IntegralHeight. Wpisane na sztywno wspolrzedne
-    przestaja pasowac przy skalowaniu DPI - dlatego kazdy wiersz mierzy sie od sasiada, a okno
-    od ostatniego z nich.
-#>
+# Okno grup AD pokazanego konta: lista z filtrem, a w domenie z zarzadzaniem - dodawanie i usuwanie.
+# Zrodlem jest $Script:OstatnieKonto; geometria liczona po dodaniu kontrolek, kazdy wiersz od sasiada.
 function Show-JezykGrupyAd {
     $konto = $Script:OstatnieKonto
     if (-not $konto) { return }
 
-    # STRAZ STOI PRZED PIERWSZA KONTROLKA i pyta DOKLADNIE O TO SAMO, co warunek
-    # dostepnosci przycisku - jedna funkcja na oba miejsca, zeby nie dalo sie ich rozjechac.
+    # Straz przed pierwsza kontrolka - ten sam warunek co dostepnosc przycisku.
     if (-not (Test-JezykJestPoCoOtwieracGrupy $konto)) { return }
 
-    # PARY "nazwa + nazwa wyrozniajaca", a nie same nazwy: bez nazwy wyrozniajacej nie da
-    # sie usunac konta z grupy, a nazwa sama w sobie nie jest w domenie jednoznaczna.
+    # Pary nazwa + DN - bez DN nie da sie usunac z grupy.
     $grupy          = @(Get-JezykParyGrup $konto.GrupyPelne)
     $wolnoZarzadzac = Test-JezykMoznaZarzadzacGrupami $konto
-    # DRUGA OS, NIE TA SAMA: $wolnoZarzadzac pyta takze o konto, a kontakt w domenie z listy
-    # dostaje w polu "Status:" zdanie, dlaczego nie da sie go dopisac. Poza domena z listy
-    # w to pole nie pisze nic - okno otwiera sie tam wylacznie z grupami do przeczytania.
+    # Druga os: domena z zarzadzaniem (kontakt dostaje w Status wyjasnienie; poza domena - nic).
     $domenaZZarzadzaniem = Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena
 
-    # Kontakt loginu nie ma, wiec podpis spada na nazwe obiektu - ta sama zasada, co przy
-    # etykiecie pierwszego pola w oknie glownym ("Login:" kontra "Nazwa:").
+    # Kontakt nie ma loginu - podpis to nazwa obiektu.
     $podpis = [string]$konto.Login
     if (-not $podpis) { $podpis = [string]$konto.NazwaObiektu }
 
@@ -3004,9 +1934,7 @@ function Show-JezykGrupyAd {
     $szerokoscPrzycisku = 90
     $odstepEtykiety     = 8
     $odstepPrzyciskow   = 8
-    # Od pary "Usun z grupy"/"Dodaj" do etykiety "Status:". Mniej niz przerwa wiersza, bo
-    # przyciski stoja wylacznie po prawej, a pod nimi lezy jeszcze caly wiersz etykiety -
-    # z pelna przerwa zostawalo tam prawie trzydziesci pikseli pustki.
+    # Przerwa pod para przyciskow do etykiety "Status:" - mniejsza, bo przyciski stoja tylko po prawej.
     $przerwaPodPrzyciskami = 2
 
     $okno = $null
@@ -3019,34 +1947,24 @@ function Show-JezykGrupyAd {
         $okno.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterParent
         # Ta sama czcionka, co w oknie glownym - honoruje ustawienia systemu i skalowanie DPI.
         $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
-        # BEZ -Rejestruj: to okno powstaje na zadanie i ginie w finally { Dispose() }, wiec
-        # czyta paleta obowiazujaca w chwili otwarcia i nigdy nie jest przemalowywane.
+        # Bez -Rejestruj: okno na zadanie ginie w finally { Dispose() }.
         Set-JezykWyglad $okno 'Okno'
 
-        # Wysokosc przycisku ROWNA POLU, tak samo jak w oknie glownym. Pomiar wymaga czcionki
-        # okna, wiec stoi tutaj, a nie w bloku wymiarow wyzej; wpisane 24 px bylo od pola
-        # o dwa piksele wyzsze bez powodu.
+        # Wysokosc przycisku rowna polu, jak w oknie glownym.
         $wysokoscPrzycisku = Get-JezykWysokoscPola $okno.Font
 
         $lblFiltr = New-JezykEtykieta 'Szukaj grupy:' $margines $margines
 
-        # Zwykly TextBox, a nie New-JezykPole: tamto pole jest ReadOnly, bo sluzy do pokazywania
-        # odpowiedzi AD, i rejestruje sie w motywie. Tu pisze operator, a okno ginie z Dispose().
+        # Zwykly TextBox (tu pisze operator), nie New-JezykPole.
         $txtFiltr           = New-Object System.Windows.Forms.TextBox
         $txtFiltr.MaxLength = 256
         Set-JezykWyglad $txtFiltr 'Pole'
 
         $lista = New-Object System.Windows.Forms.ListBox
         Set-JezykWyglad $lista 'Lista'
-        # Wysokosc przycieta do calych wierszy. Czesciowy wiersz na dole rozjezdzal zawartosc
-        # z paskiem przewijania (pasek liczy zakres z liczby pozycji, lista przewija calymi
-        # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Samo przyciecie
-        # system robi jednak dopiero przy tworzeniu uchwytu, czyli PO pomiarach - dlatego
-        # liczy je wczesniej Set-JezykWysokoscListy, a wszystko pod lista mierzy sie od
-        # $lista.Bottom juz przycietej listy.
+        # Wysokosc z calych wierszy - liczy ja Set-JezykWysokoscListy przed pomiarem od dolu listy.
         $lista.IntegralHeight = $true
-        # Nazwy grup bywaja dluzsze niz kolumna; poziomy pasek daje je doczytac zamiast
-        # ucinac w polowie.
+        # Poziomy pasek - dlugie nazwy da sie doczytac.
         $lista.HorizontalScrollbar = $true
         # Pelna lista wisi na kontrolce, bo to ona jest filtrowana, i ginie razem z oknem.
         $lista.Tag = $grupy
@@ -3054,22 +1972,15 @@ function Show-JezykGrupyAd {
         $txtFiltr.Tag = $lista
 
         # --- WIERSZE ZARZADZANIA -------------------------------------------------------
-        # Istnieja WYLACZNIE w domenie z listy DomenyZZarzadzaniemGrupami i tylko dla konta
-        # (nie dla kontaktu). Puste ustawienie ma CHOWAC, a nie zostawiac element wyszarzony:
-        # kontrolka, ktora w danym wdrozeniu nie zadziala nigdy, przestaje cokolwiek znaczyc -
-        # ta sama zasada, co przy przycisku "Polacz".
-        #
-        # DWA PRZYCISKI, DWA ZRODLA GRUPY, i to jest jedyna rzecz, ktorej z samego wygladu
-        # nie widac: "Dodaj" bierze nazwe Z POLA obok, a "Usun z grupy" - Z ZAZNACZENIA
-        # NA LISCIE. Rozroznienie niosa stany: pierwszy zapala sie po rozpoznaniu nazwy
-        # w AD, drugi po zaznaczeniu pozycji.
+        # Tylko w domenie z DomenyZZarzadzaniemGrupami i tylko dla konta; poza nia schowane, nie wyszarzone.
+        # "Dodaj" bierze grupe z pola (po "Sprawdz nazwy"), "Usun z grupy" - z zaznaczenia na liscie.
         $lblNazwaGrupy = New-JezykEtykieta 'Nazwa grupy:' $margines 0
 
         $txtGrupa           = New-Object System.Windows.Forms.TextBox
         $txtGrupa.MaxLength = 256
         Set-JezykWyglad $txtGrupa 'Pole'
 
-        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        # Napis w Tag, Text pusty (Set-JezykRysunekNapisuPrzycisku).
         $btnSprawdz           = New-Object System.Windows.Forms.Button
         $btnSprawdz.Text      = ''
         $btnSprawdz.Tag       = 'Sprawdź nazwy'
@@ -3089,8 +2000,7 @@ function Show-JezykGrupyAd {
         $btnDodaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
         Set-JezykWyglad $btnDodaj 'Przycisk'
         $btnDodaj.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
-        # Stan poczatkowy: nie ma jeszcze czego dodawac. Zapala sie dopiero po rozpoznaniu
-        # nazwy w AD.
+        # Stan poczatkowy: "Dodaj" zapala sie dopiero po rozpoznaniu nazwy.
         $btnDodaj.Enabled = $false
 
         $btnUsun           = New-Object System.Windows.Forms.Button
@@ -3112,12 +2022,7 @@ function Show-JezykGrupyAd {
         $btnUsun.Visible       = $wolnoZarzadzac
 
         # --- NOTKA ---------------------------------------------------------------------
-        # Pole "Status:" tego okna: odpowiedz "Sprawdz nazwy", wynik dodania i zdanie
-        # otwierajace. DWIE LINIJKI z tego samego powodu, co w oknie glownym - komunikat
-        # o odmowie uprawnien nie miesci sie w jednej, a operator czyta pole RAZ.
-        #
-        # Poza domena z listy pola NIE MA, a nie jest puste: nic go tam nie wypelni, a pusta
-        # ramka z podpisem "Status:" wyglada jak odpowiedz, ktora nie nadeszla.
+        # Pole "Status:" okna (dwie linijki) - tylko w domenie z zarzadzaniem; poza nia go nie ma.
         $lblNotka = New-JezykEtykieta 'Status:' $margines 0
 
         $txtNotka           = New-Object System.Windows.Forms.TextBox
@@ -3128,11 +2033,10 @@ function Show-JezykGrupyAd {
         $lblNotka.Visible = $domenaZZarzadzaniem
         $txtNotka.Visible = $domenaZZarzadzaniem
 
-        # "!" wlasny, bo Set-JezykInfo stoi na rejestrach okna GLOWNEGO. -BezRejestracji,
-        # zeby po Dispose() nie zostal martwy uchwyt w $Script:KontrolkiMotywu.
+        # Wlasny "!" (Set-JezykInfo stoi na rejestrach okna glownego), bez rejestracji w motywie.
         $btnInfo = New-JezykPrzyciskInfo 'Grupy' -BezRejestracji
 
-        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        # Napis w Tag, Text pusty (Set-JezykRysunekNapisuPrzycisku).
         $btnZamknij           = New-Object System.Windows.Forms.Button
         $btnZamknij.Text      = ''
         $btnZamknij.Tag       = 'Zamknij'
@@ -3142,9 +2046,7 @@ function Show-JezykGrupyAd {
         $btnZamknij.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
         $btnZamknij.DialogResult = [System.Windows.Forms.DialogResult]::OK
 
-        # STAN OKNA WISI NA OKNIE. Procedury zdarzen nie widza zmiennych lokalnych tej
-        # funkcji, a kontrolki tego okna musza odnalezc sie nawzajem - jedna tablica skrotow
-        # zalatwia oba problemy i ginie razem z oknem, wiec nie ma jej czego czyscic.
+        # Stan okna na Tag - kontrolki odnajduja sie nawzajem, a stan ginie razem z oknem.
         $okno.Tag = @{
             Podpis        = $podpis
             PoleFiltra    = $txtFiltr
@@ -3156,24 +2058,17 @@ function Show-JezykGrupyAd {
             PrzyciskInfo  = $btnInfo
             Szczegoly     = ''
             Wybrana       = $null
-            # Pary widoczne TERAZ na liscie, w jej kolejnosci - stad Get-JezykZaznaczonaGrupe
-            # odwzorowuje SelectedIndex na grupe. Wypelnia je Update-JezykFiltrGrup.
+            # Pary widoczne teraz na liscie, w jej kolejnosci (wypelnia Update-JezykFiltrGrup).
             WidoczneGrupy = @()
         }
 
-        # Pole filtra jest PIERWSZA kontrolka, ktora przyjmuje fokus, wiec dostaje go samo -
-        # pisac mozna od razu po otwarciu, bez osobnej procedury na Shown.
+        # Pole filtra pierwsze - dostaje fokus samo.
         $okno.Controls.AddRange(@($lblFiltr, $txtFiltr, $lista,
                                   $lblNazwaGrupy, $txtGrupa, $btnSprawdz,
                                   $btnUsun, $btnDodaj,
                                   $lblNotka, $txtNotka, $btnInfo, $btnZamknij))
 
-        # SZEROKOSC OKNA LICZONA Z WIERSZA, KTORY JEJ NAPRAWDE POTRZEBUJE. Kolumna okna
-        # glownego jest stala liczba pikseli, a etykieta i oba przyciski rosna razem
-        # z czcionka: przy "Rozmiarze tekstu" 150% na pole zostawaloby kilkanascie pikseli
-        # albo mniej niz zero - i NIKT BY TEGO NIE POLICZYL, bo szerokosc pola liczy sie
-        # od sasiadow. Minimum pola bierzemy z napisu przycisku, zeby i ono skalowalo sie
-        # z czcionka zamiast byc kolejna wpisana liczba.
+        # Szerokosc okna z wiersza, ktory jej potrzebuje (etykieta i przyciski rosna z czcionka).
         if ($wolnoZarzadzac) {
             $minimumPola = 2 * $btnSprawdz.Width
             $wierszPola  = $margines + $lblNazwaGrupy.Width + $odstepEtykiety + $minimumPola +
@@ -3187,21 +2082,17 @@ function Show-JezykGrupyAd {
 
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
-        # GORNY MARGINES TEN SAM, CO W OKNIE GLOWNYM - jego wlasna, nazwana liczba. Margines
-        # boczny ($margines) zostawial pod paskiem tytulu dwanascie pikseli pustki.
+        # Gorny margines ten sam, co w oknie glownym.
         Set-JezykSrodekPionowy -Kontrolki @($lblFiltr, $txtFiltr) `
                                -Srodek ($Script:MarginesGorny + (Get-JezykPolowaWysokosci $txtFiltr.Height))
 
         $lista.Left   = $margines
         $lista.Width  = $szerokosc - 2 * $margines
-        # PRZERWA MIEDZY WIERSZAMI TA SAMA, CO W OKNIE GLOWNYM. Margines okna ($margines)
-        # opisuje ramke, a nie gestosc srodka - mieszanie obu zostawialo miedzy wierszami
-        # polowe wiersza pustki wiecej, niz trzeba.
+        # Przerwa miedzy wierszami ta sama, co w oknie glownym ($margines tylko na ramce).
         $lista.Top    = $txtFiltr.Bottom + $Script:PrzerwaWierszy
         Set-JezykWysokoscListy $lista $wysokoscListy
 
-        # Kazdy nastepny wiersz mierzy sie OD SASIADA. Gdy wierszy zarzadzania nie ma,
-        # notka siada wprost pod lista i okno jest o te dwa wiersze nizsze.
+        # Kazdy nastepny wiersz mierzy sie od sasiada; bez wierszy zarzadzania notka siada pod lista.
         $dolPoprzedniego = $lista.Bottom
         $przerwaNadNotka = $Script:PrzerwaWierszy
 
@@ -3216,8 +2107,7 @@ function Show-JezykGrupyAd {
                                             (Get-JezykPolowaWysokosci $txtGrupa.Height))
             $dolPoprzedniego = $txtGrupa.Bottom
 
-            # Wiersz akcji: oba przyciski przy prawej krawedzi. Wspolrzedne "Usun z grupy"
-            # brane OD SASIADA, zeby para jechala razem, a nie kazdy z wlasnej liczby.
+            # Wiersz akcji: para przyciskow przy prawej krawedzi - "Usun z grupy" od sasiada.
             $btnDodaj.Left = $szerokosc - $margines - $btnDodaj.Width
             $btnUsun.Left  = $btnDodaj.Left - $odstepPrzyciskow - $btnUsun.Width
             $btnDodaj.Top  = $dolPoprzedniego + $Script:PrzerwaWierszy
@@ -3227,18 +2117,15 @@ function Show-JezykGrupyAd {
         }
 
         if ($domenaZZarzadzaniem) {
-            # Notka ma WLASNA ETYKIETE po to, zeby "!" stanal dokladnie tam, gdzie stoi w oknie
-            # glownym: Set-JezykPrzyciskPrzyEtykiecie konczy go razem z prawa krawedzia POLA.
+            # Wlasna etykieta notki - "!" staje tam, gdzie w oknie glownym.
             $lblNotka.Left   = $margines
             $lblNotka.Top    = $dolPoprzedniego + $przerwaNadNotka
             $txtNotka.Left   = $margines
             $txtNotka.Top    = $lblNotka.Top + $Script:OdstepPodEtykieta
             $txtNotka.Width  = $szerokosc - 2 * $margines
-            # Druga linijka liczona z czcionki, nie wpisana - ta sama arytmetyka, co przy polach
-            # "Status:" w oknie glownym.
+            # Druga linijka z czcionki, jak przy polach "Status:" w oknie glownym.
             $txtNotka.Height = $txtNotka.PreferredHeight + [int][math]::Ceiling($okno.Font.GetHeight())
-            # Etykieta lezy w oknie NAD polem (wczesniej w AddRange), wiec za wysoka zakrywa
-            # jego gorna ramke - ta sama usterka, co kiedys w oknie glownym.
+            # Etykieta nie moze zakrywac gornej ramki pola.
             Set-JezykEtykietaNadPolem $lblNotka
             Set-JezykPrzyciskPrzyEtykiecie $btnInfo $lblNotka $txtNotka
             $dolPoprzedniego = $txtNotka.Bottom
@@ -3250,21 +2137,15 @@ function Show-JezykGrupyAd {
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnZamknij.Bottom + $margines))
 
-        # Pasek tytulu i pasek przewijania listy - jedyne dwie rzeczy w tym oknie, ktorych
-        # nie zalatwia kolor kontrolki. Siegniecie po Handle TWORZY uchwyt, wiec wywolanie
-        # dziala mimo tego, ze okna jeszcze nie widac; ShowDialog i tak pokaze je za chwile.
+        # Ciemny pasek tytulu i przewijania (siegniecie po Handle tworzy uchwyt przed pokazaniem).
         $ciemny = ($Script:Motyw -eq 'Ciemny')
         Set-JezykCiemnyPasekTytulu      $okno.Handle  -Ciemny:$ciemny
         Set-JezykCiemnyPasekPrzewijania $lista.Handle -Ciemny:$ciemny
 
-        # Pierwsze wypelnienie idzie TA SAMA droga, co kazdy nacisniety klawisz - razem
-        # z tytulem, ktory niesie licznik.
+        # Pierwsze wypelnienie ta sama droga, co kazdy klawisz.
         Update-JezykFiltrGrup $txtFiltr
 
-        # NOTKA OTWIERAJACA tam, gdzie pole bez niej nie tlumaczy tego, co widac. Pusta
-        # lista sama nie mowi, czy konto nie ma grup, czy cos zawiodlo; a wiersza dodawania
-        # brakuje kontaktowi z powodu, ktory warto nazwac - ale tylko tam, gdzie dodawanie
-        # w ogole jest wlaczone, bo inaczej wiersza nie ma nikt i zdanie mylilo by tropy.
+        # Notka otwierajaca tylko gdy widok sam nie tlumaczy: brak grup albo kontakt w domenie z zarzadzaniem.
         $notka = ''
         if ($grupy.Count -eq 0) { $notka = 'To konto nie należy do żadnej grupy.' }
         if ($konto.Status -eq 'Kontakt' -and $domenaZZarzadzaniem) {
@@ -3275,13 +2156,11 @@ function Show-JezykGrupyAd {
         $txtFiltr.Add_TextChanged({ Update-JezykFiltrGrup $this })
         $lista.Add_MouseWheel({ Set-JezykPrzewijanieListy $this $_ })
 
-        # "Usun z grupy" dziala na ZAZNACZONEJ pozycji, wiec jego dostepnosc jest stanem
-        # zaznaczenia - a to zmienia sie takze bez udzialu myszy (strzalki, zawezenie filtra).
+        # "Usun z grupy" zalezy od zaznaczenia (zmienia sie tez klawiatura i filtrem).
         $lista.Add_SelectedIndexChanged({ Set-JezykPrzyciskUsunGrupe -Okno $this.FindForm() })
 
         if ($wolnoZarzadzac) {
-            # ZMIANA TEKSTU UNIEWAZNIA ROZPOZNANA GRUPE. Bez tego zapis poszedlby na nazwe
-            # wyrozniajaca grupy, ktorej w polu juz nie ma - i nic by tego nie zdradzilo.
+            # Zmiana tekstu uniewaznia rozpoznana grupe - zapis nie moze isc na DN spoza pola.
             $txtGrupa.Add_TextChanged({
                 $stan = $this.FindForm().Tag
                 if (-not $stan) { return }
@@ -3289,18 +2168,13 @@ function Show-JezykGrupyAd {
                 if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
             })
 
-            # ENTER MA ZNACZYC "Sprawdz nazwy", A NIE "Zamknij". Samo KeyDown tego nie
-            # zalatwi, bo NIE DOSTAJE ENTERA WCALE: jednolinijkowe pole nie uwaza go za swoj
-            # klawisz, wiec okno oddaje go AcceptButton jeszcze przed KeyDown - i Enter
-            # zamykal okno w polowie wpisywania nazwy, choc obsluga nizej stala w kodzie.
-            # PreviewKeyDown to jedyny etap PRZED przekazaniem klawisza przyciskowi okna:
-            # oznaczony tam jako klawisz pola, Enter dochodzi do KeyDown.
+            # Uwaga: Enter jako "Sprawdz nazwy" tylko przez PreviewKeyDown - okno z AcceptButton
+            # oddaje Entera przyciskowi przed KeyDown.
             $txtGrupa.Add_PreviewKeyDown({
                 if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.IsInputKey = $true }
             })
 
-            # Handled i SuppressKeyPress: bez nich pole dostaje jeszcze znak Entera, ktorego
-            # jednolinijkowe pole nie przyjmuje - i odpowiada systemowym dzwiekiem.
+            # Handled i SuppressKeyPress - bez nich pole odpowiada dzwiekiem.
             $txtGrupa.Add_KeyDown({
                 if ($_.KeyCode -ne [System.Windows.Forms.Keys]::Enter) { return }
                 $_.Handled          = $true
@@ -3313,8 +2187,7 @@ function Show-JezykGrupyAd {
             $btnUsun.Add_Click({    Invoke-JezykUsuniecieZGrupy       -Okno $this.FindForm() })
         }
 
-        # Pelna tresc pod "!" - wlasnym MessageBoxem, bo Show-JezykInformacja czyta
-        # $Script:Informacje i $Script:TytulyInformacji, czyli rejestry okna glownego.
+        # Tresc spod "!" wlasnym MessageBoxem (rejestry okna glownego tu nie siegaja).
         $btnInfo.Add_Click({
             $okienko = $this.FindForm()
             $stan    = $okienko.Tag
@@ -3324,40 +2197,24 @@ function Show-JezykGrupyAd {
                 [System.Windows.Forms.MessageBoxIcon]::Information)
         })
 
-        # Esc zamyka. Enter takze - poza polem nazwy grupy, ktore przejmuje go wyzej: lista
-        # zaweza sie po kazdym znaku, wiec w filtrze nie ma czego zatwierdzac.
+        # Esc i Enter zamykaja (poza polem nazwy grupy).
         $okno.AcceptButton = $btnZamknij
         $okno.CancelButton = $btnZamknij
 
         [void]$okno.ShowDialog($Script:Kontrolki.Okno)
     }
     finally {
-        # ShowDialog NIE zwalnia okna sam (w odroznieniu od Show) - bez tego kazde
-        # klikniecie zostawialoby w procesie komplet uchwytow GDI po jednym oknie.
+        # ShowDialog nie zwalnia okna sam - Dispose zwalnia uchwyty.
         if ($okno) { $okno.Dispose() }
     }
 }
 
-<#
-.SYNOPSIS
-    Pyta, ktora z rozpoznanych grup chodzilo - gdy "Sprawdz nazwy" trafilo w wiecej niz jedna.
-
-.DESCRIPTION
-    Ten sam szkielet, co Show-JezykWyborDysku. Pozycje numeruje Get-JezykWierszeGrup - ta sama
-    funkcja, co liste grup konta, zeby dwie numeracje nie mogly sie rozjechac. Zaznaczenie
-    mapuje sie na liste trafien INDEKS W INDEKS, bo Find-JezykGrupyPoNazwie odsiewa pozycje
-    bez nazwy jeszcze w logice.
-
-    WLASCICIELEM JEST OKNO GRUP, a nie okno glowne: to okno wstaje nad innym oknem modalnym,
-    wiec podpiete pod glowne potrafiloby schowac sie za tym, z ktorego je otwarto.
-#>
+# Okno wyboru jednej z kilku grup rozpoznanych przez "Sprawdz nazwy".
+# Wlascicielem jest okno grup - podpiete pod glowne chowaloby sie za nim.
 function Show-JezykWyborGrupy {
     param($Trafienia, $Wlasciciel)
 
-    # WIERSZE I ZWRACANA POZYCJA Z JEDNEJ TABLICY. Get-JezykWierszeGrup numeruje po
-    # Get-JezykParyGrup, ktory odsiewa nazwy z samych bialych znakow; indeks zaznaczenia
-    # odniesiony do surowych trafien przesuwalby sie o jeden za kazda odsiana pozycja,
-    # czyli "Dodaj" trafialoby w grupe z wiersza wyzej niz klikniety.
+    # Wiersze i zwracana pozycja z jednej tablicy (po Get-JezykParyGrup) - indeksy sie nie rozjada.
     $pozycje = @(Get-JezykParyGrup $Trafienia)
     if ($pozycje.Count -eq 0) { return $null }
 
@@ -3391,7 +2248,7 @@ function Show-JezykWyborGrupy {
         # Pierwsza pozycja zaznaczona od razu, zeby Enter dzialal bez siegania po mysz.
         if ($lista.Items.Count -gt 0) { $lista.SelectedIndex = 0 }
 
-        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        # Napis w Tag, Text pusty (Set-JezykRysunekNapisuPrzycisku).
         $btnWybierz              = New-Object System.Windows.Forms.Button
         $btnWybierz.Text         = ''
         $btnWybierz.Tag          = 'Wybierz'
@@ -3413,8 +2270,7 @@ function Show-JezykWyborGrupy {
         # Lista jest PIERWSZA, wiec dostaje fokus sama.
         $okno.Controls.AddRange(@($lista, $btnWybierz, $btnAnuluj))
 
-        # Geometria PO dodaniu kontrolek: wysokosc wiersza wychodzi z czcionki, a te
-        # kontrolka dziedziczy po oknie dopiero w chwili dodania.
+        # Geometria po dodaniu kontrolek (czcionka dziedziczona dopiero wtedy).
         $wysokoscWiersza = [int][math]::Ceiling($okno.Font.GetHeight()) + 2
         $lista.Left      = $margines
         $lista.Width     = $szerokosc - 2 * $margines
@@ -3429,9 +2285,7 @@ function Show-JezykWyborGrupy {
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnWybierz.Bottom + $margines))
 
-        # Dwuklik na liscie ma znaczyc to samo, co "Wybierz" - inaczej wybor dwoma
-        # klknieciami wygladalby na nieskuteczny. Procedura nie widzi zmiennych tej
-        # funkcji, wiec okno bierze sie z samej kontrolki.
+        # Dwuklik = "Wybierz"; okno bierze sie z samej kontrolki.
         $lista.Add_DoubleClick({
             $this.FindForm().DialogResult = [System.Windows.Forms.DialogResult]::OK
         })
@@ -3456,34 +2310,11 @@ function Show-JezykWyborGrupy {
 }
 
 # --- OKNO WYBORU DYSKU ----------------------------------------------------------------
-# Udzialy administracyjne, ktore system zaklada sam na kazdym dysku (C$, D$, ...). Lista
-# jest STALA i celowo nie stoi w $Script:Ustawienia: tamten blok opisuje ADRESY POLACZEN -
-# domeny, kontrolery, serwer lokacji - czyli rzeczy, ktorych Jezyk nie ma prawa zgadywac.
-# Litera dysku adresem nie jest. Nie pytamy o nia takze samej maszyny: okno ma otwierac sie
-# od razu, a odpytanie o dyski byloby siodmym zadaniem w tle - dla dwoch pozycji na liscie.
+# Udzialy administracyjne (C$, D$) - stala lista, nie ustawienie (litera dysku nie jest adresem).
 $Script:LiteryDyskow = @('C', 'D')
 
-<#
-.SYNOPSIS
-    Pyta, ktory udzial dyskowy pokazanej maszyny otworzyc. Oddaje LITERE albo pusty napis.
-
-.DESCRIPTION
-    OSOBNE OKNO, A NIE MessageBox: z komunikatu nie da sie niczego wybrac. Wzorem jest
-    Show-JezykGrupyAd i szkielet jest ten sam - okno na zadanie, wyglad BEZ -Rejestruj
-    (ginie w finally { Dispose() }, wiec czyta palete obowiazujaca w chwili otwarcia),
-    geometria mierzona od sasiada, ShowDialog na oknie glownym.
-
-    STRAZ STOI PRZED PIERWSZA KONTROLKA. Przycisk bywa czynny wylacznie przy zapamietanej
-    maszynie, ale warunek sprawdzamy takze tutaj: bez nazwy nie ma z czego zlozyc sciezki,
-    a okno pytajace o dysk nieznanej maszyny nie mialoby o czym pytac.
-
-    ZRODLEM NAZWY JEST $Script:OstatniKomputer - ta sama zmienna, co przy "Pinguj"
-    i "Polacz", czyli pisownia z AD, a nie z pola tekstowego.
-
-    Funkcja ODDAJE WYNIK, w odroznieniu od okna grup, wiec wszystko, co po drodze cokolwiek
-    zwraca (Items.Add, ShowDialog), musi isc przez [void] albo do zmiennej - inaczej do
-    wyniku wpadnie smiec i wolajacy dostanie tablice zamiast litery.
-#>
+# Okno wyboru udzialu pokazanej maszyny - oddaje litere albo pusty napis; straz przed kontrolkami.
+# Funkcja oddaje wynik - wszystko inne po drodze idzie przez [void].
 function Show-JezykWyborDysku {
     $maszyna = [string]$Script:OstatniKomputer
     if (-not $maszyna) { return '' }
@@ -3506,27 +2337,23 @@ function Show-JezykWyborDysku {
         $okno.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
         Set-JezykWyglad $okno 'Okno'
 
-        # Wysokosc przycisku ROWNA POLU, tak samo jak w oknie glownym i w oknie grup.
-        # Pomiar wymaga czcionki okna, wiec stoi za jej ustawieniem.
+        # Wysokosc przycisku rowna polu (pomiar po ustawieniu czcionki okna).
         $wysokoscPrzycisku = Get-JezykWysokoscPola $okno.Font
 
         $lista = New-Object System.Windows.Forms.ListBox
         Set-JezykWyglad $lista 'Lista'
-        # Wysokosc przycieta do calych wierszy: czesciowy wiersz na dole wygladalby jak
-        # pozycja, ktorej nie da sie dosiegnac. Paska przewijania ta lista nie dostanie
-        # przy zadnej sensownej liczbie liter, wiec nie ma tu czego przemalowywac.
+        # Wysokosc z calych wierszy.
         $lista.IntegralHeight = $true
 
         foreach ($litera in $Script:LiteryDyskow) {
-            # Napis skladany DO ZMIENNEJ: w argumencie metody przecinek nalezy do listy
-            # argumentow, a nie do tablicy dla operatora -f.
+            # Uwaga: napis do zmiennej - w argumencie metody przecinek nalezy do metody.
             $pozycja = '{0}$' -f $litera
             [void]$lista.Items.Add($pozycja)
         }
         # Pierwsza pozycja zaznaczona od razu, zeby Enter dzialal bez siegania po mysz.
         if ($lista.Items.Count -gt 0) { $lista.SelectedIndex = 0 }
 
-        # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku, patrz tam.
+        # Napis w Tag, Text pusty (Set-JezykRysunekNapisuPrzycisku).
         $btnOtworz              = New-Object System.Windows.Forms.Button
         $btnOtworz.Text         = ''
         $btnOtworz.Tag          = 'Otwórz'
@@ -3548,8 +2375,7 @@ function Show-JezykWyborDysku {
         # Lista jest PIERWSZA, wiec dostaje fokus sama - tak samo jak pole filtra w oknie grup.
         $okno.Controls.AddRange(@($lista, $btnOtworz, $btnZamknij))
 
-        # Geometria PO dodaniu kontrolek: wysokosc wiersza wychodzi z czcionki, a te
-        # kontrolka dziedziczy po oknie dopiero w chwili dodania.
+        # Geometria po dodaniu kontrolek (czcionka dziedziczona dopiero wtedy).
         $wysokoscWiersza = [int][math]::Ceiling($okno.Font.GetHeight()) + 2
         $lista.Left      = $margines
         $lista.Width     = $szerokosc - 2 * $margines
@@ -3564,9 +2390,7 @@ function Show-JezykWyborDysku {
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnOtworz.Bottom + $margines))
 
-        # Dwuklik na liscie ma znaczyc to samo, co "Otworz" - inaczej wybor dwoma
-        # kliknieciami wygladalby na nieskuteczny. Procedura nie widzi zmiennych tej
-        # funkcji, wiec okno bierze sie z samej kontrolki.
+        # Dwuklik = "Otworz"; okno bierze sie z samej kontrolki.
         $lista.Add_DoubleClick({
             $this.FindForm().DialogResult = [System.Windows.Forms.DialogResult]::OK
         })
@@ -3574,8 +2398,7 @@ function Show-JezykWyborDysku {
         $okno.AcceptButton = $btnOtworz
         $okno.CancelButton = $btnZamknij
 
-        # Siegniecie po Handle TWORZY uchwyt, wiec wywolanie dziala mimo tego, ze okna
-        # jeszcze nie widac.
+        # Siegniecie po Handle tworzy uchwyt przed pokazaniem okna.
         Set-JezykCiemnyPasekTytulu $okno.Handle -Ciemny:($Script:Motyw -eq 'Ciemny')
 
         $odpowiedz = $okno.ShowDialog($Script:Kontrolki.Okno)
@@ -3584,105 +2407,57 @@ function Show-JezykWyborDysku {
         $wybrana = [string]$lista.SelectedItem
         if (-not $wybrana) { return '' }
 
-        # Na liscie stoi "C$", a dalej idzie sama litera: znak dolara doklada
-        # Open-JezykUdzialDysku, w jednym miejscu razem z reszta sciezki.
+        # Na liscie "C$", dalej idzie sama litera - dolar doklada Get-JezykSciezkaUdzialu.
         return $wybrana.Substring(0, 1)
     }
     finally {
-        # ShowDialog NIE zwalnia okna sam - bez tego kazde klikniecie zostawialoby
-        # w procesie komplet uchwytow GDI po jednym oknie.
+        # ShowDialog nie zwalnia okna sam - Dispose zwalnia uchwyty.
         if ($okno) { $okno.Dispose() }
     }
 }
 
-<#
-.SYNOPSIS
-    Buduje okno, wypelnia rejestr kontrolek i podpina zdarzenia.
-
-.DESCRIPTION
-    Szerokosc okna jest stala, a WYSOKOSC IDZIE ZA POKAZANYM PANELEM - nadaje ja
-    Set-JezykWysokoscOkna, wolana i stad, i z kazdej zmiany trybu. Dotad rozmiar byl staly
-    i wymierzony widokiem wyzszym, czyli kontem; widok komputera zostawial u dolu kilkaset
-    pikseli pustki.
-#>
+# Buduje okno glowne, wypelnia rejestr kontrolek i podpina zdarzenia.
+# Funkcja kontrolna - zostaje ostatnia w pliku.
 function New-JezykForm {
 
-    # ClientSize, a nie Size: podajemy rozmiar obszaru roboczego, bez ramki i paska tytulu,
-    # wiec wspolrzedne kontrolek zgadzaja sie niezaleznie od motywu Windows.
     $form                 = New-Object System.Windows.Forms.Form
     $form.Text            = $Script:Config.TytulOkna
-    # Tlo okna JAWNIE, a nie z domyslnego SystemColors.Control: to od niego dziedziczy
-    # kolor kazda etykieta i kazdy znacznik, wiec to jedno przypisanie odpowiada za
-    # wiekszosc powierzchni okna w obu motywach.
+    # Tlo okna jawnie - dziedzicza je etykiety i znaczniki.
     Set-JezykWyglad $form 'Okno' -Rejestruj
 
-    # CZCIONKA JAKO PIERWSZA, PRZED LICZENIEM CZEGOKOLWIEK. MessageBoxFont zamiast
-    # zaszytego 'Segoe UI 9': to czcionka, ktorej system faktycznie uzywa w oknach
-    # dialogowych - honoruje ustawienia uzytkownika i skalowanie DPI. Ustawiona na
-    # formularzu, bo dzieci dziedzicza ja automatycznie.
-    #
-    # Od niej zalezy wysokosc pola, a od wysokosci pola - caly rytm siatki ponizej, wiec
-    # nie da sie jej przypisac pozniej.
+    # Czcionka PIERWSZA (MessageBoxFont - ustawienia systemu i DPI) - od niej zalezy caly rytm siatki.
     $form.Font            = [System.Drawing.SystemFonts]::MessageBoxFont
 
-    # RYTM SIATKI Z FAKTYCZNEJ WYSOKOSCI POLA, a nie z liczby wpisanej w naglowku pliku.
-    # Wiersze stoja na stalych wspolrzednych, a pole rosnie z czcionka systemu: skok
-    # wpisany na sztywno musialby obsluzyc najwieksza czcionke i przy zwyklej zostawialby
-    # miedzy wierszami dwa razy wiecej pustki, niz trzeba.
+    # Skok wiersza z faktycznej wysokosci pola.
     $wysokoscPola       = Get-JezykWysokoscPola $form.Font
     $Script:SkokWiersza = Get-JezykSkokWiersza $wysokoscPola
 
-    # PIETRA PANELI RAZEM Z GORNYM PASEM, i z tego samego pomiaru. Gorny margines jest
-    # stala, a oba wiersze nad panelem rosna z czcionka - pietro wpisane liczba zostawialo
-    # nad panelem dokladnie tyle pustki, ile ubylo z gornego marginesu. Musi stac TUTAJ,
-    # przed pierwsza wspolrzedna: z tych dwoch liczb bierze sie i polozenie listy wyboru,
-    # i wysokosc okna.
+    # Pietra paneli z tego samego pomiaru - przed pierwsza wspolrzedna.
     $Script:PanelBezListy = Get-JezykPietroBezListy $wysokoscPola
     $Script:PanelZListą   = $Script:PanelBezListy + $Script:PasListyWyboru
 
-    # Pole "Status:" jest jedyne dwulinijkowe w calym oknie - niesie najdluzsze teksty.
-    # TA SAMA ARYTMETYKA, ktora nadaje mu wysokosc w sekcji wyrownania: druga linijka to
-    # wysokosc linii pisma, a nie liczba dobrana na oko. Liczona tutaj, bo z niej bierze
-    # sie wysokosc obu paneli.
+    # Pole "Status:" ma dwie linijki - druga to wysokosc linii pisma.
     $drugaLinia      = [int][math]::Ceiling($form.Font.GetHeight())
     $wysokoscStatusu = $wysokoscPola + $drugaLinia
 
-    # DZIEWIEC WIERSZY (0-8). Osmy doszedl razem z polem "Adres IP" - pol polowkowych jest
-    # jedenascie, czyli nieparzyscie, a trzy dolne potrzebuja calej szerokosci, wiec jedno
-    # miejsce w siatce zostaje wolne i okno uroslo o jeden skok wiersza.
-    # PANEL KONCZY SIE NA DOLNEJ KRAWEDZI POLA "Status:", a nie przerwe nizej: panel nie ma
-    # ramki, wiec zapas pod ostatnim polem jest samym powietrzem - i doliczal sie do przerwy
-    # nad podpisem autora.
+    # Dziewiec wierszy (0-8); panel konczy sie na dolnej krawedzi pola "Status:".
     $wysokoscPanelu = (Get-JezykWierszPole 8) + $wysokoscStatusu
 
-    # PAS PODPISU MIERZONY TUTAJ, bo z jego wysokosci bierze sie wysokosc okna. Czcionka
-    # o punkt mniejsza niz w oknie, a z dwojga - kwadrat ikonki motywu albo linia pisma -
-    # bierzemy WIEKSZE: inaczej albo ikonka jest przyciasna, albo napis zostaje ucinany od
-    # dolu przy DPI 125-150%, gdzie pismo rosnie, a wpisana na sztywno liczba by nie urosla.
+    # Pas podpisu: czcionka o punkt mniejsza, wysokosc = wieksze z boku ikonki i linii pisma.
     $czcionkaPasa               = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
     $Script:WysokoscPasaPodpisu = [Math]::Max($Script:BokIkonyMotywu,
                                               [int][Math]::Ceiling($czcionkaPasa.GetHeight()))
 
-    # WYSOKOSCI OKNA NIE MA TUTAJ - nadaje ja Set-JezykWysokoscOkna na koncu tej funkcji,
-    # tak samo jak przy kazdej pozniejszej zmianie trybu. Dwie arytmetyki wysokosci
-    # rozjechalyby sie przy pierwszej zmianie siatki, a okno wstawaloby w innym rozmiarze,
-    # niz dostaje po przelaczeniu na ten sam widok.
-    #
-    # AutoScroll jest zapora na okno wyzsze od ekranu i nie kosztuje nic, gdy okno sie
-    # miesci: WinForms pokazuje pasek przewijania WYLACZNIE wtedy, gdy kontrolki wychodza
-    # poza obszar roboczy okna. Wysokosc przycina Get-JezykWysokoscWEkranie, zeby pasek
-    # mial sie kiedy pojawic - bez tego okno po prostu wystawaloby poza ekran.
+    # Wysokosc okna nadaje Set-JezykWysokoscOkna na koncu; AutoScroll - zapora na okno wyzsze od ekranu.
     $form.AutoScroll = $true
 
-    # Nierozciagliwa ramka, bo kontrolki sa pozycjonowane na sztywno i przy rozciaganiu
-    # zostalyby w miejscu. Wysokosc zmienia sam program, przy zmianie trybu.
+    # Ramka nierozciagliwa - kontrolki stoja na wyliczonych wspolrzednych.
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $form.MaximizeBox     = $false
     $form.MinimizeBox     = $true
     $form.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterScreen
 
-    # Ikona jest opcjonalna i celowo nie przerywa startu: brakujacy plik to drobiazg
-    # kosmetyczny i nie moze przeszkodzic w sprawdzeniu konta.
+    # Ikona opcjonalna - jej brak nie przerywa startu.
     $plikIkony = Join-Path $Script:KatalogSkryptu 'Ikona-Jezyk.ico'
     if (Test-Path -LiteralPath $plikIkony) {
         try   { $form.Icon = [System.Drawing.Icon]::new($plikIkony, 32, 32) }
@@ -3690,16 +2465,13 @@ function New-JezykForm {
     }
 
     # --- WIERSZ DOMENY I WIERSZ WYSZUKIWANIA -----------------------------------------
-    # Wspolny slupek na etykiety, zeby obie listy zaczynaly sie w tej samej wspolrzednej.
-    # Srodki obu wierszy licza sie DOPIERO W SEKCJI WYROWNANIA, bo biora sie z rzeczywistej
-    # wysokosci listy domen - patrz tam.
+    # Wspolny slupek etykiet; srodki wierszy licza sie w sekcji wyrownania.
     $slupekEtykiet = 70
 
     $lblDomena = New-JezykEtykieta 'Domena' $Script:Margines 0
     $lblPodaj  = New-JezykEtykieta 'Podaj'  $Script:Margines 0
 
-    # Zmiana domeny przekierowuje wszystkie zapytania - wystarczy podmiana parametru -Server,
-    # bo konto ma prawo odczytu we wszystkich domenach powiazanych zaufaniem.
+    # Zmiana domeny = inny parametr -Server dla wszystkich zapytan.
     $cmbDomena               = New-Object System.Windows.Forms.ComboBox
     $cmbDomena.Left          = $slupekEtykiet
     $cmbDomena.Width         = 240
@@ -3709,10 +2481,7 @@ function New-JezykForm {
     foreach ($d in $Script:Domeny) { [void]$cmbDomena.Items.Add($d) }
     $cmbDomena.SelectedIndex = 0
 
-    # DropDownList, a nie DropDown: listy nie da sie edytowac, wiec tryb zawsze ma jedna ze
-    # znanych wartosci. FlatStyle = Flat jest WARUNKIEM widocznosci koloru - przy wlaczonych
-    # stylach wizualnych lista ignoruje BackColor, bo rysuje ja motyw systemu. Cena: kontrolka
-    # traci wyglad systemowy.
+    # DropDownList - tryb zawsze znany; FlatStyle = Flat, bo inaczej lista ignoruje BackColor.
     $cmbTryb               = New-Object System.Windows.Forms.ComboBox
     $cmbTryb.Left          = $slupekEtykiet
     $cmbTryb.Width         = 180
@@ -3725,51 +2494,30 @@ function New-JezykForm {
 
     $przerwa = 16
 
-    # NAPIS W Tag, A Text PUSTY - rysuje go Set-JezykRysunekNapisuPrzycisku w calym
-    # prostokacie przycisku, dzieki czemu przycisk moze byc dokladnie tak wysoki, jak pole.
+    # Napis w Tag, Text pusty (Set-JezykRysunekNapisuPrzycisku) - przycisk moze byc rowny polu.
     $btnSzukaj           = New-Object System.Windows.Forms.Button
     $btnSzukaj.Text      = ''
     $btnSzukaj.Tag       = 'Szukaj'
     $btnSzukaj.Width     = 96
-    # WYSOKOSC ROWNA POLU, i to ostatecznie. Nikt jej pozniej nie podnosi - napis rysuje
-    # Set-JezykRysunekNapisuPrzycisku w calym prostokacie, wiec nie ma sie gdzie uciac.
+    # Wysokosc rowna polu - napis rysowany w calym prostokacie, nie ma sie gdzie uciac.
     $btnSzukaj.Height    = $wysokoscPola
     $btnSzukaj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnSzukaj.Width
     $btnSzukaj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnSzukaj 'Przycisk' -Rejestruj
 
-    # JEZ - znak, ze okno pracuje, i odpowiedz, gdy skonczy. Zaczyna biec przy KAZDYM
-    # klinieciu "Szukaj", a gdy nie ma juz na co czekac, staje: z jablkiem, jesli cos sie
-    # znalazlo, albo na plecach, jesli nie. Poza zostaje az do nastepnego wyszukiwania.
-    # Wszystkie cztery stany ustawia Set-JezykStanJeza w Jezyk-3-Widok.ps1.
-    #
-    # STOI W WOLNEJ, PRAWEJ CZESCI WIERSZA DOMENY - nad polem wyszukiwania i przyciskiem
-    # "Szukaj". To miejsce BYLO JUZ PUSTE, wiec jez nie zabral szerokosci zadnej kontrolce
-    # ani nie przesunal zadnego wiersza. Poprzednik, pasek Marquee, mial na to wlasny pas
-    # pod wierszem wyszukiwania i kosztowal dziesiec pikseli wysokosci calego okna.
-    #
-    # PictureBox, a nie Panel: ma podwojne buforowanie z fabryki, wiec animacja nie mruga.
-    # Tla NIE ustawiamy - kontrolka dziedziczy je po oknie i jez wyglada jak wpisany w nie.
-    #
-    # Rusza sie naprawde tylko przy wyszukiwaniu po numerze telefonu, bo tylko ono zeszlo
-    # do przestrzeni w tle. Przy zapytaniu synchronicznym jest widoczny, ale nieruchomy:
-    # klatki odmierza zegar na watku interfejsu, a ten stoi wtedy w zapytaniu.
+    # Jez - wskaznik pracy i odpowiedz (Set-JezykStanJeza) - w pustej prawej czesci wiersza domeny.
+    # PictureBox (podwojne buforowanie z fabryki); tla nie ustawiamy - dziedziczy je po oknie.
     $jezSzukania         = New-Object System.Windows.Forms.PictureBox
-    # Lewa krawedz od konca listy domen, prawa rowna prawej krawedzi calej zawartosci -
-    # zadnej wspolrzednej wpisanej liczba.
+    # Od konca listy domen do prawej krawedzi zawartosci.
     $jezSzukania.Left    = $cmbDomena.Right + $przerwa
     $jezSzukania.Width   = $Script:Margines + $Script:SzerokoscPelna - $jezSzukania.Left
     $jezSzukania.Visible = $false
-    # Procedura zdarzenia nie widzi zmiennych tej funkcji. $this jest kontrolka, ktora
-    # zdarzenie zglosila, i tylko stamtad wolno wziac jej rozmiar; $_ to argumenty
-    # zdarzenia, czyli PaintEventArgs z powierzchnia do rysowania. To jedyne miejsce
-    # w programie, ktore korzysta z $_ w procedurze zdarzenia.
+    # $this - kontrolka zdarzenia, $_ - PaintEventArgs (procedura nie widzi zmiennych tej funkcji).
     $jezSzukania.Add_Paint({
         Set-JezykRysunekJeza -Grafika $_.Graphics -Szerokosc $this.Width -Wysokosc $this.Height
     })
 
-    # Pole wypelnia to, co zostalo miedzy lista trybu a przyciskiem, wiec prawa krawedz
-    # wiersza pokrywa sie z prawa krawedzia wszystkich pol nizej.
+    # Pole wypelnia miejsce miedzy lista trybu a przyciskiem.
     $txtSzukaj           = New-Object System.Windows.Forms.TextBox
     $txtSzukaj.Left      = $cmbTryb.Right + $przerwa
     $txtSzukaj.Width     = $btnSzukaj.Left - $przerwa - $txtSzukaj.Left
@@ -3777,17 +2525,13 @@ function New-JezykForm {
     $txtSzukaj.MaxLength = 256
     Set-JezykWyglad $txtSzukaj 'Pole' -Rejestruj
 
-    # Lista wyboru kont - widoczna wylacznie przy wyszukiwaniu czesciowym. DisplayMember
-    # sprawia, ze pokazuje pole Opis, a kod ma pod reka caly obiekt kandydata.
+    # Lista wyboru kont (tylko przy wyszukiwaniu czesciowym); DisplayMember = Opis.
     $cmbWynik               = New-Object System.Windows.Forms.ComboBox
-    # Ta sama wspolrzedna, co gorna krawedz panelu bez listy - lista i panel zajmuja
-    # w tym miejscu to samo pietro okna, wiec licza sie z jednej stalej.
+    # Na pietrze panelu bez listy - ta sama stala.
     $cmbWynik.Location      = [System.Drawing.Point]::new($Script:Margines, $Script:PanelBezListy)
     $cmbWynik.Width         = $Script:SzerokoscPelna
     $cmbWynik.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    # FlatStyle = Flat z tego samego powodu, co przy dwoch listach wyzej: bez niego przy
-    # wlaczonych stylach wizualnych BackColor jest ignorowany i lista zostalaby biala
-    # w ciemnym motywie. Cena ta sama - kontrolka traci wyglad systemowy.
+    # FlatStyle = Flat - jak przy dwoch listach wyzej.
     $cmbWynik.FlatStyle     = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $cmbWynik 'Lista' -Rejestruj
     $cmbWynik.DisplayMember = 'Opis'
@@ -3798,59 +2542,37 @@ function New-JezykForm {
     Set-JezykWyglad $pnlKonto 'Okno' -Rejestruj
     $pnlKonto.Size = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscPanelu)
 
-    # Werdykt: jedyny NAPIS w oknie, ktorego kolor zalezy od stanu konta (pola niosa stan
-    # tlem), i jedyna kontrolka, ktorej tresc tez od niego zalezy. Wspolrzedna pionowa
-    # ustawiana jest przez wyrownanie na koncu tej funkcji.
+    # Werdykt: jedyny napis, ktorego kolor i tresc zaleza od stanu konta; pion z wyrownania na koncu.
     $chkWerdykt           = New-JezykCheckbox '' $Script:Margines 0 18
-    # Lewa wspolrzedna napisu tez z wyrownania - liczy sie od kwadratu, jak we flagach.
-    # Napis startowy jest NEUTRALNY, a nie przykladowy. Szerokosc etykiety mierzy sie
-    # i tak stala $Script:NajdluzszyWerdykt, wiec tresc niczego tu nie ustawia - a nazwa
-    # jednego ze stanow konta, wpisana tu "na probe", zawedrowala juz raz do
-    # Clear-JezykKonto i zostala tam jako werdykt wyczyszczonego okna.
+    # Poziom napisu z wyrownania (od kwadratu); napis startowy neutralny, szerokosc z NajdluzszyWerdykt.
     $lblWerdykt           = New-JezykEtykieta 'Nie sprawdzono' 0 0
-    # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
-    # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
+    # Czcionka z czcionki okna: o punkt wieksza i pogrubiona.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
-    # ROLA "Okno" PRZED KOLOREM. Po tej rejestracji Set-JezykKolorPola poznaje, ze to
-    # etykieta lezaca na panelu, a nie pole: stan konta maluje jej NAPIS, a tlem zostaje tlo
-    # okna. Bez niej werdykt dostalby kolorowe tlo jak pole tekstowe - zielony albo czerwony
-    # prostokat posrodku panelu.
+    # Rola "Okno" PRZED kolorem - dzieki niej werdykt dostaje kolorowy napis, a nie kolorowe tlo.
     Set-JezykWyglad    $lblWerdykt 'Okno' -Rejestruj
     Set-JezykKolorPola $lblWerdykt 'Nieznany'
 
-    # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu. Widoczny
-    # wylacznie w domenie z odblokowaniem - widocznosc i dostepnosc ustawia jedno miejsce,
-    # Set-JezykPrzyciskOdblokuj w Jezyk-3-Widok.ps1.
+    # "Odblokuj konto" - widocznosc i dostepnosc ustawia Set-JezykPrzyciskOdblokuj.
     $btnOdblokuj           = New-Object System.Windows.Forms.Button
     $btnOdblokuj.Text      = ''
     $btnOdblokuj.Tag       = 'Odblokuj konto'
     $btnOdblokuj.Width     = 130
-    # WYSOKOSC ROWNA POLU, a nie wpisane 26 px. Tamta liczba byla o cztery piksele wyzsza
-    # od pol w oknie i po scisnieciu siatki przycisk wygladal przy nich na przerosniety.
+    # Wysokosc rowna polu.
     $btnOdblokuj.Height    = $wysokoscPola
     $btnOdblokuj.Left      = $Script:Margines + $Script:SzerokoscPelna - $btnOdblokuj.Width
     $btnOdblokuj.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     Set-JezykWyglad $btnOdblokuj 'Przycisk' -Rejestruj
     $btnOdblokuj.Enabled   = $false
 
-    # Siatka faktow, z ktorych powstaje werdykt. Trzy rowne kolumny, wyliczane - poprzednie
-    # odstepy wpisane recznie widac bylo golym okiem.
+    # Ramka faktow werdyktu: trzy rowne kolumny, wyliczane.
     $grpFlagi          = New-Object System.Windows.Forms.GroupBox
     Set-JezykWyglad $grpFlagi 'Okno' -Rejestruj
     $grpFlagi.Text     = ''
     $grpFlagi.Location = [System.Drawing.Point]::new($Script:Margines, 32)
     $grpFlagi.Size     = [System.Drawing.Size]::new($Script:SzerokoscPelna, 52)
 
-    # WSPOLRZEDNE SA TU ZEROWE CELOWO - nadaje je wyrownanie na koncu tej funkcji, tak samo
-    # jak przy werdykcie nizej. Znacznik zwiezy sie tam do szerokosci swojego napisu, a nie
-    # da sie go wysrodkowac w slupku, zanim ta szerokosc bedzie znana - a znana jest dopiero
-    # po odziedziczeniu czcionki okna, czyli po dodaniu kontrolki do okna.
-    #
-    # KWADRAT I NAPIS TO DWIE KONTROLKI, a nie znacznik z wlasnym tekstem. WinForms rozklada
-    # wlasny napis znacznika po swojemu: odstepu od kwadratu nie da sie podac zadna
-    # wlasciwoscia, a linia pisma wypada nizej niz srodek kwadratu. Rozdzielone daja sie
-    # postawic na jednej linii i o jedna spacje od kwadratu (Get-JezykOdstepZnacznika).
-    # Ta sama para, co przy werdykcie nizej.
+    # Wspolrzedne zerowe celowo - nadaje je wyrownanie (szerokosc znana dopiero po dodaniu do okna).
+    # Kwadrat i napis to dwie kontrolki - odstepu i linii pisma napisu znacznika nie da sie ustawic.
     $chkAktywne     = New-JezykCheckbox '' 0 0 18
     $chkZablokowane = New-JezykCheckbox '' 0 0 18
     $chkFlagaHasla  = New-JezykCheckbox '' 0 0 18
@@ -3875,38 +2597,18 @@ function New-JezykForm {
     $lblImieNazwisko = New-JezykEtykieta 'Imię i nazwisko:' $P (Get-JezykWiersz 0)
     $txtImieNazwisko = New-JezykPole                        $P (Get-JezykWierszPole 0) $W
 
-    # Przyciski "!" - po jednym na pole, przy ktorym MOZE wystapic usterka. Powstaja
-    # niewidoczne; pokazuje je Set-JezykInfo wylacznie wtedy, gdy dana funkcja faktycznie
-    # nie dziala. Wspolrzedne dostaja na koncu tej funkcji, razem z calym wyrownaniem.
-    #
-    # ZOSTALY DWA CZERWONE, przy jedynych polach, ktore potrafia zglosic realna usterke.
-    # Odpadly:
-    #   Domena, Ostatnie logowanie - stale wyjasnienia bez zwiazku z awaria,
-    #   Odblokuj konto - powody wylaczenia przycisku ("najpierw znajdz konto", "konto nie
-    #     jest zablokowane") to normalne stany, a nie bledy; wykrzyknik zapalal sie tam
-    #     zaraz po starcie okna i przestawal cokolwiek znaczyc.
-    # Get-JezykOpisKonfiguracji zostaje jako funkcja - jest kontrolna dla
-    # Jezyk-1-Srodowisko.ps1 w Kod-Jezyk.ps1 - traci tylko podpiecie pod GUI.
+    # Przyciski "!" przy polach, ktore moga zglosic usterke; pokazuje je Set-JezykInfo (README: Przycisk "!").
     $btnInfoStatus   = New-JezykPrzyciskInfo 'Status'
     $btnInfoKomputer = New-JezykPrzyciskInfo 'Komputer'
 
-    # Trzeci, NIEBIESKI: nie usterka, tylko realna niejednoznacznosc - maszyna, ktora wg
-    # SCCM ma wiecej niz jedno konto. Wlasny kolor nadpisany PO utworzeniu, zeby nie ruszac
-    # sygnatury New-JezykPrzyciskInfo uzywanej przez pozostale, czerwone przyciski.
+    # Niebieski "!" - niejednoznacznosc (maszyna wspoldzielona), nie usterka.
     $btnInfoKomputerWspoldzielony = New-JezykPrzyciskInfo 'KomputerWspoldzielony'
     Set-JezykWyglad $btnInfoKomputerWspoldzielony 'InfoNiebieski' -Rejestruj
 
-    # Komputer stoi przy e-mailu, a nie przy dacie logowania: data pokazuje DWIE wartosci
-    # naraz i nie miesci sie w kolumnie, a adres e-mail nigdy nie potrzebowal calej szerokosci.
+    # Komputer obok e-maila - data logowania potrzebuje calej szerokosci.
     $lblEmail = New-JezykEtykieta 'E-mail:' $L (Get-JezykWiersz 1)
     $txtEmail = New-JezykPole                $L (Get-JezykWierszPole 1) $W
-    # "Uzywany", a nie "zalogowany": SCCM podaje ostatniego uzytkownika maszyny wedlug
-    # inwentaryzacji, a nie trwajaca sesje.
-    #
-    # POLE JEST KROTSZE OD KOLUMNY o miejsce na przycisk "Pinguj" - obie kontrolki dziela
-    # ten sam wiersz, bo przycisk sprawdza dokladnie te maszyne, ktorej nazwa stoi obok.
-    # Tresc pola bywa dluzsza niz jego szerokosc; to zwykle pole tekstowe, wiec przewija sie
-    # samo, a caly napis da sie zaznaczyc i skopiowac.
+    # "Uzywany", nie "zalogowany" - ostatni uzytkownik wg inwentaryzacji; pole krotsze o "Pinguj".
     $szerokoscPingu = 72
     $przerwaPingu   = 8
 
@@ -3914,10 +2616,7 @@ function New-JezykForm {
     $txtKomputerUzytkownika = New-JezykPole $P (Get-JezykWierszPole 1) `
                                             ($W - $szerokoscPingu - $przerwaPingu)
 
-    # Jedyna czynna kontrolka poza "Odblokuj konto" - i jedyna, ktora nic nie zapisuje.
-    # Nieczynny do momentu, w ktorym SCCM poda nazwe maszyny: bez niej nie ma czego pingowac.
-    # TabStop wylaczony, jak przy przyciskach "!": wedrowka tabulatorem ma prowadzic przez
-    # pola z danymi, a nie przez dodatki.
+    # "Pinguj" - nieczynny, dopoki SCCM nie poda nazwy maszyny; bez TabStop.
     $btnPinguj           = New-Object System.Windows.Forms.Button
     $btnPinguj.Text      = ''
     $btnPinguj.Tag       = 'Pinguj'
@@ -3929,16 +2628,7 @@ function New-JezykForm {
     $btnPinguj.Enabled   = $false
     $btnPinguj.TabStop   = $false
 
-    # "Polacz" - zdalna konsola do tej samej maszyny. STOI NAD "PINGUJ", w linii etykiety,
-    # za przyciskami "!". Ta czesc wiersza stoi pusta: etykieta i wykrzykniki koncza sie
-    # razem z polem, przed prawa krawedzia kolumny, wiec przycisk nie zabral miejsca ZADNEMU polu
-    # w oknie - ani nazwisku wyzej, ani nazwie maszyny obok, ani adresowi IP nizej. Panel
-    # konta zostaje dziewieciowierszowy i okno nie uroslo ani o piksel.
-    #
-    # DWIE NIEZALEZNE OSIE, powod przy Set-JezykPrzyciskiZdalne: ten przycisk ZNIKA, gdy
-    # nie ma sie z czym laczyc - a to znaczy TRZY rzeczy naraz: jest maszyna, jest sciezka
-    # do konsoli i maszyna odpowiedziala na ping. Powod przy Set-JezykPrzyciskiZdalne, tam
-    # stoi tez cena tej decyzji. Wspolrzedne dostaje na koncu, razem z calym wyrownaniem.
+    # "Polacz" nad "Pinguj", w pustej linii etykiety; widocznosc ustawia Set-JezykPrzyciskiZdalne.
     $btnPolacz           = New-Object System.Windows.Forms.Button
     $btnPolacz.Text      = ''
     $btnPolacz.Tag       = 'Połącz'
@@ -3949,16 +2639,7 @@ function New-JezykForm {
     $btnPolacz.Visible   = $false
     $btnPolacz.TabStop   = $false
 
-    # ADRES IP W OSOBNYM POLU, DOKLADNIE POD NAZWA MASZYNY. Doklejony do pola obok
-    # wypchnalby z niego date ostatniej aktywnosci, a w kolumnie nie ma miejsca na oba
-    # napisy naraz. Pion pod komputerem mowi bez slowa, ktorej maszyny adres to jest.
-    #
-    # Lewa polowa tego wiersza stala pusta - jako swiadoma cena za nieparzysta liczbe pol
-    # polowkowych - i wlasnie ona przyjela adres MAC. Nowa kontrolka nie kosztowala przez
-    # to ANI JEDNEJ wspolrzednej i nie podwyzszyla okna: MAC opisuje te sama karte, ktora
-    # odpowiada pod adresem obok, wiec sasiedztwo jest tu takze merytoryczne.
-    # Przycisk "!" jest NIEBIESKI - brak dopasowania to nie usterka, tylko inwentaryzacja
-    # SCCM starsza od biezacej dzierzawy DHCP.
+    # Adres IP pod nazwa maszyny; w pustej lewej polowie wiersza - adres MAC z niebieskim "!".
     $lblKomputerMac = New-JezykEtykieta 'Adres MAC:' $L (Get-JezykWiersz 2)
     $txtKomputerMac = New-JezykPole                  $L (Get-JezykWierszPole 2) $W
     $btnInfoMac     = New-JezykPrzyciskInfo 'Mac'
@@ -3977,35 +2658,20 @@ function New-JezykForm {
     $lblKontoUtworzono = New-JezykEtykieta 'Konto utworzono:'       $P (Get-JezykWiersz 4)
     $txtKontoUtworzono = New-JezykPole                              $P (Get-JezykWierszPole 4) $W
 
-    # Dwie informacje "kontaktowe" w jednym wierszu: pod ktory numer zadzwonic i kogo
-    # zapytac o zgode. Obie mieszcza sie w kolumnie, wiec nie zabieraja calej szerokosci.
+    # Telefon i przelozony w jednym wierszu.
     $lblTelefon  = New-JezykEtykieta 'Telefon:'  $L (Get-JezykWiersz 5)
     $txtTelefon  = New-JezykPole                 $L (Get-JezykWierszPole 5) $W
     $lblMenedzer = New-JezykEtykieta 'Przełożony:' $P (Get-JezykWiersz 5)
     $txtMenedzer = New-JezykPole                 $P (Get-JezykWierszPole 5) $W
 
-    # KATALOG PRZED DATA LOGOWANIA, i o polowe wezszy niz dotad. Sciezka w drzewie
-    # ("jezyk.pl/Uzytkownicy/Dzial IT") miesci sie w kolumnie tak samo jak telefon,
-    # a pole jest zwyklym TextBoxem - dluzsza tresc przewija sie w nim sama i nadal
-    # da sie ja zaznaczyc i skopiowac.
-    #
-    # ZWOLNIONA PRAWA POLOWA TEGO WIERSZA PRZYJELA GRUPY I LICENCJE. Nowy blok nie
-    # kosztowal przez to ANI JEDNEJ wspolrzednej ani jednego wiersza - panel konta
-    # zostaje dziewieciowierszowy i okno nie uroslo o piksel. Ta sama droga, ktora
-    # weszly wczesniej jez i przycisk "Polacz": najpierw policz, co juz stoi puste.
+    # Katalog konta w lewej polowie; prawa przyjela grupy AD (bez nowego wiersza).
     $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 6)
     $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 6) $W
 
-    # Etykieta stoi w linii etykiet, przycisk w linii pol - czyli dokladnie tam, gdzie
-    # w kazdym innym wierszu lezy pole tekstowe.
-    #
-    # SZEROKOSC LICZONA Z KOLUMNY ($W), a nie wpisana liczba: liczba zgadzalaby sie
-    # tylko przy dzisiejszej szerokosci okna, a ta wylicza sie ze stalych.
+    # Etykieta w linii etykiet, przycisk w linii pol; szerokosc z kolumny.
     $lblGrupy = New-JezykEtykieta 'Grupy AD użytkownika:' $P (Get-JezykWiersz 6)
 
-    # Wyszarzony do momentu, w ktorym znajdzie sie konto majace grupy - bez tego przycisk
-    # otwieralby puste okno i nie mowil dlaczego. Dostepnoscia steruje JEDNO miejsce:
-    # Set-JezykPrzyciskGrupy w Jezyk-3-Widok.ps1. Pion dostaje na koncu, z wyrownaniem.
+    # "Wyswietl grupy" - dostepnosc ustawia Set-JezykPrzyciskGrupy.
     $btnGrupyAd           = New-Object System.Windows.Forms.Button
     $btnGrupyAd.Text      = ''
     $btnGrupyAd.Tag       = 'Wyświetl grupy'
@@ -4021,10 +2687,7 @@ function New-JezykForm {
     $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
     $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 7) $C
 
-    # DWIE LINIJKI, NIE JEDNA. To pole niesie najdluzsze teksty w oknie - komunikat
-    # o numerze uzywanym przez wiele osob ma ponad sto trzydziesci znakow i w jednej
-    # linijce widac z niego pierwsza polowe zdania. Zawijanie wierszy jest przy Multiline
-    # domyslne; wysokosc liczy sie z czcionki, w sekcji wyrownania.
+    # "Status:" ma dwie linijki - niesie najdluzsze komunikaty.
     $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 8)
     $txtStatus = New-JezykPole               $L (Get-JezykWierszPole 8) $C
     $txtStatus.Multiline = $true
@@ -4056,11 +2719,7 @@ function New-JezykForm {
 
     $pnlKomputer         = New-Object System.Windows.Forms.Panel
     Set-JezykWyglad $pnlKomputer 'Okno' -Rejestruj
-    # Wysokosc WYLICZANA z ostatniego wiersza, a nie wpisana: dolozenie kolejnego pola nie
-    # wymaga wtedy przeliczania jej na piechote. Panel jest nizszy od panelu konta i tak ma
-    # zostac - widok komputera odpowiada na mniej pytan, a okno kurczy sie razem z nim
-    # (Set-JezykWysokoscOkna czyta wysokosc wprost stad).
-    # Bez zapasu pod ostatnim polem - ta sama arytmetyka, co w panelu konta wyzej.
+    # Wysokosc panelu z ostatniego wiersza (bez zapasu pod polem) - czyta ja Set-JezykWysokoscOkna.
     $pnlKomputer.Size    = [System.Drawing.Size]::new($Script:SzerokoscOkna,
                                                      ($kompWiersz5 + $Script:OdstepPodEtykieta +
                                                       $wysokoscStatusu))
@@ -4069,43 +2728,25 @@ function New-JezykForm {
     $lblKompKatalog = New-JezykEtykieta 'Katalog komputera:' $Script:Margines $kompWiersz0
     $txtKompKatalog = New-JezykPole $Script:Margines ($kompWiersz0 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
 
-    # Droga ODWROTNA do pola "Ostatnio uzywany komputer" w widoku konta: tam z loginu
-    # szukamy maszyny, tu z maszyny szukamy uzytkownika. Zrodlo to samo - inwentaryzacja
-    # SCCM - wiec i tu przy etykiecie stoi przycisk "!" na wypadek jej milczenia.
+    # Droga odwrotna do "Ostatnio uzywany komputer": z maszyny do uzytkownika (SCCM).
     $lblKompUzytkownik = New-JezykEtykieta 'Ostatnio zalogowany użytkownik:' $Script:Margines $kompWiersz1
     $txtKompUzytkownik = New-JezykPole $Script:Margines ($kompWiersz1 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoUzytkownik = New-JezykPrzyciskInfo 'Uzytkownik'
 
-    # Wlasciciel obiektu w AD razem z data zalozenia - jedno pole, bo to jedna odpowiedz
-    # na jedno pytanie. Przycisk NIEBIESKI, jak przy komputerze wspoldzielonym: to nie
-    # usterka, tylko realna niejednoznacznosc TEGO wyniku - AD wpisuje jako wlasciciela
-    # grupe, gdy obiekt zakladal czlonek Administratorow domeny, i nazwiska nie da sie
-    # wtedy z niego odczytac. Zapala sie wylacznie wtedy, gdy pole nie nazywa osoby.
+    # Wlasciciel obiektu w AD z data zalozenia; niebieski "!" tylko gdy pole nie nazywa osoby.
     $lblKompTworca = New-JezykEtykieta 'Dodany do AD przez:' $Script:Margines $kompWiersz2
     $txtKompTworca = New-JezykPole $Script:Margines ($kompWiersz2 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $btnInfoTworca = New-JezykPrzyciskInfo 'Tworca'
     Set-JezykWyglad $btnInfoTworca 'InfoNiebieski' -Rejestruj
 
-    # Konto komputera wylaczone w AD widac w "Centrum administracyjnym Active Directory"
-    # wyszarzonym monitorkiem z kropka - nazwa obiektu wyglada wtedy tak samo jak zawsze,
-    # wiec bez tego pola nie da sie tego z okna zauwazyc. Pole KOLOROWANE, bo niesie
-    # werdykt: zielone wlaczone, czerwone wylaczone, neutralne "nie wiadomo".
+    # Stan konta komputera w AD - pole kolorowane (zielone, czerwone, neutralne).
     $lblKompWlaczone = New-JezykEtykieta 'Konto komputera w AD:' $Script:Margines $kompWiersz3
     $txtKompWlaczone = New-JezykPole $Script:Margines ($kompWiersz3 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
 
-    # Dostepnosc maszyny i jej karta sieciowa - ten sam komplet, co w widoku konta, tylko
-    # po tej stronie okna maszyna jest TEMATEM, a nie znaleziskiem. Jedyny w tym panelu
-    # wiersz o dwoch kolumnach: oba pola sa krotkie, a przycisk "Pinguj" potrzebuje prawego
-    # brzegu - dokladnie jak tam.
-    #
-    # KOLOR SONDY NIESIE POLE ADRESU IP. Po tamtej stronie okna barwi sie napis z nazwa
-    # maszyny, ale tutaj takiego pola nie ma: nazwe wpisuje operator, wiec nie ma czego
-    # barwic. Adres jest przy tym wpisywany TAKZE wtedy, gdy maszyna milczy - DNS ja zna,
-    # a to osobny fakt od tego, czy odpowiada.
+    # MAC i IP maszyny (jedyny dwukolumnowy wiersz panelu); kolor sondy niesie pole adresu IP.
     $lblKompMac = New-JezykEtykieta 'Adres MAC:' $Script:Margines $kompWiersz4
     $txtKompMac = New-JezykPole $Script:Margines ($kompWiersz4 + $Script:OdstepPodEtykieta) $Script:SzerokoscKolumny
-    # Przycisk NIEBIESKI jak przy blizniaczym polu: brak dopasowania karty to zwykly,
-    # spodziewany wynik (inwentaryzacja bywa starsza od dzierzawy DHCP), a nie usterka.
+    # Niebieski "!" - brak dopasowania karty to nie usterka.
     $btnInfoMacMaszyny = New-JezykPrzyciskInfo 'MacMaszyny'
     Set-JezykWyglad $btnInfoMacMaszyny 'InfoNiebieski' -Rejestruj
 
@@ -4124,11 +2765,7 @@ function New-JezykForm {
     $btnKompPinguj.Enabled   = $false
     $btnKompPinguj.TabStop   = $false
 
-    # "Polacz" stoi NAD "Pinguj", w linii etykiety - tak samo jak w widoku konta. Tam
-    # dzieli wiersz z wykrzyknikami, ktore koncza sie razem z polem, czyli przed nim;
-    # tutaj etykieta 'Adres IP:' jest krotka i nie ma przy niej wykrzyknika, a reszta
-    # wiersza stoi pusta az do prawego brzegu kolumny. Wspolrzedne i tak biora sie
-    # Z SASIADA, nie z siatki.
+    # "Polacz" nad "Pinguj", jak w widoku konta; wspolrzedne z sasiada.
     $btnKompPolacz           = New-Object System.Windows.Forms.Button
     $btnKompPolacz.Text      = ''
     $btnKompPolacz.Tag       = 'Połącz'
@@ -4139,18 +2776,7 @@ function New-JezykForm {
     $btnKompPolacz.Visible   = $false
     $btnKompPolacz.TabStop   = $false
 
-    # "Dyski" staje OBOK "Polacz", a nie pod nim: pion tej kolumny jest domkniety - nad
-    # "Pinguj" stoi "Polacz", a nad "Polacz" pole "Konto komputera w AD". W poziomie
-    # miejsce jest, bo etykieta 'Adres IP:' konczy sie daleko przed prawym brzegiem.
-    #
-    # PRZYCISK ZNIKA I POJAWIA SIE, tak samo jak sasiad - rozni ich tylko to, ze "Dyski"
-    # nie pyta o zadna sciezke z konfiguracji: udzialy administracyjne zaklada system sam.
-    # Warunki obu stoja w Set-JezykPrzyciskiZdalne i tam tez jest napisane, dlaczego
-    # chowamy je takze w stanie PRZEJSCIOWYM, wbrew regule od "Odblokuj konto".
-    #
-    # STAN POCZATKOWY IDZIE WIEC PRZEZ Visible, A NIE Enabled. Zostawione tu dawne
-    # Enabled = $false przezylo by cale zycie okna - dostepnoscia nie steruje juz nic -
-    # i przycisk bylby widoczny, ale trwale szary. Nic by tego nie zglosilo.
+    # "Dyski" obok "Polacz", znika i pojawia sie jak on - stan poczatkowy przez Visible, nie Enabled.
     $btnKompDyski           = New-Object System.Windows.Forms.Button
     $btnKompDyski.Text      = ''
     $btnKompDyski.Tag       = 'Dyski'
@@ -4161,13 +2787,7 @@ function New-JezykForm {
     $btnKompDyski.Visible   = $false
     $btnKompDyski.TabStop   = $false
 
-    # Dwie linijki, tak samo jak w widoku konta: to pole niesie komunikaty o niepowodzeniu
-    # zapytania do SCCM, rownie dlugie. Jedno pole dwulinijkowe, a drugie jednolinijkowe
-    # wygladaloby jak usterka.
-    #
-    # Przycisk "!" WYLACZNIE dla nieudanego uruchomienia zdalnej konsoli - pelna tresc
-    # wyjatku razem ze sciezka z konfiguracji nie miesci sie w dwoch linijkach pola.
-    # Na kazdej innej drodze gasnie, bo Status: sam z siebie niczego nie ukrywa.
+    # "Status:" w dwoch linijkach, jak w widoku konta; "!" dla niepowodzen akcji zdalnych.
     $lblKompStatus  = New-JezykEtykieta 'Status:' $Script:Margines $kompWiersz5
     $txtKompStatus  = New-JezykPole $Script:Margines ($kompWiersz5 + $Script:OdstepPodEtykieta) $Script:SzerokoscPelna
     $txtKompStatus.Multiline = $true
@@ -4182,41 +2802,18 @@ function New-JezykForm {
                                      $btnKompDyski,
                                      $lblKompStatus, $txtKompStatus, $btnInfoStatusMaszyny))
 
-    # PAS PODPISU: dwa napisy i ikonka motywu, wszystko na JEDNEJ LINII PISMA. Wysokosc
-    # pasa ($Script:WysokoscPasaPodpisu) i jego czcionka sa policzone NA POCZATKU tej
-    # funkcji, bo z tej samej liczby bierze sie wysokosc okna - dwie kopie rozjechalyby sie
-    # przy pierwszej zmianie i podpis wyladowalby obok dolnej krawedzi.
-    # Podpis autora lezy POZA panelami, wiec widac go w obu trybach.
-    #
-    # PION ZEROWY, jak przy etykietach gornego pasa: dol okna zmienia sie razem z trybem,
-    # wiec pas podpisu dostaje wspolrzedna dopiero od Set-JezykWysokoscOkna - i tam stoi
-    # jedyna kopia tego wzoru.
+    # Pas podpisu: dwa napisy i ikonka motywu na jednej linii pisma; pion nadaje Set-JezykWysokoscOkna.
     $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) `
                                             $Script:Margines 0
     Set-JezykWyglad $lblAutor 'Podpis' -Rejestruj
     $lblAutor.Font      = $czcionkaPasa
 
-    # Numer wersji na DRUGIM koncu tego samego pasa - prawa polowa stala pusta, wiec napis
-    # nie kosztuje ani jednego piksela wysokosci okna i widac go w obu trybach.
-    #
-    # Y BIERZEMY Z PODPISU, a nie drugie "- 20" wpisane wprost: dwie kopie tej samej
-    # wspolrzednej rozjada sie przy pierwszej zmianie wysokosci pasa, a rozjazd o kilka
-    # pikseli na dole okna jest dokladnie tym, czego nikt nie zauwazy w kodzie.
-    # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
+    # Numer wersji na drugim koncu pasa; pion z podpisu, poziom z wyrownania.
     $lblWersja           = New-JezykEtykieta ('Wersja: ' + $Script:Config.Wersja) $Script:Margines $lblAutor.Top
     Set-JezykWyglad $lblWersja 'Podpis' -Rejestruj
     $lblWersja.Font      = $lblAutor.Font
 
-    # PRZYCISK MOTYWU - ksiezyc przy jasnym oknie, slonce przy ciemnym. Stoi w tym samym
-    # pustym pasie, co oba napisy, wiec nie kosztuje ani jednego piksela wysokosci okna.
-    # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
-    #
-    # BEZ RAMKI: ma wygladac jak ikonka wpisana w pas podpisu, a nie jak klawisz obok
-    # dwoch szarych napisow. Wyzerowane marginesy wewnetrzne z tego samego powodu, co przy
-    # przyciskach "!" - bez nich rysunek nie miesci sie w kwadracie.
-    #
-    # BOK Z WYSOKOSCI PASA, nie ze stalej: pudelko ikonki ma byc takie samo, jak pudelko
-    # obu napisow - inaczej nie da sie ich postawic na jednej linii pisma.
+    # Przycisk motywu (ksiezyc albo slonce): bez ramki, zerowe marginesy, bok z wysokosci pasa.
     $btnMotyw           = New-Object System.Windows.Forms.Button
     $btnMotyw.Size      = [System.Drawing.Size]::new($Script:WysokoscPasaPodpisu, $Script:WysokoscPasaPodpisu)
     $btnMotyw.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -4227,9 +2824,7 @@ function New-JezykForm {
     Set-JezykWyglad $btnMotyw 'Ikona' -Rejestruj
     $btnMotyw.Add_Paint({ Set-JezykRysunekMotywu -Grafika $_.Graphics -Bok $this.Width })
 
-    # KWADRATY ZE STRZALKA dla trzech list rozwijanych - patrz New-JezykStrzalkaListy.
-    # Wspolrzedne dostana nizej, w sekcji wyrownania: biora sie z list, a te znaja swoja
-    # wysokosc dopiero po odziedziczeniu czcionki okna.
+    # Kwadraty ze strzalka trzech list - wspolrzedne w sekcji wyrownania.
     $strzDomeny = New-JezykStrzalkaListy
     $strzTryb   = New-JezykStrzalkaListy
     $strzWynik  = New-JezykStrzalkaListy
@@ -4239,108 +2834,56 @@ function New-JezykForm {
                               $pnlKonto, $pnlKomputer, $lblAutor, $lblWersja, $btnMotyw,
                               $strzDomeny, $strzTryb, $strzWynik))
 
-    # NA SAM WIERZCH. W kolekcji Controls pozycja zero znaczy "najwyzej", a AddRange dokleja
-    # na koniec, czyli NAJNIZEJ - kwadraty wyladowalyby pod listami, ktore maja zakrywac,
-    # i nie byloby po nich sladu. WinForms nie zglasza tego niczym: kontrolka jest w oknie,
-    # ma wspolrzedne i po prostu jej nie widac.
+    # Uwaga: kwadraty na wierzch (SetChildIndex 0) - AddRange dokleja na spod i nie byloby ich widac.
     foreach ($strzalka in @($strzDomeny, $strzTryb, $strzWynik)) {
         $form.Controls.SetChildIndex($strzalka, 0)
     }
 
     # --- WYROWNANIE W PIONIE ---------------------------------------------------------
-    # CALE wyrownanie stoi TUTAJ, po dodaniu kontrolek do okna, i nie da sie go przeniesc
-    # wyzej: kontrolka dziedziczy czcionke okna dopiero w momencie dodania, wiec kazdy pomiar
-    # tekstu zrobiony wczesniej mierzylby czcionke domyslna.
-    #
-    # PRZYCISKI NIE ROSNA I NIE MA TU CZEGO PRZELICZAC: kazdy ma wysokosc pola, nadana przy
-    # budowie, bo napis rysuje mu Set-JezykRysunekNapisuPrzycisku w calym prostokacie i nie
-    # ma sie gdzie uciac.
+    # Po dodaniu kontrolek do okna - dopiero wtedy maja czcionke okna; przyciski maja juz wysokosc pola.
 
     Set-JezykSrodekTekstu $lblDomena $cmbDomena.Height
     Set-JezykSrodekTekstu $lblPodaj  $cmbTryb.Height
 
-    # OBA NAPISY PASA DOSTAJA PUDELKO O WYSOKOSCI IKONKI, a ich tekst srodkuje sie w nim.
-    # Bez tego napis ma wysokosc SAMEGO TEKSTU (AutoSize), ikonka - swoja wlasna, a
-    # srodkowanie jednego prostokata na drugim ustawia w jednej linii PROSTOKATY, a nie
-    # linie pisma: ikonka wychodzila przez to nizej niz napis. To ten sam powod, dla
-    # ktorego Set-JezykSrodekTekstu w ogole istnieje - patrz komentarz przy niej.
-    #
-    # Musi padac PRZED dosuwaniem do prawej: zdejmuje AutoSize i nadaje rozmiar, a
-    # dosuwanie czyta juz Width.
+    # Oba napisy pasa w pudelku o wysokosci ikonki (jedna linia pisma); przed dosuwaniem do prawej.
     Set-JezykSrodekTekstu $lblAutor  $Script:WysokoscPasaPodpisu
     Set-JezykSrodekTekstu $lblWersja $Script:WysokoscPasaPodpisu
 
-    # Napis z wersja dosuwamy do prawego marginesu DOPIERO TUTAJ i z tego samego powodu,
-    # ktory opisuje komentarz nad ta sekcja: New-JezykEtykieta wlacza AutoSize, a etykieta
-    # dziedziczy czcionke okna dopiero w momencie dodania - Width odczytany wczesniej
-    # bylby zmierzony czcionka domyslna i napis wyladowalby obok marginesu, tym bardziej
-    # przy DPI 125-150%.
+    # Wersja do prawego marginesu dopiero teraz - Width znany po odziedziczeniu czcionki.
     Set-JezykDoPrawej @($lblWersja) ($Script:SzerokoscOkna - $Script:Margines)
 
-    # Ikonka motywu NA LEWO OD NAPISU Z WERSJA i liczona OD NIEGO, a nie od krawedzi okna:
-    # napis ma AutoSize, wiec jego szerokosc zalezy od czcionki systemu i przy DPI 125-150%
-    # rosnie. Liczba wpisana tutaj trzymalaby sie wylacznie przy 100% i przy wiekszej
-    # czcionce ikonka wlazlaby pod napis.
-    #
-    # GORNA KRAWEDZ WPROST Z NAPISU: oba pudelka maja juz te sama wysokosc, wiec wspolna
-    # gora znaczy wspolna linie pisma - i nie zalezy od tego, co policzyl AutoSize.
+    # Ikonka motywu na lewo od napisu z wersja, liczona od niego; gora wprost z napisu.
     $btnMotyw.Top = $lblWersja.Top
     Set-JezykDoPrawej @($btnMotyw) ($lblWersja.Left - $Script:OdstepIkonyMotywu)
 
-    # Wysokosc jeza bierze sie z listy domen, a nie z liczby: pas ma rosnac razem z nia,
-    # gdy czcionka systemu urosnie przy DPI 125-150%. Musi stac TUTAJ, bo dopiero teraz
-    # lista zna swoja rzeczywista wysokosc.
+    # Wysokosc jeza z listy domen (rosnie z czcionka).
     $jezSzukania.Height = $cmbDomena.Height
 
-    # SRODEK PIERWSZEGO WIERSZA Z POMIARU TEJ LISTY, nie z wysokosci pola. Lista rozwijana
-    # bierze wysokosc z ItemHeight i przy zwyklej czcionce jest o piksel nizsza od pola,
-    # wiec margines liczony z pola wychodzil o piksel szerszy, niz mowi stala. Wysokosc
-    # listy jest prawdziwa dopiero tutaj - po dodaniu jej do okna.
+    # Srodek pierwszego wiersza z pomiaru listy domen (bywa o piksel nizsza od pola).
     $srodekDomeny = Get-JezykSrodekWiersza $cmbDomena.Height
-    # Z PIERWSZEGO SRODKA, nie druga kopia tej samej liczby: dwie kopie rozjada sie przy
-    # pierwszej zmianie gornego marginesu.
+    # Drugi srodek z pierwszego, nie druga kopia liczby.
     $srodekPodaj  = $srodekDomeny + $Script:PasekDomeny
 
     Set-JezykSrodekPionowy @($lblDomena, $cmbDomena, $jezSzukania) $srodekDomeny
     Set-JezykSrodekPionowy @($lblPodaj, $cmbTryb, $txtSzukaj, $btnSzukaj) $srodekPodaj
 
-    # KWADRATY ZE STRZALKA STAJA NA WIERZCHU SWOICH LIST - dopiero tutaj, bo dwie z nich
-    # dostaly gorna krawedz linijke wyzej, a wysokosc znaja od WinForms.
-    #
-    # SZEROKOSC PRZYCISKU LISTY LICZY WINDOWS, tak samo jak szerokosc paska przewijania,
-    # i przy DPI 125-150% jest inna. Liczba wpisana tutaj trzymalaby sie wylacznie
-    # przy 100% i przy wiekszej czcionce zostawilaby po bokach jasne paski.
+    # Kwadraty ze strzalka na przyciskach list; szerokosc liczy Windows (Get-JezykSzerokoscStrzalki).
     $szerStrzalki = Get-JezykSzerokoscStrzalki
     Set-JezykStrzalkaListy $cmbDomena $strzDomeny $szerStrzalki
     Set-JezykStrzalkaListy $cmbTryb   $strzTryb   $szerStrzalki
     Set-JezykStrzalkaListy $cmbWynik  $strzWynik  $szerStrzalki
 
-    # Lista kont pokazuje sie wylacznie przy wyszukiwaniu czesciowym, a jej kwadrat nie ma
-    # po co wisiec nad pustym miejscem. Stan poczatkowy bierzemy Z LISTY, dalszy - z jej
-    # zdarzenia (patrz sekcja ZDARZENIA): miejsc przelaczajacych ta liste jest kilka
-    # i pierwsze zapomniane zostawiloby w oknie kwadrat bez listy.
+    # Kwadrat listy kont widoczny razem z nia (dalej pilnuje tego zdarzenie VisibleChanged).
     $strzWynik.Visible = $cmbWynik.Visible
 
-    # Zapas nad wysokoscia tekstu jest konieczny: kwadrat ma stale 13 px i w ciasnym
-    # prostokacie nie miescil sie razem z napisem.
-    #
-    # KWADRATY I NAPISY DOSTAJA JEDNO PUDELKO. Wspolna wysokosc i wspolna gorna krawedz to
-    # jedyny sposob, zeby napis stal na linii pisma kwadratu, a nie pol piksela nizej -
-    # ta sama zasada, co przy ikonce motywu i napisie z wersja w pasie podpisu.
+    # Znaczniki i ich napisy w jednym pudelku (wspolna linia pisma); zapas na kwadrat 13 px.
     $wysokoscZnacznika = [int][math]::Ceiling($form.Font.GetHeight()) + 8
     foreach ($znacznik in @($chkAktywne, $chkZablokowane, $chkFlagaHasla,
                             $lblAktywne, $lblZablokowane, $lblFlagaHasla)) {
         Set-JezykSrodekTekstu $znacznik $wysokoscZnacznika
     }
 
-    # TRZY ZNACZNIKI WYSRODKOWANE, KAZDY W SWOJEJ TRZECIEJ CZESCI RAMKI. Wczesniej staly
-    # w trzech slupkach liczonych od stalego lewego marginesu, wiec cala trojka byla
-    # docisnieta do lewej krawedzi, a po prawej zostawalo kilkadziesiat pikseli pustki.
-    #
-    # MIARY Z DisplayRectangle, A NIE Z Size. GroupBox rezerwuje u gory pasek na tytul
-    # (nawet pusty) i ma wlasna ramke, wiec dopiero DisplayRectangle podaje prawdziwe
-    # wnetrze. To ta sama zasada, co przy Set-JezykSrodekPionowy: pytamy kontrolke o jej
-    # rzeczywiste wymiary, zamiast wpisywac liczby, ktore zgadzaja sie tylko przy 100% DPI.
+    # Trzy znaczniki wysrodkowane, kazdy w swojej trzeciej czesci ramki (miary z DisplayRectangle).
     $obszarFlag = $grpFlagi.DisplayRectangle
 
     Set-JezykSrodekWSlupkach @($chkAktywne, $chkZablokowane, $chkFlagaHasla) `
@@ -4348,51 +2891,31 @@ function New-JezykForm {
                              @($lblAktywne, $lblZablokowane, $lblFlagaHasla) `
                              (Get-JezykOdstepZnacznika $lblAktywne.Font)
 
-    # PION LICZONY OD LINII RAMKI, A NIE OD DisplayRectangle. GroupBox rezerwuje u gory pasek
-    # na tytul nawet wtedy, gdy tytul jest pusty - a DisplayRectangle zaczyna sie DOPIERO POD
-    # tym paskiem. Srodkowanie w nim spychalo wiec cala trojke o pol paska w dol i napisy
-    # siedzialy nizej niz srodek ramki, ktora widac na ekranie.
-    #
-    # Linia ramki biegnie przez SRODEK paska tytulu, wiec widoczne wnetrze zaczyna sie
-    # w polowie jego wysokosci - stad dzielenie przez dwa, a nie pominiecie paska w calosci.
-    # Floor, nie [int]: [int] w PowerShellu zaokragla i przy nieparzystym pasku dawalby
-    # piksel roznicy miedzy jedna a druga stacja.
+    # Pion od linii ramki (polowa paska tytulu GroupBoxa), nie od DisplayRectangle; Floor, nie [int].
     $goraRamkiFlag = [int][Math]::Floor($obszarFlag.Top / 2)
     $srodekFlag    = $goraRamkiFlag +
                      [int][Math]::Floor(($grpFlagi.ClientSize.Height - $goraRamkiFlag) / 2)
     Set-JezykSrodekPionowy @($chkAktywne, $chkZablokowane, $chkFlagaHasla,
                              $lblAktywne, $lblZablokowane, $lblFlagaHasla) $srodekFlag
 
-    # Przy werdykcie rownanie idzie w druga strone: napis jest wiekszy od reszty okna, wiec
-    # to KWADRAT dostaje jego wysokosc.
+    # Przy werdykcie odwrotnie: kwadrat dostaje wysokosc wiekszego napisu.
     $wysokoscWerdyktu = $lblWerdykt.PreferredSize.Height + 4
     Set-JezykSrodekTekstu $lblWerdykt $wysokoscWerdyktu $Script:NajdluzszyWerdykt
     Set-JezykSrodekTekstu $chkWerdykt $wysokoscWerdyktu
 
-    # NAPIS OD KWADRATU, TA SAMA REGULA, CO WE FLAGACH: jedna spacja - tyle ze spacja
-    # czcionki werdyktu. Dotad stal na wpisanym "Margines + 24", czyli kilkanascie pikseli
-    # za kwadratem. Szerokosc kwadratu jest znana dopiero po Set-JezykSrodekTekstu, stad
-    # to miejsce.
+    # Napis werdyktu od kwadratu o jedna spacje swojej czcionki.
     $lblWerdykt.Left = $chkWerdykt.Left + $chkWerdykt.Width +
                        (Get-JezykOdstepZnacznika $lblWerdykt.Font)
 
     Set-JezykSrodekPionowy @($chkWerdykt, $lblWerdykt, $btnOdblokuj) $Script:SrodekWerdyktu
 
-    # OBA POLA "Status:" DOSTAJA DRUGA LINIJKE. Wysokosc liczona z czcionki, a nie wpisana:
-    # PreferredHeight to wysokosc JEDNEJ linii razem z ramka, wiec dokladamy do niej
-    # wysokosc kolejnej. Liczba wpisana na sztywno zgadzalaby sie wylacznie przy 100% DPI -
-    # ta sama zasada, co przy $wysokoscZnacznika i Set-JezykSrodekPionowy.
-    #
-    # $drugaLinia policzona JUZ NA POCZATKU tej funkcji, bo z tej samej liczby bierze sie
-    # wysokosc obu paneli ($wysokoscStatusu) - dwie kopie rozjechalyby sie przy pierwszej
-    # zmianie i pole wystawaloby poza panel.
+    # Oba pola "Status:" dostaja druga linijke - z czcionki, ta sama liczba co wysokosc paneli.
     foreach ($pole in @($txtStatus, $txtKompStatus)) {
         $pole.Height = $pole.PreferredHeight + $drugaLinia
     }
 
     # --- ETYKIETY NIE MOGA SIEGNAC SWOJEGO POLA --------------------------------------
-    # Regula i jej powod - patrz Set-JezykEtykietaNadPolem. Ta sama funkcja przycina
-    # etykiete "Status:" w oknie grup.
+    # Regula: Set-JezykEtykietaNadPolem.
     foreach ($panel in @($pnlKonto, $pnlKomputer)) {
         foreach ($kontrolka in $panel.Controls) {
             if ($kontrolka -is [System.Windows.Forms.Label]) { Set-JezykEtykietaNadPolem $kontrolka }
@@ -4400,57 +2923,34 @@ function New-JezykForm {
     }
 
     # --- PRZYCISKI "!" ---------------------------------------------------------------
-    # Stawiane NA SAMYM KONCU wyrownania, bo pion licza z czcionki etykiet, a te dziedzicza
-    # ja dopiero po dodaniu do okna - i po tym, jak wyrownanie wyzej poprzestawialo im
-    # wspolrzedne pionowe.
+    # Na samym koncu wyrownania - pion liczony z czcionki etykiet.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
-        # Czcionka wyprowadzona z czcionki okna, jak przy werdykcie: wykrzyknik ma byc
-        # pogrubiony takze wtedy, gdy system uzywa innej czcionki dialogow.
+        # Pogrubiona czcionka z czcionki okna.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
 
-        # NA WIERZCH PANELU. Wykrzyknik stoi na koncu pola, a dluga etykieta przy duzym
-        # tekscie siega tam swoim pudelkiem - AddRange dodal ja wczesniej, czyli WYZEJ,
-        # i zakrylaby przycisk. Ta sama pulapka, co przy kwadratach list rozwijanych.
+        # Na wierzch panelu - dluga etykieta nie moze zakryc "!".
         $info.Parent.Controls.SetChildIndex($info, 0)
     }
 
-    # Przycisk "Pinguj" srodkuje sie w pionie na polu, ktore opisuje. Wysokosc pola liczy
-    # sie z czcionki, wiec pomiar musi byc TUTAJ, po dodaniu kontrolek do okna.
+    # "Pinguj" srodkowany na swoim polu (pomiar po dodaniu do okna).
     Set-JezykSrodekPionowy @($btnPinguj) `
         ($txtKomputerUzytkownika.Top + (Get-JezykPolowaWysokosci $txtKomputerUzytkownika.Height))
 
-    # Przycisk grup srodkuje sie na polu KATALOGU, czyli na swoim sasiedzie z tego
-    # samego wiersza - nie na wspolrzednej siatki. Wysokosc pola rosnie z czcionka,
-    # wiec pion policzony ze stalych rozjechalby sie przy 125-150% DPI - a przycisk
-    # ma wlasna wysokosc, liczona z napisu.
+    # Przycisk grup srodkowany na polu katalogu z tego samego wiersza.
     Set-JezykSrodekPionowy @($btnGrupyAd) `
         ($txtKatalog.Top + (Get-JezykPolowaWysokosci $txtKatalog.Height))
 
-    # "Polacz" LICZY SIE Z SASIADA, NIE Z SIATKI - i to jest tu istotne. Wysrodkowanie go
-    # na etykiecie (tak, jak stoja przyciski "!") wygladaloby poprawnie przy 100% DPI
-    # i dosuwalo sie do "Pinguj" na styk przy 125-150%: etykieta i pole dzieli STALE 20 px
-    # ($Script:OdstepPodEtykieta), a wysokosc obu rosnie z czcionka. Odjete od gotowego Top
-    # sasiada daje odstep, ktory nie zalezy od DPI w ogole.
+    # "Polacz" od gotowego Top sasiada ("Pinguj") - odstep niezalezny od DPI.
     $odstepPionowyPolacz = 2
     $btnPolacz.Left = $btnPinguj.Left
     $btnPolacz.Top  = $btnPinguj.Top - $btnPolacz.Height - $odstepPionowyPolacz
 
-    # WYZSZE PRZYCISKI ZJADAJA ZAPAS WIERSZA. Para ma na siebie stale 58 px skoku wiersza,
-    # a przy duzym tekscie oba przyciski rosna z napisem - "Polacz" wszedlby wtedy od dolu
-    # na pole "Imie i nazwisko". Zsuwamy wtedy OBA: pod "Pinguj" jest wolne az do pola
-    # nastepnego wiersza, bo etykieta nad nim ("Adres IP:") stoi po lewej stronie kolumny.
+    # Wyzsze przyciski zsuwamy razem, zeby "Polacz" nie wszedl na pole wiersz wyzej.
     Set-JezykPonizejPola @($btnPolacz, $btnPinguj) $txtImieNazwisko $odstepPionowyPolacz
 
-    # KAZDY WYKRZYKNIK KONCZY SIE RAZEM ZE SWOIM POLEM - powod przy
-    # Set-JezykPrzyciskPrzyEtykiecie.
-    #
-    # CZERWONY I NIEBIESKI PRZY NAZWIE MASZYNY STOJA W TYM SAMYM MIEJSCU. Nie swieca nigdy
-    # razem: blad SCCM konczy zapytanie, zanim wiadomo, czy maszyna jest wspoldzielona,
-    # a Update-JezykKomputerWTle gasi niebieski przy kazdym bledzie. Dawniej para stala
-    # obok siebie, wiec samotny czerwony - czyli zwykly przypadek - konczyl sie o caly
-    # przycisk przed polem.
+    # Kazdy "!" konczy sie razem ze swoim polem; czerwony i niebieski przy maszynie nigdy razem.
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer              $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWspoldzielony $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac                   $lblKomputerMac         $txtKomputerMac
@@ -4460,42 +2960,24 @@ function New-JezykForm {
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMacMaszyny            $lblKompMac             $txtKompMac
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatusMaszyny         $lblKompStatus          $txtKompStatus
 
-    # Ta sama para przyciskow w widoku komputera i ta sama arytmetyka: "Pinguj" srodkuje
-    # sie w pionie na polu, ktore opisuje, a "Polacz" odejmuje sie od jego gotowego Top.
-    # Wspolrzedne z SASIADA, nie z siatki - pion pola rosnie z czcionka, a przyciski
-    # z napisem.
+    # Ta sama para w widoku komputera: "Pinguj" na polu, "Polacz" od sasiada.
     Set-JezykSrodekPionowy @($btnKompPinguj) `
         ($txtKompIp.Top + (Get-JezykPolowaWysokosci $txtKompIp.Height))
 
     $btnKompPolacz.Left = $btnKompPinguj.Left
     $btnKompPolacz.Top  = $btnKompPinguj.Top - $btnKompPolacz.Height - $odstepPionowyPolacz
 
-    # "Dyski" dzieli wiersz z "Polacz" i bierze od niego OBIE wspolrzedne: wysokosc
-    # przyciskow rosnie z czcionka, wiec wpisana liczba rozjechalaby te pare przy
-    # pierwszym powiekszeniu tekstu w Windows.
+    # "Dyski" bierze obie wspolrzedne od "Polacz".
     $btnKompDyski.Left = $btnKompPolacz.Left - $btnKompDyski.Width - $przerwaPingu
     $btnKompDyski.Top  = $btnKompPolacz.Top
 
-    # To samo zsuniecie, co po drugiej stronie okna. Tu pole wiersz wyzej to "Konto
-    # komputera w AD", a pod "Pinguj" jest wolne az do pola "Status:" - etykieta nad nim
-    # stoi po lewej.
+    # To samo zsuniecie co w widoku konta (pole wiersz wyzej: "Konto komputera w AD").
     Set-JezykPonizejPola @($btnKompDyski, $btnKompPolacz, $btnKompPinguj) `
                          $txtKompWlaczone $odstepPionowyPolacz
 
     # --- WIERSZE ZASILANE PRZEZ SCCM -------------------------------------------------
-    # Co znika w domenie spoza DomenyZSccm - chowa i zsuwa Set-JezykUkladSccm. Opis stoi
-    # PO wyrownaniu tylko dla porzadku: funkcja trzyma kontrolki, a nie ich wspolrzedne.
-    #
-    #   Wiersze - pola wierszy znikajacych W CALOSCI; od nich liczy sie zsuniecie. Wiersz
-    #             e-maila w widoku konta nie znika, bo lewa polowa zostaje.
-    #   Stale   - widoczne zawsze, gdy jest ich wiersz; powrot pokazuje je z powrotem.
-    #   Zmienne - widocznosc ustawia kto inny ("!", "Polacz", "Dyski"); tu sa tylko chowane.
-    #
-    # NOWA KONTROLKA W TYCH WIERSZACH MUSI TU TRAFIC. Pominieta zostanie widoczna w domenie
-    # bez SCCM - na miejscu wiersza, ktory wlasnie zniknal, czyli na polu, ktore tam wjechalo.
-    #
-    # POZA $Script:Kontrolki: rejestr trzyma kontrolki, a zestaw weryfikacyjny zaklada
-    # atrape kontrolki pod kazdym kluczem, ktory widzi w kodzie.
+    # Opis dla Set-JezykUkladSccm: Wiersze (znikaja w calosci), Stale (wracaja), Zmienne (tylko chowane).
+    # Uwaga: nowa kontrolka w tych wierszach musi tu trafic - inaczej zostanie na polu, ktore wjedzie.
     $Script:WierszeSccm = @(
         [pscustomobject]@{
             Panel   = $pnlKonto
@@ -4515,8 +2997,7 @@ function New-JezykForm {
     # Enter w dowolnym miejscu okna dziala jak klikniecie "Szukaj".
     $form.AcceptButton = $btnSzukaj
 
-    # Rejestr kontrolek musi zostac wypelniony PRZED podpieciem zdarzen, bo procedury obslugi
-    # siegaja wylacznie tutaj - powod opisany przy $Script:Kontrolki w SEKCJI 1.
+    # Rejestr kontrolek przed podpieciem zdarzen - procedury siegaja wylacznie tutaj.
     $Script:Kontrolki = @{
         Okno          = $form
         Domena        = $cmbDomena
@@ -4525,15 +3006,13 @@ function New-JezykForm {
         Przycisk      = $btnSzukaj
         JezSzukania   = $jezSzukania
         ListaKont     = $cmbWynik
-        # Kwadraty ze strzalka - potrzebne procedurom zdarzen, ktore nie widza zmiennych
-        # lokalnych tej funkcji.
+        # Kwadraty ze strzalka - dla procedur zdarzen.
         StrzalkaDomeny    = $strzDomeny
         StrzalkaTrybu     = $strzTryb
         StrzalkaListyKont = $strzWynik
         PanelKonto    = $pnlKonto
         PanelKomputer = $pnlKomputer
-        # Pas podpisu - Set-JezykWysokoscOkna zjezdza z nim za dolna krawedzia okna przy
-        # kazdej zmianie trybu, wiec musi go widziec z rejestru.
+        # Pas podpisu - przesuwa go Set-JezykWysokoscOkna.
         PodpisAutor   = $lblAutor
         PodpisWersja  = $lblWersja
         PrzyciskMotyw = $btnMotyw
@@ -4548,8 +3027,7 @@ function New-JezykForm {
         TxtOstatniaZmiana = $txtOstatniaZmiana
         TxtKontoUtworzono = $txtKontoUtworzono
         TxtLoginKonta     = $txtLoginKonta
-        # Etykieta pierwszego pola jest JEDYNA, ktora zmienia tresc w trakcie dzialania:
-        # konto ma "Login:", kontakt "Nazwa:" - bo kontakt loginu nie ma.
+        # Jedyna etykieta zmieniajaca tresc: "Login:" albo "Nazwa:" (kontakt).
         EtykietaLoginKonta = $lblLoginKonta
         TxtImieNazwisko   = $txtImieNazwisko
         TxtEmail          = $txtEmail
@@ -4569,23 +3047,18 @@ function New-JezykForm {
 
         TxtKomputerKatalog = $txtKompKatalog
         TxtKomputerStatus  = $txtKompStatus
-        # Nazwa celowo inna niz TxtKomputerUzytkownika: tamto pole jest w widoku KONTA
-        # i niesie MASZYNE, to jest w widoku KOMPUTERA i niesie UZYTKOWNIKA. Podobne
-        # nazwy juz raz kusily, zeby wpisac wynik nie w to pole, co trzeba.
+        # Pole widoku KOMPUTERA z uzytkownikiem (nie mylic z TxtKomputerUzytkownika w widoku konta).
         TxtKomputerUzytkownikMaszyny = $txtKompUzytkownik
         TxtKomputerTworca            = $txtKompTworca
         TxtKomputerWlaczone          = $txtKompWlaczone
-        # Ten sam sposob odrozniania, co wyzej: przyrostek "Maszyny" znaczy "widok
-        # komputera". Bez niego TxtKomputerIp z widoku konta i to pole roznilyby sie
-        # niczym, a wpisany w zle pole adres wyglada dokladnie tak samo jak dobry.
+        # Przyrostek "Maszyny" = widok komputera.
         TxtKomputerIpMaszyny         = $txtKompIp
         TxtKomputerMacMaszyny        = $txtKompMac
         PrzyciskPingujMaszyny        = $btnKompPinguj
         PrzyciskPolaczMaszyny        = $btnKompPolacz
         PrzyciskDyskiMaszyny         = $btnKompDyski
 
-        # Przyciski "!". Klucze celowo nazwane "Info" + klucz z Set-JezykInfo - ta funkcja
-        # skleja nazwe sama, wiec dolozenie kolejnego pola nie wymaga jej edycji.
+        # Przyciski "!" - klucze "Info" + klucz z Set-JezykInfo (skleja je sama).
         InfoStatus                = $btnInfoStatus
         InfoKomputer              = $btnInfoKomputer
         InfoUzytkownik            = $btnInfoUzytkownik
@@ -4597,13 +3070,10 @@ function New-JezykForm {
     }
 
     # --- ZDARZENIA -------------------------------------------------------------------
-    # W scriptblockach NIE MA odwolan do zmiennych lokalnych tej funkcji - te przestana
-    # istniec, zanim zdarzenie sie wydarzy.
+    # Scriptblocki nie odwoluja sie do zmiennych lokalnych tej funkcji.
     $btnSzukaj.Add_Click({ Invoke-JezykSearch })
 
-    # KWADRATY ZE STRZALKA: rysunek i klikniecie. Etykieta sama z siebie listy nie otwiera,
-    # wiec klikniecie trzeba podac dalej - inaczej strzalka bylaby obrazkiem, ktory wyglada
-    # jak przycisk i nic nie robi. Klikniecie w reszte listy otwiera ja tak jak dotad.
+    # Kwadraty ze strzalka: rysunek i klikniecie przekazane liscie (DroppedDown).
     foreach ($strzalka in @($strzDomeny, $strzTryb, $strzWynik)) {
         $strzalka.Add_Paint({ Set-JezykRysunekStrzalkiListy -Strzalka $this -Grafika $_.Graphics })
     }
@@ -4627,20 +3097,12 @@ function New-JezykForm {
         Receive-JezykZadanieNumeru
         Receive-JezykZadanieDysku
 
-        # PO wszystkich Receive, nie przed nimi. Odpowiedz, ktora przyszla w tym takcie,
-        # zdazyla juz zgasic notke - inaczej kolejna klatka kropek nadpisalaby wynik
-        # i operator ogladalby "sprawdzanie" nad praca, ktora wlasnie sie skonczyla.
+        # Kropki PO wszystkich Receive - odpowiedz z tego taktu zdazyla zgasic notke.
         Update-JezykKropkiSprawdzania
 
         Clear-JezykZadaniaPorzucone
 
-        # Zegar chodzi tylko dopoki jest na co czekac ALBO co zwolnic.
-        #
-        # $Script:ZadaniaSpisane CELOWO NIE MA W TYM WARUNKU. Zadanie, ktore nie odpuscilo
-        # przez dwie minuty, nie zglosi sie w nastepnej cwiartce sekundy - trzymanie dla
-        # niego zegara przy zyciu znaczyloby budzenie watku interfejsu cztery razy na
-        # sekunde przez cala reszte dnia. Spisane doczekaja nastepnego wyszukiwania: ono
-        # uruchamia zadanie w tle, zegar rusza i przy pierwszym takcie je zwalnia.
+        # Zegar stoi, gdy nic nie biegnie i nie ma porzuconych (spisane czekaja na nastepne szukanie).
         if (-not $Script:ZadanieLogowania -and -not $Script:ZadanieKomputera -and
             -not $Script:ZadanieUzytkownika -and -not $Script:ZadaniePingu -and
             -not $Script:ZadanieNumeru -and -not $Script:ZadanieDysku -and
@@ -4650,44 +3112,30 @@ function New-JezykForm {
     })
     $Script:ZegarTla = $zegar
 
-    # ZEGAR ANIMACJI JEZA - OSOBNY OD POWYZSZEGO, i to nie jest rozrzutnosc. Zegar zadan
-    # budzi sie co cwierc sekundy i tylko dopoki cos biegnie w tle; animacja potrzebuje
-    # kilkunastu klatek na sekunde. Zlaczone w jeden albo zamulilyby jeden koniec, albo
-    # drugi budzilyby bez potrzeby.
-    #
-    # Chodzi WYLACZNIE w stanie 'Szuka' - zapala go i zatrzymuje Set-JezykStanJeza. Poza
-    # z wynikiem jest NIERUCHOMA, wiec zegar ma przy niej stac: zegar chodzacy nad statycznym
-    # obrazkiem budzilby watek interfejsu kilkanascie razy na sekunde do konca dnia.
+    # Osobny zegar animacji jeza (~16 klatek/s), chodzi tylko w stanie 'Szuka'.
     $zegarJeza          = New-Object System.Windows.Forms.Timer
     $zegarJeza.Interval = $Script:TaktJeza
     $zegarJeza.Add_Tick({
         $Script:KlatkaJeza++
-        # Invalidate TYLKO tutaj. Jezyk-3-Widok.ps1 dotyka wylacznie Visible, bo atrapa
-        # kontrolki w zestawie weryfikacyjnym nie ma metod rysowania.
+        # Invalidate tylko tutaj - widok dotyka wylacznie Visible.
         $Script:Kontrolki.JezSzukania.Invalidate()
     })
     $Script:ZegarJeza = $zegarJeza
 
-    # Bez sprzatania proces potrafi zostac w pamieci, czekajac na przestrzen uruchomieniowa,
-    # ktorej nikt juz nie odbierze. Zegar animacji gasimy przy tej samej okazji.
+    # Sprzatanie zadan i zegara jeza przy zamykaniu okna.
     $form.Add_FormClosing({
         Stop-JezykZadaniaTla
         if ($Script:ZegarJeza) { $Script:ZegarJeza.Stop() }
     })
 
-    # Jedna procedura dla WSZYSTKICH przyciskow "!". Klucz pola przychodzi z Tag klikanego
-    # przycisku - procedury zdarzen nie widza zmiennych lokalnych tej funkcji, a $this jest
-    # kontrolka, ktora zdarzenie zglosila.
+    # Jedna procedura dla wszystkich "!" - klucz z Tag przycisku.
     foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 
-    # KAZDY PRZYCISK Z NAPISEM, a nie tylko te, ktore bywaja wylaczone: napis rysujemy sami
-    # we WSZYSTKICH stanach, bo to on pozwala przyciskowi byc rownym polu. Pominiety przycisk
-    # zostalby po prostu PUSTY - Text ma pusty, a napis siedzi w Tag. Kolor bierze sie
-    # z palety i ze stanu Enabled, wiec jedna procedura wystarcza na wszystkie.
+    # Kazdy przycisk z napisem rysuje go sam (Text pusty) - pominiety bylby pusty.
     foreach ($przycisk in @($btnSzukaj, $btnOdblokuj, $btnPinguj, $btnPolacz,
                             $btnGrupyAd, $btnKompPinguj, $btnKompPolacz, $btnKompDyski)) {
         $przycisk.Add_Paint({ Set-JezykRysunekNapisuPrzycisku -Przycisk $this -Grafika $_.Graphics })
@@ -4697,16 +3145,14 @@ function New-JezykForm {
         $Script:Config.Domena = [string]$Script:Kontrolki.Domena.SelectedItem
         # Kontrolery innej domeny to inne maszyny - zapamietana lista przestaje obowiazywac.
         $Script:KontroleryCache = @{}
-        # Set-JezykWidok czysci widok, a czyszczenie gasi przycisk odblokowania i ustawia
-        # jego widocznosc dla NOWEJ domeny - nie ma wiec powodu przeliczac go tu osobno.
+        # Set-JezykWidok czysci widok i ustawia przycisk odblokowania dla nowej domeny.
         Set-JezykWidok
     })
 
     $btnOdblokuj.Add_Click({ Invoke-JezykOdblokowanie })
     $btnPinguj.Add_Click({ Invoke-JezykPing })
     $btnPolacz.Add_Click({ Invoke-JezykPolacz })
-    # Ta sama obsluga, tylko zaadresowana do drugiego panelu - widok podajemy JAWNIE,
-    # bo to przycisk wie, do ktorego panelu nalezy, a nie stan listy trybu.
+    # Drugi panel - widok podany jawnie.
     $btnKompPinguj.Add_Click({ Invoke-JezykPing   -Widok Maszyna })
     $btnKompPolacz.Add_Click({ Invoke-JezykPolacz -Widok Maszyna })
     # Bez -Widok: ten przycisk stoi tylko w jednym panelu, wiec nie ma czego wskazywac.
@@ -4718,9 +3164,7 @@ function New-JezykForm {
     $cmbTryb.Add_SelectedIndexChanged({ Set-JezykWidok })
     $cmbWynik.Add_SelectedIndexChanged({ Invoke-JezykWyborKonta })
 
-    # Focus() wywolany wczesniej nie zadziala - okna jeszcze nie widac. Z tego samego
-    # powodu stoi tu druga czesc motywu: pasek tytulu i paski przewijania adresuje sie
-    # UCHWYTEM OKNA, a ten powstaje dopiero teraz.
+    # Po pokazaniu okna: fokus, systemowa czesc motywu (potrzebuje uchwytow) i oprawa list.
     $form.Add_Shown({
         $Script:Kontrolki.PoleSzukaj.Focus()
         Set-JezykMotywSystemowy
@@ -4729,22 +3173,15 @@ function New-JezykForm {
         Update-JezykOprawaList
     })
 
-    # ... i jeszcze raz, gdyby ktorakolwiek z list zmienila rozmiar pozniej. Kwadrat ze
-    # strzalka ma wspolrzedne wyliczone z listy, wiec musi isc za nia.
+    # Oprawa list przeliczana takze po kazdej zmianie ich rozmiaru.
     foreach ($lista in @($cmbDomena, $cmbTryb, $cmbWynik)) {
         $lista.Add_SizeChanged({ Update-JezykOprawaList })
     }
 
-    # WYSOKOSC OKNA I PION PASA PODPISU - tym samym wywolaniem, co przy kazdej pozniejszej
-    # zmianie trybu, wiec okno wstaje dokladnie w tym rozmiarze, ktory dostaje po powrocie
-    # na ten sam widok. WIDOK PODAJEMY JAWNIE: startowym trybem jest konto, a wolajacy
-    # zawsze wie, czyj panel renderuje - zgadywanie ze stanu interfejsu jest tu pulapka
-    # opisana przy Set-JezykWidok.
+    # Wysokosc okna i pas podpisu tym samym wywolaniem, co przy zmianie trybu (widok podany jawnie).
     Set-JezykWysokoscOkna $Script:PanelZListą $pnlKonto.Height
 
-    # MOTYW NA SAMYM KONCU, gdy wszystkie kontrolki maja juz swoje role. Wczesniej czesc
-    # z nich jeszcze nie istnieje, a nieprzemalowana kontrolka nie zglasza sie niczym -
-    # po prostu zostaje jasna w ciemnym oknie.
+    # Motyw na samym koncu, gdy wszystkie kontrolki maja role.
     Set-JezykMotyw $Script:Motyw
 
     $form
