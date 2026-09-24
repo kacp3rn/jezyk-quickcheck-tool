@@ -1307,10 +1307,13 @@ function Set-JezykObciecieListy {
     Kolor NIESIONY PRZEZ TRESC (werdykt, wygasle haslo, dostepnosc maszyny) nie nalezy do
     zadnej roli - ustawia go Set-JezykKolorPola i to on ma ostatnie slowo, bo Set-JezykMotyw
     odtwarza role kolorow PO rolach wygladu.
+
+    Przygaszony napis podpisu ("Autor:", "Wersja:") nalezy tu, a nie tam: jest WYGLADEM
+    - nie zmienia sie ze stanem niczego i niczego nie znaczy.
 #>
 function Set-JezykWyglad {
     param($Kontrolka,
-          [ValidateSet('Okno', 'Pole', 'Lista', 'Przycisk',
+          [ValidateSet('Okno', 'Pole', 'Lista', 'Przycisk', 'Podpis',
                        'InfoProblem', 'InfoNiebieski', 'Ikona', 'StrzalkaListy')][string]$Rola,
           [switch]$Rejestruj)
 
@@ -1325,11 +1328,17 @@ function Set-JezykWyglad {
         }
         'Pole' {
             # Tlo JAWNIE, bo pole ReadOnly bez tego rysuje sie na kolorze tla okna
-            # i wyglada jak nieczynne. Kolor tekstu tez jawnie: pole moze wracac
-            # ze stanu kolorowanego przez Set-JezykKolorPola.
+            # i wyglada jak nieczynne - i dlatego, ze pole moze wracac ze stanu, w ktorym
+            # Set-JezykKolorPola pomalowal mu tlo. Kolor tekstu jawnie z tego samego powodu.
             $Kontrolka.BackColor = $Script:Config.KolorTla
             $Kontrolka.ForeColor = $Script:Config.KolorTekstu
             Set-JezykRamkeKontrolki $Kontrolka
+        }
+        'Podpis' {
+            # Napis lezy na tle okna i ma byc przygaszony wzgledem wszystkiego, co w oknie
+            # cos znaczy.
+            $Kontrolka.BackColor = $Script:Config.KolorOkna
+            $Kontrolka.ForeColor = $Script:Config.KolorNieznany
         }
         'Lista' {
             $Kontrolka.BackColor = $Script:Config.KolorKontrolki
@@ -3779,8 +3788,8 @@ function New-JezykForm {
     Set-JezykWyglad $pnlKonto 'Okno' -Rejestruj
     $pnlKonto.Size = [System.Drawing.Size]::new($Script:SzerokoscOkna, $wysokoscPanelu)
 
-    # Werdykt: jedyna kontrolka, ktora zmienia kolor, i jedyna, ktorej tresc zalezy od stanu
-    # konta. Wspolrzedna pionowa ustawiana jest przez wyrownanie na koncu tej funkcji.
+    # Werdykt: napis na tle zaleznym od stanu konta - i jedyna kontrolka, ktorej tresc tez
+    # od niego zalezy. Wspolrzedna pionowa ustawiana jest przez wyrownanie na koncu tej funkcji.
     $chkWerdykt           = New-JezykCheckbox '' $Script:Margines 0 18
     # Lewa wspolrzedna napisu tez z wyrownania - liczy sie od kwadratu, jak we flagach.
     # Napis startowy jest NEUTRALNY, a nie przykladowy. Szerokosc etykiety mierzy sie
@@ -3791,7 +3800,11 @@ function New-JezykForm {
     # Czcionka WYPROWADZONA z czcionki okna, a nie wpisana z nazwy - ma pozostac o punkt
     # wieksza i pogrubiona takze wtedy, gdy system uzywa innej czcionki dialogow.
     $lblWerdykt.Font      = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size + 1, [System.Drawing.FontStyle]::Bold)
-    Set-JezykKolorPola $lblWerdykt 'Nieznany'
+    # ROLA "Okno" PRZED KOLOREM. Etykieta lezy na panelu, wiec jej tlem spoczynkowym jest
+    # tlo okna, a nie pola - Set-JezykKolorPola wraca do niego w stanie neutralnym wlasnie
+    # po tej rejestracji. Bez niej werdykt "Nie sprawdzono" stalby w bialym prostokacie.
+    Set-JezykWyglad    $lblWerdykt 'Okno' -Rejestruj
+    Set-JezykKolorPola $lblWerdykt 'Tekstu'
 
     # Jedyna czynna kontrolka w widoku i jedyna operacja zapisu w narzedziu. Widoczny
     # wylacznie w domenie z odblokowaniem - widocznosc i dostepnosc ustawia jedno miejsce,
@@ -4168,7 +4181,7 @@ function New-JezykForm {
     # jedyna kopia tego wzoru.
     $lblAutor           = New-JezykEtykieta ('Autor: ' + $Script:Config.Autor) `
                                             $Script:Margines 0
-    Set-JezykKolorPola $lblAutor 'Nieznany'
+    Set-JezykWyglad $lblAutor 'Podpis' -Rejestruj
     $lblAutor.Font      = $czcionkaPasa
 
     # Numer wersji na DRUGIM koncu tego samego pasa - prawa polowa stala pusta, wiec napis
@@ -4179,7 +4192,7 @@ function New-JezykForm {
     # pikseli na dole okna jest dokladnie tym, czego nikt nie zauwazy w kodzie.
     # LEWA wspolrzedna zostaje policzona nizej, w sekcji wyrownania - patrz tam.
     $lblWersja           = New-JezykEtykieta ('Wersja: ' + $Script:Config.Wersja) $Script:Margines $lblAutor.Top
-    Set-JezykKolorPola $lblWersja 'Nieznany'
+    Set-JezykWyglad $lblWersja 'Podpis' -Rejestruj
     $lblWersja.Font      = $lblAutor.Font
 
     # PRZYCISK MOTYWU - ksiezyc przy jasnym oknie, slonce przy ciemnym. Stoi w tym samym

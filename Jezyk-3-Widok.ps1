@@ -30,6 +30,18 @@ function Format-JezykData {
     '{0:yyyy-MM-dd HH:mm} ({1})' -f $Data, $wzglednie
 }
 
+# Tresc pola, ktorego wartosci moze nie byc - to samo, co GdyBrak w Format-JezykData, dla
+# napisow. POKAZANY OBIEKT NIE MA PUSTYCH POL: puste czytalo sie jak nieudany odczyt albo
+# jak pole, do ktorego wynik jeszcze nie dotarl, a operator nie ma skad wiedziec, ze to
+# ani jedno, ani drugie. Domyslne slowa mowia, ze atrybut w AD jest pusty; gdy pustka znaczy
+# "nie udalo sie ustalic", wolajacy podaje "brak danych".
+function Get-JezykWartoscPola {
+    param([string]$Wartosc, [string]$GdyBrak = 'nie wpisano w AD')
+
+    if ($Wartosc) { return $Wartosc }
+    return $GdyBrak
+}
+
 <#
 .SYNOPSIS
     Tresc pola "Ostatnie logowanie" - jedna funkcja dla wszystkich czterech stanow.
@@ -84,30 +96,50 @@ function Get-JezykTelefony {
 
 <#
 .SYNOPSIS
-    Nadaje polu kolor wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
+    Nadaje polu kolor TLA wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
 
 .DESCRIPTION
-    JEDYNE MIEJSCE, KTORE USTAWIA ForeColor NA POLU. Paleta zmienia sie w trakcie dzialania
-    okna (przycisk motywu w prawym dolnym rogu), wiec odcien zapisany na kontrolce przestaje
-    po przelaczeniu cokolwiek znaczyc: zielen dobrana pod biale tlo na ciemnym tle jest
-    nieczytelna, a nieczytelny werdykt to werdykt, ktorego nie ma. Przemalowac da sie tylko
-    to, o czym wiadomo, CO mialo znaczyc - stad rola zamiast koloru.
+    ZNACZENIE NIESIE TLO, A NAPIS ZOSTAJE W KOLORZE TEKSTU. Zielony i czerwony napis czytalo
+    sie gorzej niz ten sam napis na zielonym i czerwonym tle - kolor ma byc widac, a tresc
+    czytac tak samo jak w kazdym innym polu okna. Stad ForeColor ustawiany zawsze na
+    KolorTekstu: pole wracajace ze stanu pokolorowanego sprzed tej zmiany nie moze zostac
+    z kolorowym napisem.
+
+    Paleta zmienia sie w trakcie dzialania okna (przycisk motywu w prawym dolnym rogu), wiec
+    odcien zapisany na kontrolce przestaje po przelaczeniu cokolwiek znaczyc: jasne tlo
+    dobrane pod czarny tekst pod bialym tekstem ciemnego motywu jest nieczytelne,
+    a nieczytelny werdykt to werdykt, ktorego nie ma. Przemalowac da sie tylko to, o czym
+    wiadomo, CO mialo znaczyc - stad rola zamiast koloru.
 
     Rola trafia do $Script:RoleKolorow, skad czyta ja Set-JezykMotyw. Kluczem jest SAMA
     KONTROLKA, a nie jej nazwa z rejestru: pola sondy przychodza z Get-JezykPolaSondy juz
     jako obiekty i nazwy przy sobie nie maja.
 
-    "Tekstu" to stan neutralny - nie "brak koloru", tylko kolor tekstu z biezacej palety.
-    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: kolor zostaje na kontrolce
-    po zdjeciu tresci, wiec zerowanie NIE JEST kosmetyka.
+    "Tekstu" to stan neutralny - nie "brak koloru", tylko tlo spoczynkowe tej kontrolki
+    z biezacej palety. DWA ROZNE TLA SPOCZYNKOWE: pole tekstowe ma wlasne (KolorTla),
+    a etykieta werdyktu lezy na panelu i jej tlem jest tlo okna. Rozstrzyga rola wygladu
+    zarejestrowana przez Set-JezykWyglad ("Okno"), a nie typ kontrolki - ten zamknalby
+    funkcje przed zestawem weryfikacyjnym. Etykieta pokolorowana ta funkcja BEZ takiej
+    rejestracji wrocilaby do stanu neutralnego jako bialy prostokat.
+
+    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: tlo zostaje na kontrolce po
+    zdjeciu tresci, wiec zerowanie NIE JEST kosmetyka.
 #>
 function Set-JezykKolorPola {
-    param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem', 'Nieznany')][string]$Rola)
+    param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem')][string]$Rola)
 
     if (-not $Pole) { return }
 
     $Script:RoleKolorow[$Pole] = $Rola
-    $Pole.ForeColor = $Script:Config['Kolor' + $Rola]
+    $Pole.ForeColor = $Script:Config.KolorTekstu
+    $Pole.BackColor = switch ($Rola) {
+        'Ok'      { $Script:Config.KolorPolaOk }
+        'Problem' { $Script:Config.KolorPolaProblem }
+        default   {
+            if ($Script:KontrolkiMotywu[$Pole] -eq 'Okno') { $Script:Config.KolorOkna }
+            else                                           { $Script:Config.KolorTla }
+        }
+    }
 }
 
 function Clear-JezykKonto {
@@ -120,7 +152,7 @@ function Clear-JezykKonto {
     # a ten czysci widok i nie wpisuje potem zadnego wyniku.
     $k.WerdyktBox.Checked   = $false
     $k.Werdykt.Text         = 'Nie sprawdzono'
-    Set-JezykKolorPola $k.Werdykt 'Nieznany'
+    Set-JezykKolorPola $k.Werdykt 'Tekstu'
 
     $k.ChkAktywne.Checked     = $false
     $k.ChkZablokowane.Checked = $false
@@ -244,21 +276,20 @@ function Set-JezykResult {
             $k.ChkFlagaHasla.Checked  = [bool]$Result.ZmianaHaslaWymuszona
 
             $k.TxtLoginKonta.Text   = [string]$Result.Login
-            $k.TxtImieNazwisko.Text = Get-JezykOsoba ([string]$Result.DisplayName) `
-                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko)
+            $k.TxtImieNazwisko.Text = Get-JezykWartoscPola (Get-JezykOsoba ([string]$Result.DisplayName) `
+                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko))
 
-            # Brak adresu zostawia pole PUSTE: napis "brak danych" sugerowalby nieudany
-            # odczyt, a tu chodzi o konto, ktore po prostu nie ma skrzynki.
-            $k.TxtEmail.Text = [string]$Result.Email
+            # E-MAIL MOWI O SWOIM BRAKU WPROST, jak kazde pole pokazanego konta. Stal tu
+            # pusty z zalozeniem, ze konto bez skrzynki jest zbyt czeste na napis - ale puste
+            # pole wygladalo przy tym jak odczyt, ktory sie nie udal. Pustka znaczy tu jedno:
+            # konto nie ma adresu w AD, bo przychodzi tym samym zapytaniem, co reszta konta.
+            $k.TxtEmail.Text = Get-JezykWartoscPola ([string]$Result.Email)
 
             # NUMER MOWI O SWOIM BRAKU WPROST, tak samo jak przelozony nizej. Pustka nigdy
             # nie znaczy tu porazki odczytu: oba numery przychodza z tego samego zapytania,
             # co reszta konta, wiec puste pole ma dokladnie jedno znaczenie - w AD nie ma
             # zadnego numeru. Skoro znaczenie jest jedno i pewne, ma byc NAPISANE, a nie
             # zgadywane z pustki.
-            #
-            # E-mail zostaje przy pustce swiadomie: konto bez skrzynki to stan normalny
-            # i czesty, a napis przy kazdym takim koncie bylby samym halasem.
             $telefony = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
             $k.TxtTelefon.Text  = if ($telefony) { $telefony } else { 'nie wpisano w AD' }
 
@@ -301,7 +332,9 @@ function Set-JezykResult {
             Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
             if ($zSccm) { Start-JezykZadanieKomputera -Login ([string]$Result.Login) }
 
-            $k.TxtKatalog.Text = [string]$Result.Lokalizacja
+            # Lokalizacja powstaje z CanonicalName, ktory AD oddaje kazdemu obiektowi - pustka
+            # znaczy wiec "nie udalo sie ustalic", a nie "nie wpisano".
+            $k.TxtKatalog.Text = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
 
             # Moment zalozenia blokady dopisujemy do statusu WYLACZNIE przy aktywnej
             # blokadzie: AD nie zeruje LockoutTime po samoczynnym wygasnieciu, wiec poza
@@ -315,21 +348,21 @@ function Set-JezykResult {
 
         'Kontakt' {
             # Kontakt nie ma stanu konta, wiec werdykt nie ma o czym orzekac - mowi wprost,
-            # z jakim rodzajem pozycji ma sie do czynienia. Kolor nieznany, bo tu nie ma
+            # z jakim rodzajem pozycji ma sie do czynienia. Tlo neutralne, bo tu nie ma
             # ani problemu, ani jego braku.
             $k.WerdyktBox.Checked = $false
             $k.Werdykt.Text       = 'Pozycja typu Kontakt - to nie jest konto'
-            Set-JezykKolorPola $k.Werdykt 'Nieznany'
+            Set-JezykKolorPola $k.Werdykt 'Tekstu'
 
-            $k.TxtImieNazwisko.Text = Get-JezykOsoba ([string]$Result.DisplayName) `
-                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko)
-            $k.TxtEmail.Text          = [string]$Result.Email
+            $k.TxtImieNazwisko.Text = Get-JezykWartoscPola (Get-JezykOsoba ([string]$Result.DisplayName) `
+                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko))
+            $k.TxtEmail.Text          = Get-JezykWartoscPola ([string]$Result.Email)
             # Kontakt to wpis ksiazki adresowej, wiec numer jest tu najbardziej na miejscu -
             # i tym bardziej jego brak zasluguje na slowo zamiast pustki.
             $telefonyKontaktu = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
             $k.TxtTelefon.Text        = if ($telefonyKontaktu) { $telefonyKontaktu } else { 'nie wpisano w AD' }
             $k.TxtKontoUtworzono.Text = Format-JezykData $Result.KontoUtworzono
-            $k.TxtKatalog.Text        = [string]$Result.Lokalizacja
+            $k.TxtKatalog.Text        = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
             $k.TxtStatus.Text         = [string]$Result.Message
 
             # PIERWSZE POLE ZMIENIA ZNACZENIE: kontakt nie ma loginu, ma za to nazwe
@@ -342,10 +375,12 @@ function Set-JezykResult {
             # wartosci nie ma z czego wziac: kontakt po prostu ich nie posiada.
             # Menedzer jest w tej liscie, bo kontakt nie ma przelozonego w strukturze
             # firmy; telefon NIE JEST - kontakt numer miec moze i wlasnie po to istnieje.
+            # Adres MAC stoi tu razem z adresem IP: oba opisuja maszyne, ktorej kontakt nie
+            # ma - dolozony pozniej wiersz MAC zostawal przy kontakcie pusty.
             foreach ($pole in @($k.TxtHasloWygasa, $k.TxtKontoWygasa,
                                 $k.TxtOstatniaZmiana, $k.TxtMenedzer,
                                 $k.TxtOstatnieLogowanie, $k.TxtKomputerUzytkownika,
-                                $k.TxtKomputerIp)) {
+                                $k.TxtKomputerIp, $k.TxtKomputerMac)) {
                 if ($pole) { $pole.Text = 'nie dotyczy (kontakt)' }
             }
 
@@ -459,7 +494,7 @@ function Set-JezykComputerResult {
     Clear-JezykKomputer
 
     if ($Result.Status -eq 'Ok') {
-        $k.TxtKomputerKatalog.Text = [string]$Result.Lokalizacja
+        $k.TxtKomputerKatalog.Text = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
 
         # Nazwa Z AD, a nie z pola tekstowego: idzie do zapytania WQL i do zdalnej konsoli,
         # a AD zna ja w oryginalnej pisowni. Ona tez jest zrodlem prawdy dla obu przyciskow.
@@ -1524,7 +1559,7 @@ function Update-JezykNumerWTle {
                 # doklejamy - razem z werdyktem.
                 $k.TxtStatus.Text     = $zaWielu
                 $k.Werdykt.Text       = 'Numer należy do wielu osób'
-                Set-JezykKolorPola $k.Werdykt 'Nieznany'
+                Set-JezykKolorPola $k.Werdykt 'Tekstu'
             }
             else {
                 # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe

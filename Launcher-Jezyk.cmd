@@ -105,13 +105,21 @@ REM  "%~dp0" to katalog TEGO pliku, wiec Kod-Jezyk.ps1 jest szukany obok launche
 REM  a nie w katalogu biezacym - skrot mozna umiescic gdziekolwiek. Cudzyslowy
 REM  zabezpieczaja sciezki ze spacjami.
 REM
+REM  "/d %SystemRoot%" - KATALOG BIEZACY PROGRAMU TO NIE KATALOG WDROZENIA. Windows trzyma
+REM  otwarty uchwyt katalogu biezacego kazdego procesu przez cale jego zycie, a conhost.exe
+REM  i powershell.exe dziedzicza ten katalog po launcherze - przy dwukliku jest nim folder,
+REM  w ktorym lezy Jezyk. Dopoki ktokolwiek mial otwarte okno, folderu wdrozenia nie dalo
+REM  sie usunac ani przemianowac, wiec aktualizacja przez podmiane katalogu stawala na
+REM  pierwszym operatorze, ktory nie zamknal programu. Program katalogu biezacego nie
+REM  uzywa wcale: pliki szuka przez $PSScriptRoot, czyli obok Kod-Jezyk.ps1.
+REM
 REM  Gdy okno programu sie nie pojawia: launcher nie czeka, wiec blad nie zdazy
 REM  pokazac sie w konsoli. Opis trafia do %TEMP%\Jezyk-blad.txt; mozna tez uruchomic
 REM  skrypt wprost w otwartym oknie PowerShella - wtedy skrypt nie tknie tej konsoli,
 REM  bo widzi, ze nie jest na niej sam, i komunikat zostanie na ekranie.
 REM  ---------------------------------------------------------------------------
 if exist "%SystemRoot%\System32\conhost.exe" (
-    start "" /b "%SystemRoot%\System32\conhost.exe" "%JEZYK_PS%" -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0Kod-Jezyk.ps1"
+    start "" /d "%SystemRoot%" /b "%SystemRoot%\System32\conhost.exe" "%JEZYK_PS%" -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0Kod-Jezyk.ps1"
 ) else (
-    start "" /b "%JEZYK_PS%" -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0Kod-Jezyk.ps1"
+    start "" /d "%SystemRoot%" /b "%JEZYK_PS%" -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "%~dp0Kod-Jezyk.ps1"
 )

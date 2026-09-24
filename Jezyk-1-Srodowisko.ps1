@@ -544,8 +544,15 @@ $Script:Config = @{
 
 
     KolorProblem  = [System.Drawing.Color]::Red
-    KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
     KolorNieznany = [System.Drawing.Color]::DimGray
+
+    # TLO POLA NIOSACEGO ZNACZENIE. Stan pokazuje kolor TLA, a napis zostaje w kolorze
+    # tekstu: czerwony albo zielony napis czytalo sie gorzej niz ten sam napis na kolorowym
+    # tle, a czern na bialym jest tym, co operator czyta w kazdym innym polu. Odcienie jasne,
+    # zeby czarny tekst mial na nich pelny kontrast. Osobne klucze od KolorProblemTlo: tamten
+    # jest tlem przycisku "!" i ma wlasny, bledszy odcien.
+    KolorPolaOk      = [System.Drawing.Color]::FromArgb(198, 239, 206)
+    KolorPolaProblem = [System.Drawing.Color]::FromArgb(255, 199, 206)
 
     # Napis WYLACZONEGO przycisku. WinForms nie pozwala go ustawic: przy FlatStyle = Flat
     # maluje go kolorem ControlPaint.Dark(BackColor), czyli odcieniem o trzecia ciemniejszym
@@ -613,17 +620,21 @@ $Script:Config = @{
 # Odcienie z palety Fluent, ktora Windows 11 sam naklada na okna w motywie ciemnym:
 # tlo okna #202020, tlo kontrolek #2D2D2D, tekst bialy.
 #
-# KOLORY ZNACZACE MAJA WLASNE ODCIENIE, a nie te same, co w jasnym. Zielen 0,128,0 jest
-# dobrana pod biale tlo i na #202020 przestaje byc czytelna - a to ona niesie werdykt
-# "konto sprawne". Tak samo DimGray (105,105,105) na ciemnym tle prawie znika.
+# KOLORY ZNACZACE MAJA WLASNE ODCIENIE, a nie te same, co w jasnym. Jasnozielone tlo
+# werdyktu "konto sprawne" pod bialym tekstem tego motywu byloby nieczytelne, a DimGray
+# (105,105,105) na ciemnym tle prawie znika.
 $Script:MotywCiemny = @{
     KolorOkna       = [System.Drawing.Color]::FromArgb(32, 32, 32)
     KolorTla        = [System.Drawing.Color]::FromArgb(45, 45, 45)
     KolorTekstu     = [System.Drawing.Color]::FromArgb(255, 255, 255)
 
     KolorProblem    = [System.Drawing.Color]::FromArgb(255, 120, 120)
-    KolorOk         = [System.Drawing.Color]::FromArgb(108, 203, 95)
     KolorNieznany   = [System.Drawing.Color]::FromArgb(160, 160, 160)
+
+    # Tla przyciemnione, a nie jasne jak w motywie jasnym: tekst jest tu bialy, wiec to on
+    # potrzebuje ciemnego tla, zeby zostac czytelny.
+    KolorPolaOk      = [System.Drawing.Color]::FromArgb(36, 84, 44)
+    KolorPolaProblem = [System.Drawing.Color]::FromArgb(110, 40, 40)
     KolorNieczynny  = [System.Drawing.Color]::FromArgb(130, 130, 130)
 
     KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -673,8 +684,8 @@ $Script:Kontrolki = @{}
 # rodza sie czerwone i zaraz potem staja sie niebieskie - w liscie zostalyby w obu.
 $Script:KontrolkiMotywu = @{}
 
-# Role kolorow pol: klucz to sama kontrolka, wartosc - CO jej kolor znaczy ("Ok",
-# "Problem", "Nieznany", "Tekstu"). Zaklada je Set-JezykKolorPola, czyta Set-JezykMotyw
+# Role kolorow pol: klucz to sama kontrolka, wartosc - CO jej tlo znaczy ("Ok",
+# "Problem", "Tekstu"). Zaklada je Set-JezykKolorPola, czyta Set-JezykMotyw
 # przy przelaczaniu palety. Bez tego rejestru przelaczenie motywu musialoby albo zostawic
 # na polu odcien z poprzedniej palety, albo pomalowac wszystko neutralnie - czyli zdjac
 # czerwien z werdyktu i sklamac o stanie konta.
