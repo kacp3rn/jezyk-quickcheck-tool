@@ -1182,6 +1182,38 @@ function Set-JezykSrodekTekstu {
     $Kontrolka.Size = [System.Drawing.Size]::new($szerokosc, $Wysokosc)
 }
 
+<#
+.SYNOPSIS
+    Przycina etykiete stojaca NAD swoim polem tak, zeby nie siegala jego gornej ramki.
+
+.DESCRIPTION
+    Etykieta ma AutoSize, czyli wysokosc SAMEGO TEKSTU - a ta rosnie razem z czcionka
+    systemu. Pole lezy stale $Script:OdstepPodEtykieta ponizej etykiety, wiec gdy linia
+    pisma przekroczy ten odstep, prostokat etykiety nachodzi na gorna krawedz pola
+    i ZAKRYWA JEGO RAMKE - dokladnie na szerokosc napisu, bo tyle ma sama etykieta.
+    Widac to jako ramke urwana pod "Login:" czy "Status:" i wracajaca za koncem napisu.
+
+    Czcionke okna bierzemy z ustawien systemu (SystemFonts.MessageBoxFont), a Windows
+    potrafi ja powiekszyc NIEZALEZNIE od skalowania ekranu - stad usterka takze przy
+    skalowaniu 100%.
+
+    JEDNA FUNKCJA NA OBA OKNA. Okno grup ma to samo pole "Status:" pod etykieta, co okno
+    glowne, i ta sama usterka wrocila tam jako zgloszenie - druga kopia reguly rozjechalaby
+    sie z pierwsza przy pierwszej zmianie odstepu.
+
+    Etykiety, ktore juz przeszly przez Set-JezykSrodekTekstu (werdykt), maja AutoSize
+    zdjete i wlasna, celowo dobrana wysokosc - tych nie ruszamy. Przy zwyklej czcionce
+    etykieta sie miesci i tez zostaje nietknieta.
+#>
+function Set-JezykEtykietaNadPolem {
+    param($Etykieta)
+
+    $wysokoscEtykiety = $Script:OdstepPodEtykieta - 2
+    if ($Etykieta.AutoSize -and $Etykieta.Height -gt $wysokoscEtykiety) {
+        Set-JezykSrodekTekstu $Etykieta $wysokoscEtykiety
+    }
+}
+
 # Blokada zdarzen na czas programowego wypelniania listy - patrz Set-JezykListaKont.
 $Script:BlokadaZdarzen = $false
 
@@ -2716,6 +2748,45 @@ function Set-JezykPrzewijanieListy {
 
 <#
 .SYNOPSIS
+    Nadaje liscie wysokosc z calych wierszy, zanim ktokolwiek zmierzy sie od jej dolu.
+
+.DESCRIPTION
+    IntegralHeight PRZYCINA LISTE DOPIERO PRZY TWORZENIU UCHWYTU, a wspolrzedne okna grup
+    licza sie wczesniej. Wiersz pod lista liczyl sie wiec od wysokosci ZAMOWIONEJ, a lista
+    kurczyla sie potem o ulamek wiersza - i o tyle rosla szpara pod nia, bez zadnego
+    komunikatu. Wrocilo to jako zgloszenie "za duzo miejsca miedzy lista a polem nazwy".
+
+    Przyciecie liczymy wiec SAMI, z faktycznej wysokosci wiersza. Ta jest prawdziwa dopiero
+    z uchwytem (przed nim ItemHeight oddaje wartosc zastepcza, a nie te z czcionki okna) -
+    stad siegniecie po Handle, ktore uchwyt tworzy. Wysokosc wychodzi juz calowierszowa,
+    wiec systemowe przyciecie nie ma potem czego ruszac, a Bottom listy jest prawdziwy
+    w chwili, w ktorej mierzy sie od niego nastepny wiersz.
+
+    RAMKA TO POMIAR, A NIE LICZBA: roznica wysokosci kontrolki i jej obszaru roboczego zalezy
+    od stylu ramki i od DPI. Minimum jeden wiersz - lista bez zadnego widocznego wiersza nie
+    dalaby sie ani czytac, ani przewinac.
+#>
+function Set-JezykWysokoscListy {
+    param($Lista, [int]$Wysokosc)
+
+    $null = $Lista.Handle
+
+    $wiersz = [int]$Lista.ItemHeight
+    if ($wiersz -le 0) {
+        $Lista.Height = $Wysokosc
+        return
+    }
+
+    $ramka   = $Lista.Height - $Lista.ClientSize.Height
+    # Floor, bo wiersz widoczny w polowie to dokladnie to, czego IntegralHeight ma nie dopuscic.
+    $wiersze = [int][Math]::Floor(($Wysokosc - $ramka) / $wiersz)
+    if ($wiersze -lt 1) { $wiersze = 1 }
+
+    $Lista.Height = $ramka + $wiersze * $wiersz
+}
+
+<#
+.SYNOPSIS
     Wypelnia liste grup wedlug tresci pola filtra i uaktualnia licznik w tytule okna.
 
 .DESCRIPTION
@@ -2808,6 +2879,10 @@ function Show-JezykGrupyAd {
     # sie usunac konta z grupy, a nazwa sama w sobie nie jest w domenie jednoznaczna.
     $grupy          = @(Get-JezykParyGrup $konto.GrupyPelne)
     $wolnoZarzadzac = Test-JezykMoznaZarzadzacGrupami $konto
+    # DRUGA OS, NIE TA SAMA: $wolnoZarzadzac pyta takze o konto, a kontakt w domenie z listy
+    # dostaje w polu "Status:" zdanie, dlaczego nie da sie go dopisac. Poza domena z listy
+    # w to pole nie pisze nic - okno otwiera sie tam wylacznie z grupami do przeczytania.
+    $domenaZZarzadzaniem = Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena
 
     # Kontakt loginu nie ma, wiec podpis spada na nazwe obiektu - ta sama zasada, co przy
     # etykiecie pierwszego pola w oknie glownym ("Login:" kontra "Nazwa:").
@@ -2821,6 +2896,10 @@ function Show-JezykGrupyAd {
     $szerokoscPrzycisku = 90
     $odstepEtykiety     = 8
     $odstepPrzyciskow   = 8
+    # Od pary "Usun z grupy"/"Dodaj" do etykiety "Status:". Mniej niz przerwa wiersza, bo
+    # przyciski stoja wylacznie po prawej, a pod nimi lezy jeszcze caly wiersz etykiety -
+    # z pelna przerwa zostawalo tam prawie trzydziesci pikseli pustki.
+    $przerwaPodPrzyciskami = 2
 
     $okno = $null
     try {
@@ -2853,9 +2932,10 @@ function Show-JezykGrupyAd {
         Set-JezykWyglad $lista 'Lista'
         # Wysokosc przycieta do calych wierszy. Czesciowy wiersz na dole rozjezdzal zawartosc
         # z paskiem przewijania (pasek liczy zakres z liczby pozycji, lista przewija calymi
-        # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Szpara, ktora
-        # przyciecie zostawia pod lista, nic juz nie kosztuje: wszystko pod nia mierzy sie od
-        # $lista.Bottom, a nie od wpisanej na sztywno wysokosci.
+        # wierszami), a dojscie do konca listy szarpalo o ten ulamek wiersza. Samo przyciecie
+        # system robi jednak dopiero przy tworzeniu uchwytu, czyli PO pomiarach - dlatego
+        # liczy je wczesniej Set-JezykWysokoscListy, a wszystko pod lista mierzy sie od
+        # $lista.Bottom juz przycietej listy.
         $lista.IntegralHeight = $true
         # Nazwy grup bywaja dluzsze niz kolumna; poziomy pasek daje je doczytac zamiast
         # ucinac w polowie.
@@ -2927,12 +3007,18 @@ function Show-JezykGrupyAd {
         # Pole "Status:" tego okna: odpowiedz "Sprawdz nazwy", wynik dodania i zdanie
         # otwierajace. DWIE LINIJKI z tego samego powodu, co w oknie glownym - komunikat
         # o odmowie uprawnien nie miesci sie w jednej, a operator czyta pole RAZ.
+        #
+        # Poza domena z listy pola NIE MA, a nie jest puste: nic go tam nie wypelni, a pusta
+        # ramka z podpisem "Status:" wyglada jak odpowiedz, ktora nie nadeszla.
         $lblNotka = New-JezykEtykieta 'Status:' $margines 0
 
         $txtNotka           = New-Object System.Windows.Forms.TextBox
         $txtNotka.ReadOnly  = $true
         $txtNotka.Multiline = $true
         Set-JezykWyglad $txtNotka 'Pole'
+
+        $lblNotka.Visible = $domenaZZarzadzaniem
+        $txtNotka.Visible = $domenaZZarzadzaniem
 
         # "!" wlasny, bo Set-JezykInfo stoi na rejestrach okna GLOWNEGO. -BezRejestracji,
         # zeby po Dispose() nie zostal martwy uchwyt w $Script:KontrolkiMotywu.
@@ -2993,8 +3079,10 @@ function Show-JezykGrupyAd {
 
         $txtFiltr.Left  = $lblFiltr.Right + $odstepEtykiety
         $txtFiltr.Width = $szerokosc - $margines - $txtFiltr.Left
+        # GORNY MARGINES TEN SAM, CO W OKNIE GLOWNYM - jego wlasna, nazwana liczba. Margines
+        # boczny ($margines) zostawial pod paskiem tytulu dwanascie pikseli pustki.
         Set-JezykSrodekPionowy -Kontrolki @($lblFiltr, $txtFiltr) `
-                               -Srodek ($margines + (Get-JezykPolowaWysokosci $txtFiltr.Height))
+                               -Srodek ($Script:MarginesGorny + (Get-JezykPolowaWysokosci $txtFiltr.Height))
 
         $lista.Left   = $margines
         $lista.Width  = $szerokosc - 2 * $margines
@@ -3002,11 +3090,12 @@ function Show-JezykGrupyAd {
         # opisuje ramke, a nie gestosc srodka - mieszanie obu zostawialo miedzy wierszami
         # polowe wiersza pustki wiecej, niz trzeba.
         $lista.Top    = $txtFiltr.Bottom + $Script:PrzerwaWierszy
-        $lista.Height = $wysokoscListy
+        Set-JezykWysokoscListy $lista $wysokoscListy
 
         # Kazdy nastepny wiersz mierzy sie OD SASIADA. Gdy wierszy zarzadzania nie ma,
         # notka siada wprost pod lista i okno jest o te dwa wiersze nizsze.
         $dolPoprzedniego = $lista.Bottom
+        $przerwaNadNotka = $Script:PrzerwaWierszy
 
         if ($wolnoZarzadzac) {
             # Wiersz nazwy: pole ciagnie sie od etykiety do "Sprawdz nazwy" przy prawej krawedzi.
@@ -3026,22 +3115,29 @@ function Show-JezykGrupyAd {
             $btnDodaj.Top  = $dolPoprzedniego + $Script:PrzerwaWierszy
             $btnUsun.Top   = $btnDodaj.Top
             $dolPoprzedniego = $btnDodaj.Bottom
+            $przerwaNadNotka = $przerwaPodPrzyciskami
         }
 
-        # Notka ma WLASNA ETYKIETE po to, zeby "!" stanal dokladnie tam, gdzie stoi w oknie
-        # glownym: Set-JezykPrzyciskPrzyEtykiecie konczy go razem z prawa krawedzia POLA.
-        $lblNotka.Left   = $margines
-        $lblNotka.Top    = $dolPoprzedniego + $Script:PrzerwaWierszy
-        $txtNotka.Left   = $margines
-        $txtNotka.Top    = $lblNotka.Top + $Script:OdstepPodEtykieta
-        $txtNotka.Width  = $szerokosc - 2 * $margines
-        # Druga linijka liczona z czcionki, nie wpisana - ta sama arytmetyka, co przy polach
-        # "Status:" w oknie glownym.
-        $txtNotka.Height = $txtNotka.PreferredHeight + [int][math]::Ceiling($okno.Font.GetHeight())
-        Set-JezykPrzyciskPrzyEtykiecie $btnInfo $lblNotka $txtNotka
+        if ($domenaZZarzadzaniem) {
+            # Notka ma WLASNA ETYKIETE po to, zeby "!" stanal dokladnie tam, gdzie stoi w oknie
+            # glownym: Set-JezykPrzyciskPrzyEtykiecie konczy go razem z prawa krawedzia POLA.
+            $lblNotka.Left   = $margines
+            $lblNotka.Top    = $dolPoprzedniego + $przerwaNadNotka
+            $txtNotka.Left   = $margines
+            $txtNotka.Top    = $lblNotka.Top + $Script:OdstepPodEtykieta
+            $txtNotka.Width  = $szerokosc - 2 * $margines
+            # Druga linijka liczona z czcionki, nie wpisana - ta sama arytmetyka, co przy polach
+            # "Status:" w oknie glownym.
+            $txtNotka.Height = $txtNotka.PreferredHeight + [int][math]::Ceiling($okno.Font.GetHeight())
+            # Etykieta lezy w oknie NAD polem (wczesniej w AddRange), wiec za wysoka zakrywa
+            # jego gorna ramke - ta sama usterka, co kiedys w oknie glownym.
+            Set-JezykEtykietaNadPolem $lblNotka
+            Set-JezykPrzyciskPrzyEtykiecie $btnInfo $lblNotka $txtNotka
+            $dolPoprzedniego = $txtNotka.Bottom
+        }
 
         $btnZamknij.Left = $szerokosc - $margines - $szerokoscPrzycisku
-        $btnZamknij.Top  = $txtNotka.Bottom + $Script:PrzerwaWierszy
+        $btnZamknij.Top  = $dolPoprzedniego + $Script:PrzerwaWierszy
 
         $okno.ClientSize = [System.Drawing.Size]::new($szerokosc,
                                ($btnZamknij.Bottom + $margines))
@@ -3063,7 +3159,7 @@ function Show-JezykGrupyAd {
         # w ogole jest wlaczone, bo inaczej wiersza nie ma nikt i zdanie mylilo by tropy.
         $notka = ''
         if ($grupy.Count -eq 0) { $notka = 'To konto nie należy do żadnej grupy.' }
-        if ($konto.Status -eq 'Kontakt' -and (Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena)) {
+        if ($konto.Status -eq 'Kontakt' -and $domenaZZarzadzaniem) {
             $notka = 'Kontakt nie jest kontem w domenie - nie da się go dopisać do grupy.'
         }
         if ($notka) { Set-JezykNotkeGrup -Okno $okno -Tekst $notka }
@@ -3085,9 +3181,18 @@ function Show-JezykGrupyAd {
                 if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
             })
 
-            # ENTER MA ZNACZYC "Sprawdz nazwy", A NIE "Zamknij". Wlasna obsluga DODAJE SIE
-            # do domyslnej, wiec bez oznaczenia zdarzenia jako obsluzonego AcceptButton
-            # zamykalby okno w polowie wpisywania nazwy grupy.
+            # ENTER MA ZNACZYC "Sprawdz nazwy", A NIE "Zamknij". Samo KeyDown tego nie
+            # zalatwi, bo NIE DOSTAJE ENTERA WCALE: jednolinijkowe pole nie uwaza go za swoj
+            # klawisz, wiec okno oddaje go AcceptButton jeszcze przed KeyDown - i Enter
+            # zamykal okno w polowie wpisywania nazwy, choc obsluga nizej stala w kodzie.
+            # PreviewKeyDown to jedyny etap PRZED przekazaniem klawisza przyciskowi okna:
+            # oznaczony tam jako klawisz pola, Enter dochodzi do KeyDown.
+            $txtGrupa.Add_PreviewKeyDown({
+                if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.IsInputKey = $true }
+            })
+
+            # Handled i SuppressKeyPress: bez nich pole dostaje jeszcze znak Entera, ktorego
+            # jednolinijkowe pole nie przyjmuje - i odpowiada systemowym dzwiekiem.
             $txtGrupa.Add_KeyDown({
                 if ($_.KeyCode -ne [System.Windows.Forms.Keys]::Enter) { return }
                 $_.Handled          = $true
@@ -4168,25 +4273,11 @@ function New-JezykForm {
     }
 
     # --- ETYKIETY NIE MOGA SIEGNAC SWOJEGO POLA --------------------------------------
-    # Etykieta ma AutoSize, czyli wysokosc SAMEGO TEKSTU - a ta rosnie razem z czcionka
-    # systemu. Pole lezy stale $Script:OdstepPodEtykieta ponizej etykiety, wiec gdy linia
-    # pisma przekroczy ten odstep, prostokat etykiety nachodzi na gorna krawedz pola
-    # i ZAKRYWA JEGO RAMKE - dokladnie na szerokosc napisu, bo tyle ma sama etykieta.
-    # Widac to jako ramke urwana pod "Login:" czy "E-mail:" i wracajaca za koncem napisu.
-    #
-    # Czcionke okna bierzemy z ustawien systemu (SystemFonts.MessageBoxFont), a Windows
-    # potrafi ja powiekszyc NIEZALEZNIE od skalowania ekranu - stad usterka takze przy
-    # skalowaniu 100%.
-    #
-    # Etykiety, ktore juz przeszly przez Set-JezykSrodekTekstu (werdykt), maja AutoSize
-    # zdjete i wlasna, celowo dobrana wysokosc - tych nie ruszamy.
-    $wysokoscEtykiety = $Script:OdstepPodEtykieta - 2
+    # Regula i jej powod - patrz Set-JezykEtykietaNadPolem. Ta sama funkcja przycina
+    # etykiete "Status:" w oknie grup.
     foreach ($panel in @($pnlKonto, $pnlKomputer)) {
         foreach ($kontrolka in $panel.Controls) {
-            if ($kontrolka -is [System.Windows.Forms.Label] -and $kontrolka.AutoSize -and
-                $kontrolka.Height -gt $wysokoscEtykiety) {
-                Set-JezykSrodekTekstu $kontrolka $wysokoscEtykiety
-            }
+            if ($kontrolka -is [System.Windows.Forms.Label]) { Set-JezykEtykietaNadPolem $kontrolka }
         }
     }
 
