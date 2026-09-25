@@ -1210,6 +1210,38 @@ function Select-JezykMaszyneDlaLoginu {
     return $wynik
 }
 
+# Wiersze wpuszczone przez przesiew WQL, a odrzucone przez dopasowanie loginu: maszyna i niepuste pola kont.
+# Uwaga: bez przecinka przy return - wolajacy owija wynik w @() (README: Kod > Jezyk-2-Logika).
+function Get-JezykPodobneZapisy {
+    param($Wiersze, $Pola)
+
+    $opisy = New-Object System.Collections.Generic.List[string]
+
+    foreach ($wiersz in @($Wiersze)) {
+        if (-not $wiersz) { continue }
+
+        # NetbiosName jest tylko w SMS_R_System; pozostale klasy oddaja samo Name.
+        $nazwa = [string]$wiersz.NetbiosName
+        if (-not $nazwa) { $nazwa = [string]$wiersz.Name }
+        if (-not $nazwa) { continue }
+
+        $wpisy = New-Object System.Collections.Generic.List[string]
+        foreach ($nazwaPola in @($Pola)) {
+            $wartosc = ([string]$wiersz.$nazwaPola).Trim()
+            if (-not $wartosc) { continue }
+            $wpis = '{0}: {1}' -f $nazwaPola, $wartosc
+            $wpisy.Add($wpis)
+        }
+
+        # Pusty komplet to osobny sygnal: przesiew wiersz wpuscil, a pole nie przyszlo.
+        $tresc = if ($wpisy.Count) { $wpisy -join '; ' } else { 'pola kont puste w odpowiedzi' }
+        $opis  = '{0} - {1}' -f $nazwa, $tresc
+        $opisy.Add($opis)
+    }
+
+    return $opisy.ToArray()
+}
+
 # Czy sesja z CurrentLogonUser trwa: CNIsOnline tej jednej maszyny, osobnym zapytaniem z wlasnym try.
 # Uwaga: nieznana kolumna w glownym SELECT wywrocilaby cale szukanie (README: Ostatnio uzywany komputer).
 function Get-JezykStanSesji {
@@ -1314,6 +1346,7 @@ function Get-JezykOstatnioUzywanyKomputer {
         $stos          = 'CIM'
         $odmowa        = $null
         $niedostepne   = @()
+        $podobne       = @()
 
         foreach ($z in $zrodla) {
             $odp = Invoke-JezykZapytanieSccm -Sesja $sesja.Sesja -Serwer $polaczenie.Serwer `
@@ -1343,6 +1376,9 @@ function Get-JezykOstatnioUzywanyKomputer {
                 $stos          = $odp.Stos
                 break
             }
+
+            # Bez trafienia kazdy zwrocony wiersz odpadl w dopasowaniu - pokazemy je pod "!".
+            $podobne += @(Get-JezykPodobneZapisy -Wiersze $odp.Wiersze -Pola $z.Pola)
         }
 
         if ($odmowa) {
@@ -1362,6 +1398,23 @@ function Get-JezykOstatnioUzywanyKomputer {
             if ($niedostepne.Count) {
                 $szczegolyBraku += @('', ('Klasy, które nie odpowiedziały: {0}.' -f ($niedostepne -join '; ')))
             }
+
+            # Co przesiew znalazl zamiast loginu - odroznia inne konto od maszyny, ktorej SCCM nie pokazuje.
+            if ($podobne.Count) {
+                $szczegolyBraku += @('', ('Przesiew znalazł zapisy podobne do "{0}", ale żaden nie jest tym kontem:' -f $Login))
+                $szczegolyBraku += @($podobne | Select-Object -First 5 | ForEach-Object { '  ' + $_ })
+                if ($podobne.Count -gt 5) { $szczegolyBraku += '  …i jeszcze {0}.' -f ($podobne.Count - 5) }
+                $szczegolyBraku += @('', 'Jeśli któreś z tych kont należy do tej osoby (np. konto administracyjne), to nim loguje się ona na komputerze.')
+            }
+            else {
+                $szczegolyBraku += @('',
+                    ('Nawet przesiew (fragment "{0}" w dowolnym miejscu pola) nie znalazł żadnego rekordu. Możliwe przyczyny:' -f $Login),
+                    ('- komputer tej osoby nie jest klientem lokacji {0} albo leży poza zakresem uprawnień operatora w ConfigMgr (takich rekordów SCCM nie pokazuje i nie zgłasza przy tym błędu),' -f $polaczenie.KodLokacji),
+                    '- ta osoba pracuje na komputerze pod innym kontem niż wyszukane,',
+                    '- po niej zalogował się na tym komputerze ktoś inny, a SCCM nie ma jej jako użytkownika głównego (PrimaryUser).')
+            }
+            $szczegolyBraku += @('', 'Kogo SCCM ma zapisanego na konkretnym komputerze, pokaże wyszukanie po nazwie komputera - pole "Ostatnio zalogowany użytkownik:".')
+
             $wynik.Szczegoly = $szczegolyBraku -join [Environment]::NewLine
             return $wynik
         }

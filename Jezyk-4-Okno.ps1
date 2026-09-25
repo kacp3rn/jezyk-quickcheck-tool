@@ -1191,7 +1191,7 @@ function New-JezykSkryptTla {
         # Droga od loginu do maszyny; rozbior pol z kontami (Get-JezykKontaMaszyny) tylko tutaj.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
                              'Get-JezykKontaZPola', 'Get-JezykKontaMaszyny',
-                             'Select-JezykMaszyneDlaLoginu',
+                             'Select-JezykMaszyneDlaLoginu', 'Get-JezykPodobneZapisy',
                              'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
