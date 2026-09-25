@@ -355,133 +355,75 @@ function New-JezykResult {
     }
 }
 
-# lastLogon z jednego kontrolera (LDAP, zakres Base): $null - milczy, 0 - nigdy, wiecej - FILETIME.
+# lastLogon z jednego kontrolera modulem AD - ta sama droga co reszta programu (README: Ostatnie logowanie).
+# Wartosc: $null - brak odpowiedzi, 0 - nigdy, wiecej - FILETIME; Powod - krotka nazwa przyczyny.
 function Get-JezykLastLogonZKontrolera {
-    param([string]$Kontroler, [string]$Dn = '', [string]$Login = '', [int]$LimitMs = 2500)
+    param([string]$Kontroler, [string]$Dn = '', [string]$Login = '')
 
-    # Sprawdzenie przed pierwszym uzyciem - takze przed droga zapasowa.
-    if (-not (Test-JezykNazwaHosta $Kontroler)) { return $null }
+    $wynik = [pscustomobject]@{ Kontroler = $Kontroler; Wartosc = $null; Powod = ''; Ms = 0 }
 
-    # Bez DN - droga zapasowa przez modul AD.
-    if (-not $Dn) {
-        try {
-            $konto = Get-ADUser -Identity $Login -Server $Kontroler -Properties lastLogon -ErrorAction Stop
-            if ($null -eq $konto.lastLogon) { return 0L }
-            return [int64]$konto.lastLogon
-        }
-        catch { return $null }
+    # Sprawdzenie przed pierwszym uzyciem - nazwa trafia do -Server.
+    if (-not (Test-JezykNazwaHosta $Kontroler)) {
+        $wynik.Powod = 'nieprawidłowa nazwa kontrolera'
+        return $wynik
     }
 
-    if (-not (Test-JezykDn $Dn)) { return $null }
+    # DN oszczedza kontrolerowi rozwiazywania konta; login to droga zapasowa.
+    $tozsamosc = ''
+    if ($Dn -and (Test-JezykDn $Dn))  { $tozsamosc = $Dn }
+    elseif (Test-JezykNazwaKonta $Login) { $tozsamosc = $Login }
+    if (-not $tozsamosc) {
+        $wynik.Powod = 'brak poprawnego DN i loginu'
+        return $wynik
+    }
 
-    $wejscie = $null
-    $szukacz = $null
+    $zegar = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        # Ukosnik w DN oslaniamy, inaczej rozdzielilby sciezke ADsPath.
-        $sciezka = 'LDAP://{0}/{1}' -f $Kontroler, ($Dn -replace '/', '\/')
-
-        # Kanal podpisany i szyfrowany (README: Bezpieczenstwo > Co Jezyk czyta i zapisuje).
-        $uwierzytelnienie = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
-                            [System.DirectoryServices.AuthenticationTypes]::Sealing -bor
-                            [System.DirectoryServices.AuthenticationTypes]::Signing
-
-        # Puste poswiadczenia = kontekst zalogowanego uzytkownika.
-        $wejscie = New-Object System.DirectoryServices.DirectoryEntry(
-                       $sciezka, $null, $null, $uwierzytelnienie)
-        $szukacz = New-Object System.DirectoryServices.DirectorySearcher($wejscie)
-        $szukacz.SearchScope   = [System.DirectoryServices.SearchScope]::Base
-        $szukacz.Filter        = '(objectClass=*)'
-        $szukacz.ClientTimeout = [timespan]::FromMilliseconds($LimitMs)
-        [void]$szukacz.PropertiesToLoad.Add('lastLogon')
-
-        $trafienie = $szukacz.FindOne()
-        if (-not $trafienie) { return $null }
-
-        $wartosci = $trafienie.Properties['lastlogon']
-        if (-not $wartosci -or $wartosci.Count -eq 0) { return 0L }
-
-        # Int64 albo COM IADsLargeInteger - wtedy skladamy z polowek (dolna bez znaku).
-        $surowa = $wartosci[0]
-        if ($surowa -is [int64]) { return $surowa }
-        try { return [int64]$surowa } catch { }
-        try {
-            $typ    = $surowa.GetType()
-            $wysoka = $typ.InvokeMember('HighPart', 'GetProperty', $null, $surowa, $null)
-            $niska  = $typ.InvokeMember('LowPart',  'GetProperty', $null, $surowa, $null)
-            return ([int64]$wysoka -shl 32) + [int64][uint32]$niska
+        $konto = Get-ADUser -Identity $tozsamosc -Server $Kontroler -Properties lastLogon -ErrorAction Stop
+        $wynik.Wartosc = if ($null -eq $konto.lastLogon) { 0L } else { [int64]$konto.lastLogon }
+    }
+    catch {
+        # Uwaga: typ wyjatku po nazwie, nie "catch [Typ]" - bez RSAT plik nie przeszedlby parsowania.
+        $typ = $_.Exception.GetType().Name
+        # Tresc odczytana przed switch - w nim $_ to juz nazwa typu, nie wyjatek.
+        $pierwsza = [string]$_.Exception.Message -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1
+        switch ($typ) {
+            # Kontroler bez tego konta nie mogl go uwierzytelnic - to odpowiedz "nigdy", nie cisza.
+            'ADIdentityNotFoundException' { $wynik.Wartosc = 0L; $wynik.Powod = 'konto jeszcze tu nie dotarło' }
+            'ADServerDownException'       { $wynik.Powod = 'usługa ADWS nie odpowiada' }
+            'UnauthorizedAccessException' { $wynik.Powod = 'odmowa dostępu' }
+            'AuthenticationException'     { $wynik.Powod = 'nieudane uwierzytelnienie' }
+            'TimeoutException'            { $wynik.Powod = 'przekroczony czas odpowiedzi' }
+            'CommandNotFoundException'    { $wynik.Powod = 'brak modułu ActiveDirectory' }
+            default                       { $wynik.Powod = ('{0}: {1}' -f $typ, $pierwsza).Trim().TrimEnd(':') }
         }
-        catch { return $null }
     }
-    catch { return $null }
-    finally {
-        if ($szukacz) { try { $szukacz.Dispose() } catch { } }
-        if ($wejscie) { try { $wejscie.Dispose() } catch { } }
-    }
+    $wynik.Ms = $zegar.ElapsedMilliseconds
+
+    return $wynik
 }
 
-# Wywoluje jedna funkcje dla wielu wartosci rownolegle, z terminem na calosc.
-# Uwaga: pula startuje pusta - wolajacy podaje KOMPLET funkcji do wstrzykniecia (README: Pulapki).
-function Invoke-JezykRownolegle {
-    param(
-        [string[]]$Wartosci,
-        [string[]]$Funkcje,
-        [string]$Wywolanie,
-        [object[]]$Argumenty = @(),
-        [int]$LimitMs = 6000,
-        [int]$LimitRownoleglosci = 12
-    )
-
-    $wyniki = @{}
-    if (@($Wartosci).Count -eq 0) { return $wyniki }
-
-    $definicja = ''
-    foreach ($nazwa in @($Funkcje)) {
-        $definicja += "function $nazwa {`r`n" + (Get-Command $nazwa).Definition + "`r`n}`r`n"
-    }
-    $tresc = $definicja + $Wywolanie
-
-    $pula = [runspacefactory]::CreateRunspacePool(1, [math]::Max(1, [math]::Min(@($Wartosci).Count, $LimitRownoleglosci)))
-    $pula.Open()
-
-    $zadania = @()
-    try {
-        foreach ($wartosc in $Wartosci) {
-            $ps = [powershell]::Create()
-            $ps.RunspacePool = $pula
-            # Wartosci przez AddArgument, nie w tekscie skryptu.
-            [void]$ps.AddScript($tresc).AddArgument($wartosc)
-            foreach ($arg in $Argumenty) { [void]$ps.AddArgument($arg) }
-            $zadania += [pscustomobject]@{ Wartosc = $wartosc; Ps = $ps; Uchwyt = $ps.BeginInvoke() }
-        }
-
-        $zegar = [System.Diagnostics.Stopwatch]::StartNew()
-        foreach ($zadanie in $zadania) {
-            $pozostalo = $LimitMs - $zegar.ElapsedMilliseconds
-            if ($pozostalo -gt 0 -and -not $zadanie.Uchwyt.IsCompleted) {
-                [void]$zadanie.Uchwyt.AsyncWaitHandle.WaitOne([int]$pozostalo, $false)
-            }
-            if (-not $zadanie.Uchwyt.IsCompleted) { continue }
-            try   { $wyniki[$zadanie.Wartosc] = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))[0] }
-            catch { }
-        }
-    }
-    finally {
-        foreach ($zadanie in $zadania) { try { $zadanie.Ps.Dispose() } catch { } }
-        try { $pula.Close(); $pula.Dispose() } catch { }
-    }
-
-    return $wyniki
-}
-
-# Dokladna data logowania: najpozniejszy lastLogon ze wszystkich kontrolerow (tylko w tle).
+# Dokladna data logowania: najpozniejszy lastLogon ze wszystkich kontrolerow, modulem AD (tylko w tle).
+# Pelna tylko przy komplecie odpowiedzi; lastLogonTimestamp jest podloga (README: Ostatnie logowanie).
 function Get-JezykOstatnieLogowanie {
     param([string]$Login, [string]$Domena, [string]$Dn = '',
-          [string[]]$Kontrolery = @(), [int]$LimitMsLacznie = 6000,
-          # 1 = po kolei; testy logiki ustawiaja 1, zeby sprawdzac WYBOR najpozniejszej daty.
-          [int]$LimitRownoleglosci = 12)
+          [string[]]$Kontrolery = @(),
+          # lastLogonTimestamp z glownego zapytania - prawdziwe logowanie nie jest od niego starsze.
+          $Przyblizona = $null,
+          [int]$Port = 9389, [int]$LimitSondyMs = 1500, [int]$LimitMsLacznie = 20000)
 
-    $wynik = [pscustomobject]@{ Data = $null; Odpytane = 0; Wszystkie = 0
-                                Kontrolery = @(); Odrzucone = @() }
+    # DataKontrolerow - samo maksimum lastLogon; Data - to, co pokazac (z podloga).
+    $wynik = [pscustomobject]@{ Data = $null; DataKontrolerow = $null; ZKontrolera = ''
+                                Odpytane = 0; Wszystkie = 0; Kontrolery = @(); Odrzucone = @()
+                                Przebieg = @(); Czasy = ''; Pelna = $false; ZTimestampu = $false; Blad = '' }
+
+    $zegar = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Bez modulu kazdy kontroler "milczalby" z tego samego powodu - jedna przyczyna zamiast listy.
+    if (-not (Get-Command Get-ADUser -ErrorAction SilentlyContinue)) {
+        $wynik.Blad = 'Brak modułu ActiveDirectory (RSAT) w zadaniu w tle.'
+        return $wynik
+    }
 
     $lista = @($Kontrolery | Where-Object { $_ })
     if ($lista.Count -eq 0) {
@@ -489,55 +431,90 @@ function Get-JezykOstatnieLogowanie {
             $lista = @(Get-ADDomainController -Filter * -Server $Domena -ErrorAction Stop |
                        Select-Object -ExpandProperty HostName)
         }
-        catch { return $wynik }
+        catch {
+            # Powod zapisany - bez niego pole pokazaloby sama date przyblizona jak wynik.
+            $wynik.Blad = 'Nie udało się pobrać listy kontrolerów domeny {0}: {1}' -f $Domena, $_.Exception.Message
+            return $wynik
+        }
     }
+    $msListy = $zegar.ElapsedMilliseconds
 
     # Nazwy kontrolerow sprawdzane tutaj - odrzucone osobno od milczacych.
-    $odrzucone = @($lista | Where-Object { -not (Test-JezykNazwaHosta $_) })
-    $lista     = @($lista | Where-Object { Test-JezykNazwaHosta $_ })
-
-    $wynik.Odrzucone  = $odrzucone
+    $wynik.Odrzucone  = @($lista | Where-Object { -not (Test-JezykNazwaHosta $_) })
+    $lista            = @($lista | Where-Object { Test-JezykNazwaHosta $_ })
     $wynik.Kontrolery = $lista
     $wynik.Wszystkie  = $lista.Count
-    if ($lista.Count -eq 0) { return $wynik }
+    if ($lista.Count -eq 0) {
+        $wynik.Blad = 'Domena {0} nie podała żadnego kontrolera o poprawnej nazwie.' -f $Domena
+        return $wynik
+    }
 
+    # Uwaga: sonda wszystkich naraz przed odczytem - zablokowany port trzymalby odczyt okolo 21 s (README: Pulapki).
+    $porty   = Get-JezykSondaPortow -Serwery $lista -Port $Port -LimitMs $LimitSondyMs
+    $msSondy = $zegar.ElapsedMilliseconds - $msListy
+
+    # Kolejno, nie rownolegle: kazda przestrzen w puli musialaby importowac modul AD od nowa.
     $najnowsze = 0L
+    $przebieg  = @()
+    foreach ($kontroler in $lista) {
+        $powodPortu = if ($porty.ContainsKey($kontroler)) { [string]$porty[$kontroler] } else { 'sonda nie oddała odpowiedzi' }
+        if ($powodPortu) {
+            $przebieg += '{0} - {1}' -f $kontroler, $powodPortu
+            continue
+        }
 
-    # Rownolegle: czas schodzi do czasu najwolniejszego kontrolera.
-    if ($lista.Count -gt 1 -and $LimitRownoleglosci -gt 1) {
-        # Komplet funkcji dla Get-JezykLastLogonZKontrolera - pominieta dalaby cisze.
-        $odpowiedzi = Invoke-JezykRownolegle -Wartosci $lista `
-                          -Funkcje   'Test-JezykNazwaHosta', 'Test-JezykDn', 'Get-JezykLastLogonZKontrolera' `
-                          -Wywolanie 'Get-JezykLastLogonZKontrolera -Kontroler $args[0] -Dn $args[1] -Login $args[2]' `
-                          -Argumenty @($Dn, $Login) `
-                          -LimitMs   $LimitMsLacznie `
-                          -LimitRownoleglosci $LimitRownoleglosci
+        # Termin sprawdzany przed kazdym kontrolerem - zaczete zapytanie konczy sie samo.
+        if ($zegar.ElapsedMilliseconds -gt $LimitMsLacznie) {
+            $przebieg += '{0} - pominięty: minął termin {1} s' -f $kontroler, [int]($LimitMsLacznie / 1000)
+            continue
+        }
 
-        foreach ($kontroler in $lista) {
-            if (-not $odpowiedzi.ContainsKey($kontroler)) { continue }
-            $wartosc = $odpowiedzi[$kontroler]
-            if ($null -eq $wartosc) { continue }
-            $wynik.Odpytane++
-            if ($wartosc -gt $najnowsze) { $najnowsze = [int64]$wartosc }
+        $odpowiedz = Get-JezykLastLogonZKontrolera -Kontroler $kontroler -Dn $Dn -Login $Login
+        $czas      = '{0:0.0} s' -f ($odpowiedz.Ms / 1000)
+        if ($null -eq $odpowiedz.Wartosc) {
+            $przebieg += '{0} - {1} ({2})' -f $kontroler, $odpowiedz.Powod, $czas
+            continue
+        }
+
+        $wynik.Odpytane++
+        $wartosc = [int64]$odpowiedz.Wartosc
+        if ($wartosc -le 0) {
+            $opis = if ($odpowiedz.Powod) { 'nigdy - {0}' -f $odpowiedz.Powod } else { 'nigdy' }
+            $przebieg += '{0} - {1} ({2})' -f $kontroler, $opis, $czas
+            continue
+        }
+
+        $kiedy = $null
+        try { $kiedy = [datetime]::FromFileTime($wartosc) } catch { }
+        $przebieg += '{0} - {1:yyyy-MM-dd HH:mm} ({2})' -f $kontroler, $kiedy, $czas
+        if ($wartosc -gt $najnowsze) {
+            $najnowsze         = $wartosc
+            $wynik.ZKontrolera = $kontroler
         }
     }
-    else {
-        $zegar = [System.Diagnostics.Stopwatch]::StartNew()
-        foreach ($kontroler in $lista) {
-            if ($zegar.ElapsedMilliseconds -gt $LimitMsLacznie) { break }
-
-            $wartosc = Get-JezykLastLogonZKontrolera -Kontroler $kontroler -Dn $Dn -Login $Login
-            if ($null -eq $wartosc) { continue }
-
-            $wynik.Odpytane++
-            if ($wartosc -gt $najnowsze) { $najnowsze = [int64]$wartosc }
-        }
-    }
+    $wynik.Przebieg = $przebieg
+    $wynik.Czasy    = 'lista kontrolerów {0:0.0} s, sonda portu {1:0.0} s, odczyt {2:0.0} s' -f
+                      ($msListy / 1000), ($msSondy / 1000), (($zegar.ElapsedMilliseconds - $msListy - $msSondy) / 1000)
 
     if ($najnowsze -gt 0) {
-        try   { $wynik.Data = [datetime]::FromFileTime($najnowsze) }
-        catch { $wynik.Data = $null }
+        try   { $wynik.DataKontrolerow = [datetime]::FromFileTime($najnowsze) }
+        catch { $wynik.DataKontrolerow = $null }
     }
+    $wynik.Data = $wynik.DataKontrolerow
+
+    # Podloga: lastLogonTimestamp zapisal kontroler przy logowaniu; minuta tolerancji na zapis.
+    if ($Przyblizona -is [datetime] -and
+        ($null -eq $wynik.DataKontrolerow -or $Przyblizona -gt $wynik.DataKontrolerow.AddMinutes(1))) {
+        $wynik.Data        = $Przyblizona
+        $wynik.ZTimestampu = $true
+    }
+
+    if ($wynik.Odpytane -eq 0) {
+        $wynik.Blad = 'Żaden z kontrolerów domeny {0} nie odpowiedział.' -f $Domena
+    }
+
+    $wynik.Pelna = (-not $wynik.Blad -and $wynik.Odpytane -eq $wynik.Wszystkie -and
+                    @($wynik.Odrzucone).Count -eq 0 -and -not $wynik.ZTimestampu)
 
     return $wynik
 }
@@ -579,6 +556,66 @@ function Test-JezykPortOtwarty {
     }
     catch { return $false }
     finally { if ($klient) { try { $klient.Close() } catch { } } }
+}
+
+# Ten sam port na wielu hostach naraz, z jednym terminem na calosc - bez przestrzeni w tle.
+# Nazwa -> '' (port odpowiada) albo krotki powod; DNS osobno, jak w Test-JezykPortOtwarty.
+function Get-JezykSondaPortow {
+    param([string[]]$Serwery, [int]$Port, [int]$LimitMs = 1500)
+
+    $wynik = @{}
+    $zegar = [System.Diagnostics.Stopwatch]::StartNew()
+
+    # Zapytania DNS wszystkich hostow ruszaja od razu.
+    $dns = [ordered]@{}
+    foreach ($serwer in @($Serwery)) {
+        if (-not $serwer -or $wynik.ContainsKey($serwer) -or $dns.Contains($serwer)) { continue }
+        if (-not (Test-JezykNazwaHosta $serwer)) { $wynik[$serwer] = 'nieprawidłowa nazwa'; continue }
+        try   { $dns[$serwer] = [System.Net.Dns]::BeginGetHostAddresses($serwer, $null, $null) }
+        catch { $wynik[$serwer] = 'nie rozwiązano nazwy w DNS' }
+    }
+
+    # Polaczenie rusza, gdy tylko nazwa sie rozwiaze - czekanie na kolejne idzie w tym samym terminie.
+    $polaczenia = [ordered]@{}
+    foreach ($serwer in @($dns.Keys)) {
+        $uchwytDns = $dns[$serwer]
+        $pozostalo = [int]($LimitMs - $zegar.ElapsedMilliseconds)
+        if (-not $uchwytDns.IsCompleted -and ($pozostalo -le 0 -or -not $uchwytDns.AsyncWaitHandle.WaitOne($pozostalo, $false))) {
+            $wynik[$serwer] = 'DNS nie odpowiedział w {0} ms' -f $LimitMs
+            continue
+        }
+
+        $adresy = $null
+        try   { $adresy = [System.Net.Dns]::EndGetHostAddresses($uchwytDns) } catch { }
+        if (-not $adresy -or @($adresy).Count -eq 0) { $wynik[$serwer] = 'nie rozwiązano nazwy w DNS'; continue }
+
+        $klient = New-Object System.Net.Sockets.TcpClient
+        try {
+            $polaczenia[$serwer] = [pscustomobject]@{ Klient = $klient; Uchwyt = $klient.BeginConnect($adresy, $Port, $null, $null) }
+        }
+        catch {
+            $wynik[$serwer] = 'port {0} nie przyjął połączenia' -f $Port
+            try { $klient.Close() } catch { }
+        }
+    }
+
+    foreach ($serwer in @($polaczenia.Keys)) {
+        $polaczenie = $polaczenia[$serwer]
+        $pozostalo  = [int]($LimitMs - $zegar.ElapsedMilliseconds)
+        try {
+            if (-not $polaczenie.Uchwyt.IsCompleted -and
+                ($pozostalo -le 0 -or -not $polaczenie.Uchwyt.AsyncWaitHandle.WaitOne($pozostalo, $false))) {
+                $wynik[$serwer] = 'port {0} nie odpowiedział w {1} ms' -f $Port, $LimitMs
+                continue
+            }
+            $polaczenie.Klient.EndConnect($polaczenie.Uchwyt)
+            $wynik[$serwer] = ''
+        }
+        catch { $wynik[$serwer] = 'port {0} odrzucił połączenie' -f $Port }
+        finally { try { $polaczenie.Klient.Close() } catch { } }
+    }
+
+    return $wynik
 }
 
 # Nazywa przyczyne bledu WMI i podaje naprawe; rozpoznaje najpierw po kodzie bledu, potem po tresci.
@@ -834,8 +871,8 @@ function ConvertTo-JezykCzasLokalny {
         $tekst = ([string]$Wartosc).Trim()
         if (-not $tekst) { return $null }
 
-        # DMTF niesie wlasne przesuniecie strefy (minuty od UTC).
-        if ($tekst -match '^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3})$') {
+        # DMTF niesie wlasne przesuniecie strefy (minuty od UTC); "***" - bez strefy, SCCM zapisuje tak UTC.
+        if ($tekst -match '^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\.(\d{6})([+-])(\d{3}|\*{3})$') {
             try {
                 # Mikrosekundy na takty: jeden takt to 100 nanosekund.
                 $utc = [datetime]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3],
@@ -843,7 +880,7 @@ function ConvertTo-JezykCzasLokalny {
                                        [System.DateTimeKind]::Utc).AddTicks([long]$Matches[7] * 10)
 
                 # Zapis to czas lokalny serwera - do UTC idziemy w strone przeciwna do znaku.
-                $minuty = [int]$Matches[9]
+                $minuty = if ($Matches[9] -eq '***') { 0 } else { [int]$Matches[9] }
                 if ($Matches[8] -eq '+') { $minuty = -$minuty }
 
                 return $utc.AddMinutes($minuty).ToLocalTime()
@@ -1173,6 +1210,34 @@ function Select-JezykMaszyneDlaLoginu {
     return $wynik
 }
 
+# Czy sesja z CurrentLogonUser trwa: CNIsOnline tej jednej maszyny, osobnym zapytaniem z wlasnym try.
+# Uwaga: nieznana kolumna w glownym SELECT wywrocilaby cale szukanie (README: Ostatnio uzywany komputer).
+function Get-JezykStanSesji {
+    param($Sesja, [string]$Przestrzen, $ResourceID, [int]$LimitSek = 15)
+
+    $wynik = [pscustomobject]@{ Trwa = $false; Opis = '' }
+
+    # Do zapytania ida same liczby.
+    $id = 0
+    if (-not [int]::TryParse([string]$ResourceID, [ref]$id) -or $id -le 0) {
+        $wynik.Opis = 'stanu klienta nie sprawdzono - brak identyfikatora maszyny w SCCM'
+        return $wynik
+    }
+
+    try {
+        foreach ($stan in @(Invoke-JezykZapytanieWmi -Sesja $Sesja -Przestrzen $Przestrzen -LimitSek $LimitSek `
+                                -Zapytanie "SELECT ResourceId, CNIsOnline FROM SMS_CombinedDeviceResources WHERE ResourceId = $id")) {
+            if ($stan -and $stan.CNIsOnline -eq $true) { $wynik.Trwa = $true }
+        }
+        if (-not $wynik.Trwa) {
+            $wynik.Opis = 'konto jest w CurrentLogonUser, ale klient nie jest teraz online (CNIsOnline) - pokazana data ostatniej aktywności'
+        }
+    }
+    catch { $wynik.Opis = 'stanu połączenia klienta (CNIsOnline) nie udało się odczytać: {0}' -f $_.Exception.Message }
+
+    return $wynik
+}
+
 # Ostatnio uzywany komputer konta - z inwentaryzacji SCCM (AD nie wie, GDZIE), z sonda i adresem MAC.
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
@@ -1180,8 +1245,9 @@ function Get-JezykOstatnioUzywanyKomputer {
 
     # Odpowiada i Adres wypelnia sonda na koncu, MAC po niej; $null w Odpowiada = nie wiadomo.
     # MacKarty to karty z adresem IPv4, MacWpisow - wszystkie wiersze (jedno nie wynika z drugiego).
+    # ZalogowanyTeraz - SCCM widzi sesje konta na maszynie, ktora jest w tej chwili online.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
-                                Blad = ''; Szczegoly = ''
+                                Blad = ''; Szczegoly = ''; ZalogowanyTeraz = $false
                                 Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
                                 Mac = ''; MacSzczegoly = ''; MacPodstawa = ''
                                 MacKarta = $null; MacKarty = @(); MacWpisow = 0 }
@@ -1334,6 +1400,15 @@ function Get-JezykOstatnioUzywanyKomputer {
             }
         }
 
+        # Sesja teraz: trafienie przez CurrentLogonUser i klient online - zamiast daty aktywnosci.
+        $opisSesji = ''
+        if ($poleTrafienia -eq 'CurrentLogonUser') {
+            $stanSesji = Get-JezykStanSesji -Sesja $sesja.Sesja -Przestrzen $przestrzen `
+                                            -ResourceID $najlepsza.ResourceID -LimitSek $LimitSek
+            $wynik.ZalogowanyTeraz = $stanSesji.Trwa
+            $opisSesji             = $stanSesji.Opis
+        }
+
         # Sonda ICMP tutaj, w tle - na watku interfejsu zamrozilaby okno; wlasny try, bo to dodatek.
         $opisPingu = ''
         try {
@@ -1351,6 +1426,7 @@ function Get-JezykOstatnioUzywanyKomputer {
         $opisWyniku = @('źródło: {0}; protokół: {1}; stos: {2}; serwer: {3}' -f
                         $zrodlo, $sesja.Protokol, $stos, $polaczenie.Serwer)
         if ($opisPingu) { $opisWyniku += $opisPingu }
+        if ($opisSesji) { $opisWyniku += $opisSesji }
         if ($ileMaszyn -gt 1) {
             $opisWyniku += 'dopasowanych maszyn: {0}; pokazana ta z najświeższym śladem logowania (pole {1})' -f $ileMaszyn, $poleTrafienia
         }
@@ -1375,8 +1451,9 @@ function Get-JezykUzytkownikKomputera {
     param([string]$Netbios, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
           [bool]$ProtokolZapasowy = $false, [int]$LimitSek = 15)
 
-    # Pola MAC takie same jak po drugiej stronie okna - jedna sciezka wyswietlania.
+    # Pola MAC i stan sesji takie same jak po drugiej stronie okna - jedna sciezka wyswietlania.
     $wynik = [pscustomobject]@{ Uzytkownik = ''; Data = $null; Blad = ''; Szczegoly = ''
+                                ZalogowanyTeraz = $false
                                 Odpowiada = $null; Adres = ''; Mac = ''; MacSzczegoly = ''
                                 MacPodstawa = ''; MacKarta = $null; MacKarty = @()
                                 MacWpisow = 0 }
@@ -1450,6 +1527,8 @@ function Get-JezykUzytkownikKomputera {
         $znaleziona  = $false
         # Wiersz tej maszyny - dla identyfikatora zasobu do zapytania o karty.
         $wierszMaszyny = $null
+        # Wiersz, z ktorego wzieto uzytkownika - dla zapytania o stan sesji.
+        $wierszUzytkownika = $null
 
         foreach ($z in $zrodla) {
             $odp = Invoke-JezykZapytanieSccm -Sesja $sesja.Sesja -Serwer $polaczenie.Serwer `
@@ -1483,7 +1562,8 @@ function Get-JezykUzytkownikKomputera {
                 }
 
                 if ($uzytkownik) {
-                    $data = ConvertTo-JezykCzasLokalny $wiersz.LastActiveTime
+                    $data              = ConvertTo-JezykCzasLokalny $wiersz.LastActiveTime
+                    $wierszUzytkownika = $wiersz
                     break
                 }
             }
@@ -1535,9 +1615,19 @@ function Get-JezykUzytkownikKomputera {
         $wynik.Uzytkownik = $uzytkownik
         $wynik.Data       = $data
 
+        # Sesja teraz - tylko gdy uzytkownika dalo pole CurrentLogonUser.
+        $opisSesji = ''
+        if ($pole -eq 'CurrentLogonUser' -and $wierszUzytkownika) {
+            $stanSesji = Get-JezykStanSesji -Sesja $sesja.Sesja -Przestrzen $przestrzen `
+                                            -ResourceID $wierszUzytkownika.ResourceID -LimitSek $LimitSek
+            $wynik.ZalogowanyTeraz = $stanSesji.Trwa
+            $opisSesji             = $stanSesji.Opis
+        }
+
         $opisWyniku = @('źródło: {0} (pole {1}); protokół: {2}; stos: {3}; serwer: {4}' -f
                         $zrodlo, $pole, $sesja.Protokol, $stos, $polaczenie.Serwer)
         if ($opisPingu) { $opisWyniku += $opisPingu }
+        if ($opisSesji) { $opisWyniku += $opisSesji }
         if ($niedostepne.Count) {
             $opisWyniku += 'klasy, które nie odpowiedziały: {0}' -f ($niedostepne -join '; ')
         }
