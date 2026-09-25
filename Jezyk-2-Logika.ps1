@@ -357,17 +357,10 @@ function New-JezykResult {
 
 # lastLogon z jednego kontrolera (LDAP, zakres Base): $null - milczy, 0 - nigdy, wiecej - FILETIME.
 function Get-JezykLastLogonZKontrolera {
-    param([string]$Kontroler, [string]$Dn = '', [string]$Login = '', [int]$LimitMs = 2500,
-          [int]$LimitSondyMs = 1500)
+    param([string]$Kontroler, [string]$Dn = '', [string]$Login = '', [int]$LimitMs = 2500)
 
     # Sprawdzenie przed pierwszym uzyciem - takze przed droga zapasowa.
     if (-not (Test-JezykNazwaHosta $Kontroler)) { return $null }
-    if ($Dn -and -not (Test-JezykDn $Dn)) { return $null }
-
-    # Uwaga: sonda portu przed polaczeniem - milczacy kontroler trzymalby miejsce w puli (README: Pulapki).
-    # 389 to LDAP; droga zapasowa (modul AD) idzie przez ADWS na 9389.
-    $port = if ($Dn) { 389 } else { 9389 }
-    if (-not (Test-JezykPortOtwarty -Serwer $Kontroler -Port $port -LimitMs $LimitSondyMs)) { return $null }
 
     # Bez DN - droga zapasowa przez modul AD.
     if (-not $Dn) {
@@ -379,6 +372,8 @@ function Get-JezykLastLogonZKontrolera {
         catch { return $null }
     }
 
+    if (-not (Test-JezykDn $Dn)) { return $null }
+
     $wejscie = $null
     $szukacz = $null
     try {
@@ -386,11 +381,9 @@ function Get-JezykLastLogonZKontrolera {
         $sciezka = 'LDAP://{0}/{1}' -f $Kontroler, ($Dn -replace '/', '\/')
 
         # Kanal podpisany i szyfrowany (README: Bezpieczenstwo > Co Jezyk czyta i zapisuje).
-        # ServerBind - sciezka wskazuje ten kontroler, nie domene do odszukania.
         $uwierzytelnienie = [System.DirectoryServices.AuthenticationTypes]::Secure -bor
                             [System.DirectoryServices.AuthenticationTypes]::Sealing -bor
-                            [System.DirectoryServices.AuthenticationTypes]::Signing -bor
-                            [System.DirectoryServices.AuthenticationTypes]::ServerBind
+                            [System.DirectoryServices.AuthenticationTypes]::Signing
 
         # Puste poswiadczenia = kontekst zalogowanego uzytkownika.
         $wejscie = New-Object System.DirectoryServices.DirectoryEntry(
@@ -481,19 +474,14 @@ function Invoke-JezykRownolegle {
 }
 
 # Dokladna data logowania: najpozniejszy lastLogon ze wszystkich kontrolerow (tylko w tle).
-# Pelna tylko przy komplecie odpowiedzi; lastLogonTimestamp jest podloga (README: Ostatnie logowanie).
 function Get-JezykOstatnieLogowanie {
     param([string]$Login, [string]$Domena, [string]$Dn = '',
-          [string[]]$Kontrolery = @(), [int]$LimitMsLacznie = 12000,
-          # lastLogonTimestamp z glownego zapytania - prawdziwe logowanie nie jest od niego starsze.
-          $Przyblizona = $null,
+          [string[]]$Kontrolery = @(), [int]$LimitMsLacznie = 6000,
           # 1 = po kolei; testy logiki ustawiaja 1, zeby sprawdzac WYBOR najpozniejszej daty.
           [int]$LimitRownoleglosci = 12)
 
-    # DataKontrolerow - samo maksimum lastLogon; Data - to, co pokazac (z podloga).
-    $wynik = [pscustomobject]@{ Data = $null; DataKontrolerow = $null; ZKontrolera = ''
-                                Odpytane = 0; Wszystkie = 0; Kontrolery = @(); Odrzucone = @()
-                                Milczace = @(); Pelna = $false; ZTimestampu = $false; Blad = '' }
+    $wynik = [pscustomobject]@{ Data = $null; Odpytane = 0; Wszystkie = 0
+                                Kontrolery = @(); Odrzucone = @() }
 
     $lista = @($Kontrolery | Where-Object { $_ })
     if ($lista.Count -eq 0) {
@@ -501,11 +489,7 @@ function Get-JezykOstatnieLogowanie {
             $lista = @(Get-ADDomainController -Filter * -Server $Domena -ErrorAction Stop |
                        Select-Object -ExpandProperty HostName)
         }
-        catch {
-            # Powod zapisany - bez niego pole pokazaloby sama date przyblizona jak wynik.
-            $wynik.Blad = 'Nie udało się pobrać listy kontrolerów domeny {0}: {1}' -f $Domena, $_.Exception.Message
-            return $wynik
-        }
+        catch { return $wynik }
     }
 
     # Nazwy kontrolerow sprawdzane tutaj - odrzucone osobno od milczacych.
@@ -515,65 +499,45 @@ function Get-JezykOstatnieLogowanie {
     $wynik.Odrzucone  = $odrzucone
     $wynik.Kontrolery = $lista
     $wynik.Wszystkie  = $lista.Count
-    if ($lista.Count -eq 0) {
-        $wynik.Blad = 'Domena {0} nie podała żadnego kontrolera o poprawnej nazwie.' -f $Domena
-        return $wynik
-    }
+    if ($lista.Count -eq 0) { return $wynik }
 
-    $odpowiedzi = @{}
+    $najnowsze = 0L
 
     # Rownolegle: czas schodzi do czasu najwolniejszego kontrolera.
     if ($lista.Count -gt 1 -and $LimitRownoleglosci -gt 1) {
         # Komplet funkcji dla Get-JezykLastLogonZKontrolera - pominieta dalaby cisze.
         $odpowiedzi = Invoke-JezykRownolegle -Wartosci $lista `
-                          -Funkcje   'Test-JezykNazwaHosta', 'Test-JezykDn', 'Test-JezykPortOtwarty', 'Get-JezykLastLogonZKontrolera' `
+                          -Funkcje   'Test-JezykNazwaHosta', 'Test-JezykDn', 'Get-JezykLastLogonZKontrolera' `
                           -Wywolanie 'Get-JezykLastLogonZKontrolera -Kontroler $args[0] -Dn $args[1] -Login $args[2]' `
                           -Argumenty @($Dn, $Login) `
                           -LimitMs   $LimitMsLacznie `
                           -LimitRownoleglosci $LimitRownoleglosci
+
+        foreach ($kontroler in $lista) {
+            if (-not $odpowiedzi.ContainsKey($kontroler)) { continue }
+            $wartosc = $odpowiedzi[$kontroler]
+            if ($null -eq $wartosc) { continue }
+            $wynik.Odpytane++
+            if ($wartosc -gt $najnowsze) { $najnowsze = [int64]$wartosc }
+        }
     }
     else {
         $zegar = [System.Diagnostics.Stopwatch]::StartNew()
         foreach ($kontroler in $lista) {
             if ($zegar.ElapsedMilliseconds -gt $LimitMsLacznie) { break }
-            $odpowiedzi[$kontroler] = Get-JezykLastLogonZKontrolera -Kontroler $kontroler -Dn $Dn -Login $Login
+
+            $wartosc = Get-JezykLastLogonZKontrolera -Kontroler $kontroler -Dn $Dn -Login $Login
+            if ($null -eq $wartosc) { continue }
+
+            $wynik.Odpytane++
+            if ($wartosc -gt $najnowsze) { $najnowsze = [int64]$wartosc }
         }
     }
-
-    # Jedna petla dla obu drog: milczy ten bez odpowiedzi w terminie albo z $null.
-    $najnowsze = 0L
-    $milczace  = @()
-    foreach ($kontroler in $lista) {
-        $wartosc = if ($odpowiedzi.ContainsKey($kontroler)) { $odpowiedzi[$kontroler] } else { $null }
-        if ($null -eq $wartosc) { $milczace += $kontroler; continue }
-
-        $wynik.Odpytane++
-        if ($wartosc -gt $najnowsze) {
-            $najnowsze         = [int64]$wartosc
-            $wynik.ZKontrolera = $kontroler
-        }
-    }
-    $wynik.Milczace = $milczace
 
     if ($najnowsze -gt 0) {
-        try   { $wynik.DataKontrolerow = [datetime]::FromFileTime($najnowsze) }
-        catch { $wynik.DataKontrolerow = $null }
+        try   { $wynik.Data = [datetime]::FromFileTime($najnowsze) }
+        catch { $wynik.Data = $null }
     }
-    $wynik.Data = $wynik.DataKontrolerow
-
-    # Podloga: lastLogonTimestamp zapisal kontroler przy logowaniu; minuta tolerancji na zapis.
-    if ($Przyblizona -is [datetime] -and
-        ($null -eq $wynik.DataKontrolerow -or $Przyblizona -gt $wynik.DataKontrolerow.AddMinutes(1))) {
-        $wynik.Data        = $Przyblizona
-        $wynik.ZTimestampu = $true
-    }
-
-    if ($wynik.Odpytane -eq 0) {
-        $wynik.Blad = 'Żaden z kontrolerów domeny {0} nie odpowiedział.' -f $Domena
-    }
-
-    $wynik.Pelna = (-not $wynik.Blad -and $wynik.Odpytane -eq $wynik.Wszystkie -and
-                    $odrzucone.Count -eq 0 -and -not $wynik.ZTimestampu)
 
     return $wynik
 }
@@ -618,7 +582,6 @@ function Test-JezykPortOtwarty {
 }
 
 # Nazywa przyczyne bledu WMI i podaje naprawe; rozpoznaje najpierw po kodzie bledu, potem po tresci.
-# CalaSesja - blad dotyczy polaczenia albo przestrzeni, wiec kolejne zapytania odbilyby sie tak samo.
 function Get-JezykOpisBleduWmi {
     param($Wyjatek, [string]$Serwer = '', [string]$Przestrzen = '', [string]$Protokol = '',
           [ValidateSet('', 'Polaczenie', 'Zapytanie')][string]$Etap = '')
@@ -647,8 +610,6 @@ function Get-JezykOpisBleduWmi {
     if     ($Protokol -eq 'Wsman') { $port = '5985 (WinRM)' }
     elseif ($Protokol)             { $port = '135 (DCOM/RPC)' }
     else                           { $port = '' }
-
-    $calaSesja = $true
 
     if (($kodCim -eq 'InvalidNamespace') -or ($kodHex -eq '0x8004100E') -or
         ($tresc -match 'Invalid namespace|Nieprawid.owa przestrze')) {
@@ -681,17 +642,8 @@ function Get-JezykOpisBleduWmi {
     elseif (($kodCim -eq 'InvalidClass') -or ($kodHex -eq '0x80041010') -or
             ($tresc -match 'Invalid class|Nieprawid.owa klasa')) {
 
-        $krotki    = 'brak klasy w SCCM'
-        $naprawa   = 'Przestrzeń "{0}" istnieje, ale nie ma w niej pytanej klasy. Zwykle znaczy to inną wersję ConfigMgr albo wyłączoną inwentaryzację sprzętu.' -f $Przestrzen
-        $calaSesja = $false
-    }
-    # Uwaga: przed WinRM - tresc przekroczenia czasu przy Wsman zawiera "WS-Management" (README: Pulapki).
-    elseif (($kodHex -in '0x800705B4', '0x80070102', '0x80338029') -or
-            ($tresc -match 'timed out|timeout|limit czasu')) {
-
-        $krotki    = 'SCCM nie odpowiedział w terminie'
-        $naprawa   = 'Serwer {0} nie oddał odpowiedzi przed upływem terminu. Połączenie było zestawione - to zapytanie trwało za długo, zwykle przez obciążony serwer lokacji albo jego bazę danych.' -f $Serwer
-        $calaSesja = $false
+        $krotki  = 'brak klasy w SCCM'
+        $naprawa = 'Przestrzeń "{0}" istnieje, ale nie ma w niej pytanej klasy. Zwykle znaczy to inną wersję ConfigMgr albo wyłączoną inwentaryzację sprzętu.' -f $Przestrzen
     }
     elseif ($tresc -match 'WinRM|WS-Management|WSMan') {
 
@@ -699,10 +651,8 @@ function Get-JezykOpisBleduWmi {
         $naprawa = 'Protokół Wsman idzie przez WinRM, a wstęp tam wymaga członkostwa w grupie Administrators albo Remote Management Users na serwerze {0} - rola w ConfigMgr go nie daje. Ustaw SccmProtokol na "Dcom" w Jezyk-1-Srodowisko.ps1.' -f $Serwer
     }
     else {
-        # Nierozpoznany blad nie przesadza o calej sesji - szukanie probuje dalszych klas.
-        $krotki    = 'błąd zapytania do SCCM'
-        $naprawa   = 'Przyczyny nie dało się rozpoznać po kodzie błędu - pełna treść poniżej.'
-        $calaSesja = $false
+        $krotki  = 'błąd zapytania do SCCM'
+        $naprawa = 'Przyczyny nie dało się rozpoznać po kodzie błędu - pełna treść poniżej.'
     }
 
     $techniczne = @()
@@ -715,8 +665,7 @@ function Get-JezykOpisBleduWmi {
     $szczegoly = @($naprawa, '', $tresc)
     if ($techniczne.Count) { $szczegoly += @('', ($techniczne -join '; ')) }
 
-    [pscustomobject]@{ Krotki = $krotki; Szczegoly = ($szczegoly -join [Environment]::NewLine)
-                       CalaSesja = $calaSesja }
+    [pscustomobject]@{ Krotki = $krotki; Szczegoly = ($szczegoly -join [Environment]::NewLine) }
 }
 
 # Jedna sesja WMI do serwera lokacji na cale zadanie; przed kazda proba sonda portu.
@@ -1182,14 +1131,11 @@ function Set-JezykMacWWyniku {
 
 # Wybiera z wierszy SCCM maszyne loginu: dokladne dopasowanie konta (wzorzec WQL to tylko przesiew),
 # stopien pola (Current, Last, Primary) przed data, bez wzgledu na wielkosc liter.
-# Daty - LastActiveTime doczytane osobno (ResourceID -> data) dla klas, ktore go nie niosa.
 function Select-JezykMaszyneDlaLoginu {
     param($Wiersze, [string]$Login,
-          $Pola = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser'),
-          [hashtable]$Daty = @{})
+          $Pola = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser'))
 
-    # Dopasowane - ResourceID wszystkich trafien (dla doczytania ich dat jednym zapytaniem).
-    $wynik = [pscustomobject]@{ Wiersz = $null; Pole = ''; Data = $null; Ile = 0; Dopasowane = @() }
+    $wynik = [pscustomobject]@{ Wiersz = $null; Pole = ''; Data = $null; Ile = 0 }
     if (-not $Login) { return $wynik }
 
     $nazwyPol = @($Pola)
@@ -1210,11 +1156,7 @@ function Select-JezykMaszyneDlaLoginu {
         if ($stopien -lt 0) { continue }
 
         $wynik.Ile++
-        $id = [string]$wiersz.ResourceID
-        if ($id) { $wynik.Dopasowane += $id }
-
         $kiedy = ConvertTo-JezykCzasLokalny $wiersz.LastActiveTime
-        if ($null -eq $kiedy -and $id -and $Daty.ContainsKey($id)) { $kiedy = $Daty[$id] }
 
         # Nizszy stopien bije kazda date; data rozstrzyga tylko w obrebie tego samego.
         $lepszy = ($null -eq $wynik.Wiersz) -or ($stopien -lt $najlepszy) -or
@@ -1231,37 +1173,6 @@ function Select-JezykMaszyneDlaLoginu {
     return $wynik
 }
 
-# LastActiveTime kilku maszyn jednym zapytaniem (ResourceID -> data); porazka to pusta tablica.
-function Get-JezykDatyAktywnosci {
-    param($Sesja, [string]$Przestrzen, $Id, [int]$LimitSek = 15)
-
-    $daty = @{}
-
-    # Do zapytania ida same liczby, bez powtorzen, najwyzej 20 - warunek rosnie z kazda.
-    $liczby = @()
-    foreach ($pozycja in @($Id)) {
-        $liczba = 0
-        if (-not [int]::TryParse([string]$pozycja, [ref]$liczba)) { continue }
-        if ($liczba -le 0 -or $liczby -contains $liczba) { continue }
-        $liczby += $liczba
-        if ($liczby.Count -ge 20) { break }
-    }
-    if ($liczby.Count -eq 0) { return $daty }
-
-    $warunek = ($liczby | ForEach-Object { 'ResourceId = {0}' -f $_ }) -join ' OR '
-    try {
-        foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $Sesja -Przestrzen $Przestrzen -LimitSek $LimitSek `
-                                -Zapytanie ('SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE {0}' -f $warunek))) {
-            $kiedy = ConvertTo-JezykCzasLokalny $wpis.LastActiveTime
-            if ($null -ne $kiedy) { $daty[[string]$wpis.ResourceId] = $kiedy }
-        }
-    }
-    # Data jest dodatkiem - jej brak opisuje przebieg w szczegolach wyniku.
-    catch { }
-
-    return $daty
-}
-
 # Ostatnio uzywany komputer konta - z inwentaryzacji SCCM (AD nie wie, GDZIE), z sonda i adresem MAC.
 function Get-JezykOstatnioUzywanyKomputer {
     param([string]$Login, [string]$Serwer = '', [string]$KodLokacji = '', [string]$Protokol = 'Dcom',
@@ -1269,9 +1180,8 @@ function Get-JezykOstatnioUzywanyKomputer {
 
     # Odpowiada i Adres wypelnia sonda na koncu, MAC po niej; $null w Odpowiada = nie wiadomo.
     # MacKarty to karty z adresem IPv4, MacWpisow - wszystkie wiersze (jedno nie wynika z drugiego).
-    # ZalogowanyTeraz - SCCM widzi sesje konta na maszynie, ktora jest w tej chwili online.
     $wynik = [pscustomobject]@{ Nazwa = ''; Data = $null; Odpowiada = $null; Adres = ''
-                                Blad = ''; Szczegoly = ''; ZalogowanyTeraz = $false
+                                Blad = ''; Szczegoly = ''
                                 Wspoldzielony = $false; SzczegolyWspoldzielenia = ''
                                 Mac = ''; MacSzczegoly = ''; MacPodstawa = ''
                                 MacKarta = $null; MacKarty = @(); MacWpisow = 0 }
@@ -1307,97 +1217,66 @@ function Get-JezykOstatnioUzywanyKomputer {
 
     # Jedna sesja na wszystko ponizej; finally ja zamyka - takze przy porzuceniu zadania.
     try {
-        # Slad logowania przed przypisaniem; pierwsze trafienie konczy szukanie (README: Pytamy o to samo).
+        # Trzy zrodla, od najblizszego widokowi "Devices" w konsoli (README: Pytamy o to samo).
         # Wzorzec to tylko przesiew (bez ukosnika); login rozstrzyga Select-JezykMaszyneDlaLoginu.
         # Pole przesiewu musi byc w SELECT, inaczej dopasowanie nie ma czego czytac.
-        # Konta - wiersz niesie trzy pola kont (wykrycie maszyny wspoldzielonej).
         $zrodla = @(
-            @{ Nazwa = 'SMS_CombinedDeviceResources: CurrentLogonUser, LastLogonUser (widok "Devices" w konsoli)'
+            @{ Nazwa = 'SMS_CombinedDeviceResources (widok "Devices" w konsoli)'
                Wql   = "SELECT ResourceID, Name, LastActiveTime, CurrentLogonUser, LastLogonUser, PrimaryUser " +
                        "FROM SMS_CombinedDeviceResources " +
                        "WHERE CurrentLogonUser LIKE '%$bezpieczny%' " +
-                       "OR LastLogonUser LIKE '%$bezpieczny%'"
-               Pola  = @('CurrentLogonUser', 'LastLogonUser')
-               Konta = $true }
+                       "OR LastLogonUser LIKE '%$bezpieczny%' " +
+                       "OR PrimaryUser LIKE '%$bezpieczny%'"
+               Pola  = @('CurrentLogonUser', 'LastLogonUser', 'PrimaryUser') }
 
             @{ Nazwa = 'SMS_R_System.LastLogonUserName'
                Wql   = "SELECT ResourceId, Name, NetbiosName, LastLogonUserName FROM SMS_R_System " +
                        "WHERE LastLogonUserName LIKE '%$bezpieczny%'"
-               Pola  = @('LastLogonUserName')
-               Konta = $false }
+               Pola  = @('LastLogonUserName') }
 
             @{ Nazwa = 'SMS_G_System_COMPUTER_SYSTEM.UserName'
                Wql   = "SELECT ResourceID, Name, UserName FROM SMS_G_System_COMPUTER_SYSTEM " +
                        "WHERE UserName LIKE '%$bezpieczny%'"
-               Pola  = @('UserName')
-               Konta = $false }
-
-            # Przypisanie uzytkownika do urzadzenia na koncu - to nie jest slad logowania.
-            @{ Nazwa = 'SMS_CombinedDeviceResources: PrimaryUser (przypisanie)'
-               Wql   = "SELECT ResourceID, Name, LastActiveTime, CurrentLogonUser, LastLogonUser, PrimaryUser " +
-                       "FROM SMS_CombinedDeviceResources " +
-                       "WHERE PrimaryUser LIKE '%$bezpieczny%'"
-               Pola  = @('PrimaryUser')
-               Konta = $true }
+               Pola  = @('UserName') }
         )
 
         $najlepsza     = $null
         $najData       = $null
         $poleTrafienia = ''
         $ileMaszyn     = 0
-        $zrodlo        = $null
+        $zrodlo        = ''
         $stos          = 'CIM'
         $odmowa        = $null
-        # Pierwszy blad jednej klasy (np. przekroczony czas) - bez trafienia to on jest odpowiedzia.
-        $bladKlasy     = $null
         $niedostepne   = @()
-        # Co oddala kazda klasa i w jakim czasie - pod "!", zeby dalo sie rozstrzygnac zgloszenie.
-        $przebieg      = @()
 
         foreach ($z in $zrodla) {
-            $zegarKlasy = [System.Diagnostics.Stopwatch]::StartNew()
             $odp = Invoke-JezykZapytanieSccm -Sesja $sesja.Sesja -Serwer $polaczenie.Serwer `
                                              -Przestrzen $przestrzen -Zapytanie $z.Wql `
                                              -Protokol $sesja.Protokol -LimitSek $LimitSek
-            $sekundy = $zegarKlasy.Elapsed.TotalSeconds
 
             if ($odp.Blad) {
-                # Blad calej sesji albo przestrzeni - dalsze zrodla odbilyby sie tak samo.
-                if ($odp.Blad.CalaSesja) {
-                    $odmowa = $odp.Blad
-                    break
-                }
-
-                # Blad jednej klasy nie przerywa szukania - inne klasy moga znac maszyne.
-                $przebieg += ('{0}: {1} ({2:0.0} s)' -f $z.Nazwa, $odp.Blad.Krotki, $sekundy)
+                # Tylko brak klasy dotyczy jednego zrodla - wtedy szukamy dalej.
                 if ($odp.Blad.Krotki -eq 'brak klasy w SCCM') {
                     $niedostepne += '{0}: {1}' -f $z.Nazwa, $odp.Blad.Krotki
+                    continue
                 }
-                elseif (-not $bladKlasy) { $bladKlasy = $odp.Blad }
-                continue
+
+                # Inny blad dotyczy calej przestrzeni albo sesji - dalsze zrodla odbilyby sie tak samo.
+                $odmowa = $odp.Blad
+                break
             }
 
             # Zrodlo trafione dopiero, gdy dopasowanie oddalo wiersz (przesiew jest szerszy od odpowiedzi).
             $trafienie = Select-JezykMaszyneDlaLoginu -Wiersze $odp.Wiersze -Login $Login -Pola $z.Pola
-            $przebieg += ('{0}: wierszy {1}, maszyn tego konta {2} ({3:0.0} s)' -f
-                          $z.Nazwa, @($odp.Wiersze).Count, $trafienie.Ile, $sekundy)
-            if (-not $trafienie.Wiersz) { continue }
-
-            # Klasa bez LastActiveTime: daty wszystkich trafien jednym zapytaniem, potem wybor od nowa.
-            if ($null -eq $trafienie.Data) {
-                $daty = Get-JezykDatyAktywnosci -Sesja $sesja.Sesja -Przestrzen $przestrzen `
-                                                -Id $trafienie.Dopasowane -LimitSek $LimitSek
-                $trafienie = Select-JezykMaszyneDlaLoginu -Wiersze $odp.Wiersze -Login $Login `
-                                                          -Pola $z.Pola -Daty $daty
+            if ($trafienie.Wiersz) {
+                $najlepsza     = $trafienie.Wiersz
+                $najData       = $trafienie.Data
+                $poleTrafienia = $trafienie.Pole
+                $ileMaszyn     = $trafienie.Ile
+                $zrodlo        = $z.Nazwa
+                $stos          = $odp.Stos
+                break
             }
-
-            $najlepsza     = $trafienie.Wiersz
-            $najData       = $trafienie.Data
-            $poleTrafienia = $trafienie.Pole
-            $ileMaszyn     = $trafienie.Ile
-            $zrodlo        = $z
-            $stos          = $odp.Stos
-            break
         }
 
         if ($odmowa) {
@@ -1407,27 +1286,35 @@ function Get-JezykOstatnioUzywanyKomputer {
         }
 
         if (-not $najlepsza) {
-            # Klasa, ktora zawiodla, nie zostala sprawdzona - "brak w inwentaryzacji" byloby nieprawda.
-            if ($bladKlasy) {
-                $wynik.Blad      = $bladKlasy.Krotki
-                $wynik.Szczegoly = (@($bladKlasy.Szczegoly, '', 'Przebieg szukania:') + $przebieg) -join [Environment]::NewLine
-                return $wynik
-            }
-
             $wynik.Blad      = 'brak w inwentaryzacji SCCM'
             $szczegolyBraku  = @(
                 ('Połączenie z {0} działa (protokół {1}), przestrzeń {2} odpowiedziała - żadna maszyna nie raportuje loginu "{3}".' -f
                     $polaczenie.Serwer, $sesja.Protokol, $przestrzen, $Login),
                 '',
-                'Sprawdzone zostały, w tej kolejności: CurrentLogonUser i LastLogonUser w SMS_CombinedDeviceResources (to ta sama klasa, którą pokazuje węzeł "Devices" w konsoli), LastLogonUserName w SMS_R_System, UserName w SMS_G_System_COMPUTER_SYSTEM i na końcu PrimaryUser (przypisanie użytkownika do urządzenia) - każde z nich w obu zapisach, "konto" i "DOMENA\konto", oraz jako pozycja listy rozdzielonej przecinkami.',
-                '',
-                'Przebieg szukania:'
-            ) + $przebieg
+                'Sprawdzone zostały: CurrentLogonUser, LastLogonUser i PrimaryUser w SMS_CombinedDeviceResources (to ta sama klasa, którą pokazuje węzeł "Devices" w konsoli), LastLogonUserName w SMS_R_System oraz UserName w SMS_G_System_COMPUTER_SYSTEM - każde z nich w obu zapisach, "konto" i "DOMENA\konto", oraz jako pozycja listy rozdzielonej przecinkami.'
+            )
             if ($niedostepne.Count) {
                 $szczegolyBraku += @('', ('Klasy, które nie odpowiedziały: {0}.' -f ($niedostepne -join '; ')))
             }
             $wynik.Szczegoly = $szczegolyBraku -join [Environment]::NewLine
             return $wynik
+        }
+
+        # Data aktywnosci jest dodatkiem: zrodla 2 i 3 jej nie znaja, wiec pytamy o jeden ResourceId.
+        if ($null -eq $najData -and $najlepsza.ResourceID) {
+            try {
+                # ResourceId przez [int] - do zapytania trafiaja same liczby.
+                $idAktywnosci = [int]$najlepsza.ResourceID
+                if ($idAktywnosci -gt 0) {
+                    foreach ($wpis in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
+                                            -Zapytanie (
+                        "SELECT ResourceId, LastActiveTime FROM SMS_CombinedDeviceResources WHERE ResourceId = $idAktywnosci"))) {
+                        $kiedy = ConvertTo-JezykCzasLokalny $wpis.LastActiveTime
+                        if ($null -ne $kiedy) { $najData = $kiedy }
+                    }
+                }
+            }
+            catch { }
         }
 
         # NetbiosName jest tylko w SMS_R_System; droga zapasowa oddaje samo Name.
@@ -1436,8 +1323,8 @@ function Get-JezykOstatnioUzywanyKomputer {
         $wynik.Nazwa = [string]$nazwa
         $wynik.Data  = $najData
 
-        # Wspoldzielenie tylko dla klas niosacych pola kont.
-        if ($zrodlo.Konta) {
+        # Wspoldzielenie tylko dla pierwszego zrodla - tylko ono niesie pola kont.
+        if ($zrodlo -eq $zrodla[0].Nazwa) {
             $konta = Get-JezykKontaMaszyny -Wiersz $najlepsza
             if ($konta.Count -gt 1) {
                 $wynik.Wspoldzielony = $true
@@ -1445,23 +1332,6 @@ function Get-JezykOstatnioUzywanyKomputer {
                     'SCCM zna na tej maszynie więcej niż jedno konto ({0}) - pokazana data i nazwa mogą dotyczyć innej osoby niż {1}.' -f
                         ($konta -join ', '), $Login
             }
-        }
-
-        # Sesja teraz: CurrentLogonUser i klient online. Osobne zapytanie z wlasnym try -
-        # nieznana kolumna w glownym SELECT wywrocilaby cale zapytanie.
-        $opisTeraz = ''
-        if ($poleTrafienia -eq 'CurrentLogonUser' -and $najlepsza.ResourceID) {
-            try {
-                $idSesji = [int]$najlepsza.ResourceID
-                foreach ($stan in @(Invoke-JezykZapytanieWmi -Sesja $sesja.Sesja -Przestrzen $przestrzen -LimitSek $LimitSek `
-                                        -Zapytanie "SELECT ResourceId, CNIsOnline FROM SMS_CombinedDeviceResources WHERE ResourceId = $idSesji")) {
-                    if ($stan.CNIsOnline -eq $true) { $wynik.ZalogowanyTeraz = $true }
-                }
-                if (-not $wynik.ZalogowanyTeraz) {
-                    $opisTeraz = 'konto jest w CurrentLogonUser, ale klient nie jest teraz online (CNIsOnline) - pokazana data ostatniej aktywności'
-                }
-            }
-            catch { $opisTeraz = 'stanu połączenia klienta (CNIsOnline) nie udało się odczytać: {0}' -f $_.Exception.Message }
         }
 
         # Sonda ICMP tutaj, w tle - na watku interfejsu zamrozilaby okno; wlasny try, bo to dodatek.
@@ -1479,9 +1349,8 @@ function Get-JezykOstatnioUzywanyKomputer {
                             -Przestrzen $przestrzen -LimitSek $LimitSek
 
         $opisWyniku = @('źródło: {0}; protokół: {1}; stos: {2}; serwer: {3}' -f
-                        $zrodlo.Nazwa, $sesja.Protokol, $stos, $polaczenie.Serwer)
+                        $zrodlo, $sesja.Protokol, $stos, $polaczenie.Serwer)
         if ($opisPingu) { $opisWyniku += $opisPingu }
-        if ($opisTeraz) { $opisWyniku += $opisTeraz }
         if ($ileMaszyn -gt 1) {
             $opisWyniku += 'dopasowanych maszyn: {0}; pokazana ta z najświeższym śladem logowania (pole {1})' -f $ileMaszyn, $poleTrafienia
         }
@@ -1491,7 +1360,6 @@ function Get-JezykOstatnioUzywanyKomputer {
         if ($null -eq $najData) {
             $opisWyniku += 'bez daty aktywności - klasa SMS_CombinedDeviceResources nie odpowiedziała albo nie ma do niej prawa'
         }
-        $opisWyniku += @('', 'Przebieg szukania:') + $przebieg
         $wynik.Szczegoly = $opisWyniku -join [Environment]::NewLine
 
         return $wynik

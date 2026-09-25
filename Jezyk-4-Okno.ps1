@@ -1176,23 +1176,21 @@ function New-JezykSkryptTla {
         $wywolanie = 'Find-JezykGrupyPoNazwie -Fraza $Fraza -Limit $Limit -Serwer $Serwer'
     }
     elseif ($Zadanie -eq 'Logowanie') {
-        # Sonda portu idzie tez do puli w Get-JezykOstatnieLogowanie - tam ma wlasna liste.
-        $funkcje = 'Test-JezykNazwaHosta', 'Test-JezykDn', 'Test-JezykPortOtwarty',
+        $funkcje = 'Test-JezykNazwaHosta', 'Test-JezykDn',
                    'Get-JezykLastLogonZKontrolera', 'Invoke-JezykRownolegle',
                    'Get-JezykOstatnieLogowanie'
 
         # Modul AD tylko gdy trzeba rozpoznac kontrolery albo isc droga zapasowa (import trwa 1-3 s).
-        $naglowek  = 'param($Login, $Domena, $Dn, $Kontrolery, $Przyblizona)'
+        $naglowek  = 'param($Login, $Domena, $Dn, $Kontrolery)'
         $naglowek += "`r`n" + 'if (-not $Dn -or @($Kontrolery).Count -eq 0) {' +
                      ' Import-Module ActiveDirectory -ErrorAction SilentlyContinue }'
-        $wywolanie = 'Get-JezykOstatnieLogowanie -Login $Login -Domena $Domena -Dn $Dn -Kontrolery $Kontrolery' +
-                     ' -Przyblizona $Przyblizona'
+        $wywolanie = 'Get-JezykOstatnieLogowanie -Login $Login -Domena $Domena -Dn $Dn -Kontrolery $Kontrolery'
     }
     elseif ($Zadanie -eq 'Komputer') {
         # Droga od loginu do maszyny; rozbior pol z kontami (Get-JezykKontaMaszyny) tylko tutaj.
         $funkcje = $sccm + @('Get-JezykAdresyDoSondy', 'Get-JezykPingKomputera',
                              'Get-JezykKontaZPola', 'Get-JezykKontaMaszyny',
-                             'Select-JezykMaszyneDlaLoginu', 'Get-JezykDatyAktywnosci',
+                             'Select-JezykMaszyneDlaLoginu',
                              'Get-JezykOstatnioUzywanyKomputer')
 
         # Zadanie SCCM idzie przez WMI i modulu AD nie potrzebuje w ogole.
@@ -1237,9 +1235,8 @@ function New-JezykPrzestrzenTla {
 }
 
 # Uruchamia w tle obejscie kontrolerow domeny po dokladna date logowania.
-# Przyblizona (lastLogonTimestamp) jedzie do logiki - podloga dla daty z kontrolerow.
 function Start-JezykZadanieLogowania {
-    param([string]$Login, [string]$Dn = '', $Przyblizona = $null)
+    param([string]$Login, [string]$Dn = '')
 
     Stop-JezykZadanieLogowania
     # Bez loginu zadanie nie rusza - pole wraca do samej daty przyblizonej.
@@ -1250,9 +1247,8 @@ function Start-JezykZadanieLogowania {
     $domena        = $Script:Config.Domena
 
     # Kontrolery: z konfiguracji, potem z pamieci poprzedniego wyszukania, na koncu z katalogu.
-    # Puste odsiane - pusta pamiec dalaby liste z jednym pustym elementem, a naglowek zadania pominalby import modulu AD.
-    $kontrolery = @($Script:Ustawienia.Kontrolery | Where-Object { $_ })
-    if ($kontrolery.Count -eq 0) { $kontrolery = @($Script:KontroleryCache[$domena] | Where-Object { $_ }) }
+    $kontrolery = @($Script:Ustawienia.Kontrolery)
+    if ($kontrolery.Count -eq 0) { $kontrolery = @($Script:KontroleryCache[$domena]) }
 
     try {
         $zegar = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1261,8 +1257,7 @@ function Start-JezykZadanieLogowania {
         [void]$zadanie.Ps.AddArgument($Login).
                           AddArgument($domena).
                           AddArgument($Dn).
-                          AddArgument([string[]]$kontrolery).
-                          AddArgument($Przyblizona)
+                          AddArgument([string[]]$kontrolery)
 
         $Script:ZadanieLogowania = [pscustomobject]@{
             Ps          = $zadanie.Ps
@@ -1279,8 +1274,8 @@ function Start-JezykZadanieLogowania {
         if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
     }
     catch {
-        # Awaria uruchomienia nie przerywa okna - data przyblizona zostaje, "!" mowi dlaczego bez uscislenia.
-        Set-JezykPoleLogowaniaBezTla -Blad $_.Exception.Message
+        # Awaria uruchomienia nie przerywa okna - data przyblizona juz stoi w polu.
+        Set-JezykPoleLogowaniaBezTla
     }
 }
 
@@ -1548,14 +1543,12 @@ function Receive-JezykZadanieLogowania {
 
     try {
         $dane = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))
-        if ($zadanie.Pokolenie -eq $Script:PokolenieLogowania) {
-            # Pusta odpowiedz (blad wewnatrz przestrzeni) tez zamyka pole - inaczej "precyzowanie" zostaloby na zawsze.
-            if ($dane.Count -gt 0) { Update-JezykLogowanieWTle -Logowanie $dane[0] -Domena $zadanie.Domena }
-            else                   { Set-JezykPoleLogowaniaBezTla -Blad 'zadanie w tle nie oddało wyniku' }
+        if ($zadanie.Pokolenie -eq $Script:PokolenieLogowania -and $dane.Count -gt 0) {
+            Update-JezykLogowanieWTle -Logowanie $dane[0] -Domena $zadanie.Domena
         }
     }
     catch {
-        if ($zadanie.Pokolenie -eq $Script:PokolenieLogowania) { Set-JezykPoleLogowaniaBezTla -Blad $_.Exception.Message }
+        if ($zadanie.Pokolenie -eq $Script:PokolenieLogowania) { Set-JezykPoleLogowaniaBezTla }
     }
     finally { Stop-JezykZadanieLogowania }
 }
@@ -1567,10 +1560,8 @@ function Receive-JezykZadanieKomputera {
 
     try {
         $dane = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))
-        if ($zadanie.Pokolenie -eq $Script:PokolenieKomputera) {
-            # Pusta odpowiedz tez zamyka pole - inaczej "sprawdzanie" zostaloby w nim na zawsze.
-            if ($dane.Count -gt 0) { Update-JezykKomputerWTle -Komputer $dane[0] }
-            else                   { Set-JezykPoleKomputeraBezTla -Blad 'Zadanie SCCM w tle nie oddało wyniku.' }
+        if ($zadanie.Pokolenie -eq $Script:PokolenieKomputera -and $dane.Count -gt 0) {
+            Update-JezykKomputerWTle -Komputer $dane[0]
         }
     }
     catch {
@@ -2801,8 +2792,6 @@ function New-JezykForm {
     # Cala szerokosc, bo pole niesie dwie daty naraz.
     $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
     $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 7) $C
-    # Czerwony "!" - data niepelna albo nieuscislona (nie wszystkie kontrolery odpowiedzialy).
-    $btnInfoLogowanie     = New-JezykPrzyciskInfo 'Logowanie'
 
     # "Status:" ma dwie linijki - niesie najdluzsze komunikaty.
     $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 8)
@@ -2816,7 +2805,7 @@ function New-JezykForm {
         $lblHasloWygasa, $txtHasloWygasa, $lblKontoWygasa, $txtKontoWygasa,
         $lblOstatniaZmiana, $txtOstatniaZmiana, $lblKontoUtworzono, $txtKontoUtworzono,
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
-        $lblOstatnieLogowanie, $txtOstatnieLogowanie, $btnInfoLogowanie,
+        $lblOstatnieLogowanie, $txtOstatnieLogowanie,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
         $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
@@ -3041,7 +3030,7 @@ function New-JezykForm {
 
     # --- PRZYCISKI "!" ---------------------------------------------------------------
     # Na samym koncu wyrownania - pion liczony z czcionki etykiet.
-    foreach ($info in @($btnInfoStatus, $btnInfoLogowanie, $btnInfoKomputer, $btnInfoUzytkownik,
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         # Pogrubiona czcionka z czcionki okna.
@@ -3071,7 +3060,6 @@ function New-JezykForm {
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer              $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWspoldzielony $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac                   $lblKomputerMac         $txtKomputerMac
-    Set-JezykPrzyciskPrzyEtykiecie $btnInfoLogowanie             $lblOstatnieLogowanie   $txtOstatnieLogowanie
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus                $lblStatus              $txtStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik            $lblKompUzytkownik      $txtKompUzytkownik
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca                $lblKompTworca          $txtKompTworca
@@ -3178,7 +3166,6 @@ function New-JezykForm {
 
         # Przyciski "!" - klucze "Info" + klucz z Set-JezykInfo (skleja je sama).
         InfoStatus                = $btnInfoStatus
-        InfoLogowanie             = $btnInfoLogowanie
         InfoKomputer              = $btnInfoKomputer
         InfoUzytkownik            = $btnInfoUzytkownik
         InfoTworca                = $btnInfoTworca
@@ -3250,7 +3237,7 @@ function New-JezykForm {
     })
 
     # Jedna procedura dla wszystkich "!" - klucz z Tag przycisku.
-    foreach ($info in @($btnInfoStatus, $btnInfoLogowanie, $btnInfoKomputer, $btnInfoUzytkownik,
+    foreach ($info in @($btnInfoStatus, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
                         $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
