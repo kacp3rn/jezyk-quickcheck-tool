@@ -448,6 +448,7 @@ $Script:Informacje = @{}
 # Tytuly okien "!" - kazdy klucz pokazuje sie wylacznie warunkowo (README: Przycisk "!").
 $Script:TytulyInformacji = @{
     Status                = 'Status'
+    Logowanie             = 'Ostatnie logowanie'
     Komputer              = 'Ostatnio używany komputer'
     Uzytkownik            = 'Ostatnio zalogowany użytkownik'
     KomputerWspoldzielony = 'Komputer współdzielony'

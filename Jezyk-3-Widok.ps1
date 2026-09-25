@@ -32,15 +32,28 @@ function Get-JezykWartoscPola {
     return $GdyBrak
 }
 
-# Tresc pola "Ostatnie logowanie" dla wszystkich stanow (dokladna, przyblizona, trwa, brak).
+# Tresc pola "Ostatnie logowanie" dla wszystkich stanow (dokladna, najpozniejsza znana, nieudana, trwa, brak).
+# "Dokladna" tylko przy komplecie odpowiedzi - o tym rozstrzyga logika (Pelna), nie widok.
 function Get-JezykTekstLogowania {
-    param($Dokladna, $Przyblizona, [switch]$Trwa, [string]$Kropki = '...')
+    param($Wynik = $null, $Przyblizona, [switch]$Trwa, [string]$Kropki = '...', [switch]$Nieudane)
 
-    if ($null -ne $Dokladna) {
-        if ($null -ne $Przyblizona) {
-            return 'Dokładna data: {0} · poprzednia data: {1:yyyy-MM-dd HH:mm}' -f (Format-JezykData $Dokladna), $Przyblizona
+    if ($Wynik -and -not $Wynik.Blad -and $null -ne $Wynik.Data) {
+        if (-not $Wynik.Pelna) {
+            # Liczby po dwukropku - bez odmiany liczebnika.
+            return 'Najpóźniejsza znana: {0} · kontrolery: {1} z {2}' -f (Format-JezykData $Wynik.Data), $Wynik.Odpytane, $Wynik.Wszystkie
         }
-        return 'Dokładna data: {0}' -f (Format-JezykData $Dokladna)
+        if ($null -ne $Przyblizona) {
+            return 'Dokładna data: {0} · poprzednia data: {1:yyyy-MM-dd HH:mm}' -f (Format-JezykData $Wynik.Data), $Przyblizona
+        }
+        return 'Dokładna data: {0}' -f (Format-JezykData $Wynik.Data)
+    }
+
+    # Uscislenie sie nie odbylo - data przyblizona zostaje, ale nie udaje jego wyniku.
+    if ($Nieudane -or ($Wynik -and $Wynik.Blad)) {
+        if ($null -ne $Przyblizona) {
+            return 'Data przybliżona: {0} · nie udało się uściślić' -f (Format-JezykData $Przyblizona)
+        }
+        return 'brak danych'
     }
 
     if ($null -ne $Przyblizona) {
@@ -50,6 +63,51 @@ function Get-JezykTekstLogowania {
 
     if ($Trwa) { return 'sprawdzanie' + $Kropki }
     return 'brak danych'
+}
+
+# Tresc "!" przy dacie logowania: czego obejscie kontrolerow nie widzialo; pusta przy komplecie.
+function Get-JezykOpisLogowania {
+    param($Wynik, $Przyblizona)
+
+    if (-not $Wynik -or $Wynik.Pelna) { return '' }
+
+    $linie    = @()
+    $milczace = @(@($Wynik.Milczace) | Where-Object { $_ })
+
+    if ($Wynik.Blad) {
+        $linie += [string]$Wynik.Blad
+    }
+    elseif ($milczace.Count) {
+        $linie += ('Kontrolery, które odpowiedziały: {0} z {1}. Logowanie obsłużone przez kontroler, który milczał, nie jest tu widoczne - prawdziwa data może być późniejsza.' -f
+                   $Wynik.Odpytane, $Wynik.Wszystkie)
+    }
+
+    # Podloga: lastLogonTimestamp nowszy od kazdego lastLogon, ktory przyszedl.
+    if ($Wynik.ZTimestampu -and -not $Wynik.Blad -and $Przyblizona -is [datetime]) {
+        $zKontrolerow = if ($Wynik.DataKontrolerow -is [datetime]) {
+            '{0:yyyy-MM-dd HH:mm} z {1}' -f $Wynik.DataKontrolerow, $Wynik.ZKontrolera
+        } else { 'żaden nie zna logowania' }
+
+        if ($linie.Count) { $linie += '' }
+        $linie += ('Data z lastLogonTimestamp ({0:yyyy-MM-dd HH:mm}) jest późniejsza niż lastLogon z kontrolerów, które odpowiedziały ({1}). Logowanie obsłużył kontroler spoza listy albo atrybut odświeżyła usługa działająca w imieniu tego konta - pokazana data pochodzi z lastLogonTimestamp.' -f
+                   $Przyblizona, $zKontrolerow)
+    }
+
+    if (@($Wynik.Odrzucone).Count) {
+        if ($linie.Count) { $linie += '' }
+        $linie += ('Pominięte nazwy kontrolerów (nieprawidłowe): {0}' -f (@($Wynik.Odrzucone) -join ', '))
+    }
+
+    if ($milczace.Count) {
+        if ($linie.Count) { $linie += '' }
+        $linie += ('Nie odpowiedziały: {0}' -f ($milczace -join ', '))
+    }
+
+    if ($Wynik.ZKontrolera -and -not $Wynik.ZTimestampu) {
+        $linie += ('Najpóźniejszą datę podał: {0}' -f $Wynik.ZKontrolera)
+    }
+
+    return ($linie -join [Environment]::NewLine)
 }
 
 # Oba numery telefonu w jednym napisie: glowny, potem komorkowy, bez podpisow; pusty pomijany.
@@ -129,6 +187,7 @@ function Clear-JezykKonto {
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
     Set-JezykInfo 'Status'                ''
+    Set-JezykInfo 'Logowanie'             ''
     # "!" przy adresie MAC tez nalezy do poprzedniego konta.
     Set-JezykInfo 'Mac'                   ''
 
@@ -213,7 +272,8 @@ function Set-JezykResult {
             Set-JezykNotkeSprawdzania -Notka $(if ($zSccm) { 'Obie' } else { 'Logowanie' })
             Set-JezykInfo 'Komputer'              ''
             Set-JezykInfo 'KomputerWspoldzielony' ''
-            Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
+            Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn) `
+                                        -Przyblizona $Result.OstatnieLogowaniePrzyblizone
             if ($zSccm) { Start-JezykZadanieKomputera -Login ([string]$Result.Login) }
 
             # Lokalizacja z CanonicalName - pustka znaczy "nie udalo sie ustalic".
@@ -598,13 +658,17 @@ function Invoke-JezykOdblokowanie {
     }
 }
 
-# Zamyka pole daty po nieudanym uscisleniu: data przyblizona zostaje, znika "precyzowanie...".
+# Zamyka pole daty bez wyniku uscislenia: data przyblizona zostaje, znika "precyzowanie...".
+# Z powodem (awaria zadania) pole i "!" mowia wprost, ze uscislenie sie nie odbylo.
 function Set-JezykPoleLogowaniaBezTla {
+    param([string]$Blad = '')
     Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
 
     $k = $Script:Kontrolki
     if (-not $k.TxtOstatnieLogowanie) { return }
-    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone
+    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
+                                                           -Nieudane:([bool]$Blad)
+    Set-JezykInfo 'Logowanie' $(if ($Blad) { 'Uściślenie daty nie doszło do skutku: {0}' -f $Blad } else { '' })
 }
 
 # Zamyka pole komputera po nieudanym zapytaniu SCCM; dostepnosc maszyny gasnie razem z nim.
@@ -959,15 +1023,10 @@ function Update-JezykLogowanieWTle {
         $Script:KontroleryCache[$Domena] = @($Logowanie.Kontrolery)
     }
 
-    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Dokladna $Logowanie.Data `
+    # Niepelne pokrycie mowi o sobie w samym polu i pod "!" - nie w cudzym polu Status.
+    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Wynik $Logowanie `
                                                            -Przyblizona $Script:LogowaniePrzyblizone
-
-    # Niepelne pokrycie - data moze byc zanizona.
-    if ($Logowanie.Wszystkie -gt 0 -and $Logowanie.Odpytane -lt $Logowanie.Wszystkie -and
-        $k.TxtStatus.Text -notmatch 'zaniżona') {
-        $k.TxtStatus.Text = ('{0} Data logowania MOŻE być zaniżona - odpowiedziało {1} z {2} kontrolerów.' -f
-                             $k.TxtStatus.Text, $Logowanie.Odpytane, $Logowanie.Wszystkie).Trim()
-    }
+    Set-JezykInfo 'Logowanie' (Get-JezykOpisLogowania -Wynik $Logowanie -Przyblizona $Script:LogowaniePrzyblizone)
 
     # Odrzucona nazwa kontrolera to usterka konfiguracji, nie sieci - dopisek w Status.
     if (@($Logowanie.Odrzucone).Count -gt 0 -and $k.TxtStatus.Text -notmatch 'Pominięte') {
@@ -1650,7 +1709,10 @@ function Update-JezykKomputerWTle {
     $k = $Script:Kontrolki
 
     if ($Komputer.Nazwa) {
-        $k.TxtKomputerUzytkownika.Text = if ($null -ne $Komputer.Data) {
+        # Sesja potwierdzona przez SCCM zastepuje date - dopisek tej samej dlugosci, pole sie nie przepelni.
+        $k.TxtKomputerUzytkownika.Text = if ($Komputer.ZalogowanyTeraz) {
+            '{0} (zalogowany teraz)' -f $Komputer.Nazwa
+        } elseif ($null -ne $Komputer.Data) {
             '{0} ({1:yyyy-MM-dd HH:mm})' -f $Komputer.Nazwa, $Komputer.Data
         } else {
             $Komputer.Nazwa
