@@ -188,6 +188,7 @@ function Clear-JezykKonto {
 
     # Notka SCCM gasnie razem z polami - inaczej zegar wpisywalby kropki do pustego widoku.
     Set-JezykNotkeSprawdzania -Wylacz
+    Stop-JezykNotkeKonsoli -Widok Konto
 
     # Data przyblizona i wynik naleza do poprzedniego konta.
     $Script:LogowaniePrzyblizone = $null
@@ -368,9 +369,10 @@ function Clear-JezykKomputer {
         if ($pole) { $pole.Text = '' }
     }
 
-    # Pola czyscimy wprost, wiec markery kropek (SCCM, laczenie) gasimy osobno.
+    # Pola czyscimy wprost, wiec markery kropek (SCCM, laczenie, konsola) gasimy osobno.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
     Set-JezykNotkeLaczenia -Wylacz
+    Stop-JezykNotkeKonsoli -Widok Maszyna
 
     # Pole kolorowane czysci sie z tresci i z koloru (takze adres IP z kolorem sondy).
     foreach ($pole in @($k.TxtKomputerWlaczone, $k.TxtKomputerIpMaszyny)) {
@@ -878,6 +880,9 @@ function Set-JezykNotkeLaczenia {
         return
     }
 
+    # Notka konsoli oddaje pole z potwierdzeniem - inaczej zapamietalibysmy jej kropki.
+    if ($Script:NotkaKonsoli -and $Script:NotkaKonsoli.Widok -eq 'Maszyna') { Update-JezykNotkeKonsoli -Teraz }
+
     $pole = $Script:Kontrolki.TxtKomputerStatus
     if (-not $Script:StatusCzekaNaDysk) {
         $Script:StatusPrzedLaczeniem = if ($pole) { [string]$pole.Text } else { '' }
@@ -892,11 +897,73 @@ function Set-JezykNotkeLaczenia {
     Update-JezykKropkiSprawdzania
 }
 
+# Notka "Trwa laczenie z NAZWA" po "Polacz" - w polu Status: tego widoku, z ktorego kliknieto.
+# Poprzednia notka konsoli konczy sie najpierw, a pierwsza klatka jest odrysowana od razu.
+function Set-JezykNotkeKonsoli {
+    param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto',
+          $Pole, [string]$Klucz, [string]$Netbios)
+
+    Update-JezykNotkeKonsoli -Teraz
+
+    # Napis rowny obecnej tresci - pierwsza klatka rozpoznaje pole jako swoje.
+    $Script:NotkaKonsoli = [pscustomobject]@{
+        Widok   = $Widok
+        Pole    = $Pole
+        Klucz   = $Klucz
+        Netbios = $Netbios
+        Napis   = if ($Pole) { [string]$Pole.Text } else { '' }
+        Proces  = $null
+        Termin  = (Get-Date).AddSeconds($Script:TerminNotkiKonsoli)
+    }
+
+    $Script:KlatkaKropek = 0
+    Update-JezykKropkiSprawdzania
+
+    # Uruchomienie z udzialu zajmuje watek okna - bez odrysowania notka pokazalaby sie po fakcie.
+    if ($Pole -and $Pole.PSObject.Methods['Refresh']) { $Pole.Refresh() }
+}
+
+# Gasi notke konsoli bez ruszania pola (wolajacy wpisuje wartosc sam); z -Widok tylko notke tego widoku.
+function Stop-JezykNotkeKonsoli {
+    param([ValidateSet('', 'Konto', 'Maszyna')][string]$Widok = '')
+
+    $notka = $Script:NotkaKonsoli
+    if (-not $notka) { return }
+    if ($Widok -and $notka.Widok -ne $Widok) { return }
+
+    $Script:NotkaKonsoli = $null
+
+    # Zwalnia tylko uchwyt - konsola biegnie dalej sama.
+    if ($notka.Proces) { try { $notka.Proces.Dispose() } catch { } }
+}
+
+# Konczy notke konsoli, gdy konsola pokazala okno, zamknela sie albo minal termin (-Teraz - od razu).
+# Wynik trafia do pola tylko wtedy, gdy pole nadal niesie notke; puste szczegoly gasza "!".
+function Update-JezykNotkeKonsoli {
+    param([switch]$Teraz)
+
+    $notka = $Script:NotkaKonsoli
+    if (-not $notka) { return }
+
+    $stan = Get-JezykStanKonsoli -Proces $notka.Proces -Netbios $notka.Netbios `
+                                 -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
+    if ($stan.Stan -eq 'Czeka' -and -not $Teraz -and (Get-Date) -lt $notka.Termin) { return }
+
+    # Obcy napis w polu to nowsza wiadomosc - zostaje.
+    $swoje = ($notka.Pole -and [string]$notka.Pole.Text -eq $notka.Napis)
+    Stop-JezykNotkeKonsoli
+    if (-not $swoje) { return }
+
+    $notka.Pole.Text = [string]$stan.Komunikat
+    Set-JezykInfo $notka.Klucz ([string]$stan.Szczegoly)
+}
+
 # Klatka kropek w polach czekajacych na tlo; bez wlasnego zegara - takt ZegarTla, klatka co 500 ms.
 # Zgaszony marker zatrzymuje wszystko - odpowiedz z tego samego taktu ma ostatnie slowo.
 function Update-JezykKropkiSprawdzania {
     if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie -and
-        -not $Script:StatusCzekaNaDysk -and -not $Script:OknoSprawdzaniaGrupy) { return }
+        -not $Script:StatusCzekaNaDysk -and -not $Script:OknoSprawdzaniaGrupy -and
+        -not $Script:NotkaKonsoli) { return }
 
     $klatka = [int][math]::Floor($Script:KlatkaKropek / $Script:TaktowNaKlatkeKropek)
     $kropki = '.' * (1 + ($klatka % 3))
@@ -917,6 +984,18 @@ function Update-JezykKropkiSprawdzania {
     if ($Script:PoleCzekaNaLogowanie -and $k.TxtOstatnieLogowanie) {
         $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
                                                                -Trwa -Kropki $kropki
+    }
+
+    # Notka konsoli ustepuje, gdy pole zapisal ktos inny; stoi PRZED laczeniem - "Dyski" wygrywa.
+    if ($Script:NotkaKonsoli) {
+        $notka = $Script:NotkaKonsoli
+        if (-not $notka.Pole -or [string]$notka.Pole.Text -ne $notka.Napis) {
+            Stop-JezykNotkeKonsoli
+        }
+        else {
+            $notka.Napis     = 'Trwa łączenie z {0}{1}' -f $notka.Netbios, $kropki
+            $notka.Pole.Text = $notka.Napis
+        }
     }
 
     # Notka laczenia - tylko pole Status: widoku komputera (zakrywa zdanie do odtworzenia).
@@ -1228,7 +1307,7 @@ function Set-JezykPrzyciskiZdalne {
 }
 
 # Obsluga "Polacz": zdalna konsola ConfigMgr dla maszyny z pamieci.
-# Niepowodzenie trafia do Status i "!", powodzenie nie rusza niczego (to nie "!" tego przycisku).
+# Status niesie "Trwa laczenie" do okna konsoli; niepowodzenie trafia do Status i "!".
 function Invoke-JezykPolacz {
     param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
@@ -1239,13 +1318,22 @@ function Invoke-JezykPolacz {
     $pole  = if ($Widok -eq 'Maszyna') { $k.TxtKomputerStatus } else { $k.TxtStatus }
     $klucz = if ($Widok -eq 'Maszyna') { 'StatusMaszyny' }      else { 'Status' }
 
+    # Notka przed uruchomieniem - samo uruchomienie z udzialu potrafi chwile trwac.
+    Set-JezykNotkeKonsoli -Widok $Widok -Pole $pole -Klucz $klucz -Netbios $Script:OstatniKomputer
+
     $wynik = Start-JezykRemoteControl -Netbios $Script:OstatniKomputer `
                                       -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
 
     if (-not $wynik.Udane) {
+        Stop-JezykNotkeKonsoli
         if ($pole) { $pole.Text = [string]$wynik.Komunikat }
         Set-JezykInfo $klucz ([string]$wynik.Szczegoly)
+        return
     }
+
+    # Kropki ida, dopoki konsola nie pokaze okna - pilnuje tego takt ZegarTla.
+    if ($Script:NotkaKonsoli) { $Script:NotkaKonsoli.Proces = $wynik.Proces }
+    if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
 }
 
 # Obsluga "Dyski": pyta o litere udzialu, a laczenie zleca zadaniu w tle.

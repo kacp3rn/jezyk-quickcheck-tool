@@ -2680,7 +2680,7 @@ function Start-JezykRemoteControl {
     $Netbios = $Netbios.Trim()
     $Sciezka = $Sciezka.Trim()
 
-    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = '' }
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Proces = $null }
 
     # Biala lista na nazwie maszyny - idzie argumentem tworzonego procesu.
     if (-not (Test-JezykNazwaKonta $Netbios)) {
@@ -2703,8 +2703,8 @@ function Start-JezykRemoteControl {
     }
 
     try {
-        # -ArgumentList tablica, nie sklejony napis.
-        Start-Process -FilePath $Sciezka -ArgumentList @($Netbios) -ErrorAction Stop
+        # -ArgumentList tablica, nie sklejony napis; proces wraca do notki "Trwa laczenie".
+        $wynik.Proces    = Start-Process -FilePath $Sciezka -ArgumentList @($Netbios) -PassThru -ErrorAction Stop
         $wynik.Udane     = $true
         $wynik.Komunikat = 'Uruchomiono zdalną konsolę dla maszyny {0}.' -f $Netbios
     }
@@ -2714,6 +2714,41 @@ function Start-JezykRemoteControl {
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = '{0}{1}Ścieżka z konfiguracji: {2}' -f
                            $opis.Szczegoly, ([Environment]::NewLine + [Environment]::NewLine), $Sciezka
+    }
+
+    return $wynik
+}
+
+# Stan uruchomionej konsoli: Czeka (bez okna), Gotowa (okno albo nie ma na co czekac), Zamknieta.
+# Komunikat to zawsze to, co pole ma pokazac, gdy czekanie konczy sie teraz; nie rzuca.
+function Get-JezykStanKonsoli {
+    param($Proces, [string]$Netbios, [string]$Sciezka)
+
+    $wynik = [pscustomobject]@{
+        Stan      = 'Gotowa'
+        Komunikat = 'Uruchomiono zdalną konsolę dla maszyny {0}.' -f $Netbios
+        Szczegoly = ''
+    }
+    if (-not $Proces) { return $wynik }
+
+    try {
+        # Proces zapamietuje stan z pierwszego odczytu - bez odswiezenia okno nie pojawi sie nigdy.
+        $Proces.Refresh()
+
+        if ($Proces.HasExited) {
+            try { $kod = [string]$Proces.ExitCode } catch { $kod = 'nieczytelny' }
+            $wynik.Stan      = 'Zamknieta'
+            $wynik.Komunikat = 'Zdalna konsola zamknęła się, zanim pokazała okno.'
+            $wynik.Szczegoly = 'Program zdalnej konsoli dla maszyny {0} zakończył pracę (kod wyjścia: {1}), nie pokazując żadnego okna.{2}Ścieżka z konfiguracji: {3}' -f
+                               $Netbios, $kod, ([Environment]::NewLine + [Environment]::NewLine), $Sciezka
+            return $wynik
+        }
+
+        if ([IntPtr]::Zero -eq $Proces.MainWindowHandle) { $wynik.Stan = 'Czeka' }
+    }
+    catch {
+        # Nieczytelny stan procesu konczy czekanie - samo uruchomienie i tak sie udalo.
+        $wynik.Stan = 'Gotowa'
     }
 
     return $wynik

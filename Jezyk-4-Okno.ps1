@@ -1059,6 +1059,12 @@ $Script:StatusPrzedLaczeniem = ''
 # Okno grup, ktorego Status niesie notke "Sprawdzanie" ($null - zadne; okno nie jest w rejestrze kontrolek).
 $Script:OknoSprawdzaniaGrupy = $null
 
+# Notka "Trwa laczenie" po "Polacz" ($null - zadna): widok, pole, ostatni wpisany napis, proces konsoli.
+$Script:NotkaKonsoli        = $null
+
+# Sekund czekania na okno zdalnej konsoli - potem notka i tak gasnie.
+$Script:TerminNotkiKonsoli  = 30
+
 # Numer klatki kropek - wspolny dla wszystkich notek.
 $Script:KlatkaKropek        = 0
 
@@ -3219,6 +3225,9 @@ function New-JezykForm {
         Receive-JezykZadanieDysku
         Receive-JezykZadanieGrupy
 
+        # Konsola po "Polacz" to nie zadanie w tle - czekamy na jej okno.
+        Update-JezykNotkeKonsoli
+
         # Kropki PO wszystkich Receive - odpowiedz z tego taktu zdazyla zgasic notke.
         Update-JezykKropkiSprawdzania
 
@@ -3228,7 +3237,7 @@ function New-JezykForm {
         if (-not $Script:ZadanieLogowania -and -not $Script:ZadanieKomputera -and
             -not $Script:ZadanieUzytkownika -and -not $Script:ZadaniePingu -and
             -not $Script:ZadanieNumeru -and -not $Script:ZadanieDysku -and
-            -not $Script:ZadanieGrupy -and
+            -not $Script:ZadanieGrupy -and -not $Script:NotkaKonsoli -and
             @($Script:ZadaniaPorzucone).Count -eq 0) {
             $Script:ZegarTla.Stop()
         }
