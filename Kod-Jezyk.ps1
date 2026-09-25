@@ -3,7 +3,8 @@
 
 # Uwaga: bez "#Requires" i "param" - obie wymagaja nietknietej pierwszej instrukcji.
 
-# Po zwolnieniu konsoli pisanie do hosta konczy sie bledem - wyciszamy oba strumienie "Continue".
+# Po zwolnieniu konsoli pisanie do hosta konczy sie bledem - Warning i Progress wyciszone tutaj,
+# bledy (tez domyslnie "Continue") zbiera blok okna na dole pliku.
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference  = 'SilentlyContinue'
 
@@ -305,29 +306,33 @@ Szczegóły techniczne: $($_.Exception.Message)
         exit 1
     }
 
-    # Konsola znika dopiero teraz - po zaladowaniu modulu AD nikt juz nie pisze do hosta.
+    # Konsola znika dopiero teraz - pasek postepu modulu AD mial jeszcze gdzie pisac.
     Invoke-JezykZwolnienieKonsoli
 
-    $form = New-JezykForm
+    # Uwaga: bez konsoli rzuca KAZDY zapis do hosta, takze blad nieterminujacy procedury zdarzenia -
+    # wszystkie strumienie okna ida do Add-JezykBladOkna (README: Pulapki).
+    & {
+        $form = New-JezykForm
 
-    # Stan poczatkowy idzie ta sama droga co kazdy wynik.
-    Set-JezykWidok
-    $powitanie = 'Wybierz tryb, wpisz szukaną wartość i kliknij "Szukaj".'
+        # Stan poczatkowy idzie ta sama droga co kazdy wynik.
+        Set-JezykWidok
+        $powitanie = 'Wybierz tryb, wpisz szukaną wartość i kliknij "Szukaj".'
 
-    # Stanu BOM nie zglaszamy - powitanie zastepuje wylacznie blad, ktory naprawde padl.
-    if ($Script:PierwszyBladZapisany) {
-        $powitanie = 'Błąd przy ładowaniu programu: {0}' -f $Script:PierwszyBladTresc
-    }
+        # Stanu BOM nie zglaszamy - powitanie zastepuje wylacznie blad, ktory naprawde padl.
+        if ($Script:PierwszyBladZapisany) {
+            $powitanie = 'Błąd przy ładowaniu programu: {0}' -f $Script:PierwszyBladTresc
+        }
 
-    Set-JezykResult -Result (New-JezykResult -Login '' -Status 'Empty' -Message $powitanie)
+        Set-JezykResult -Result (New-JezykResult -Login '' -Status 'Empty' -Message $powitanie)
 
-    # Okno stoi, nic nie padlo - stary opis awarii jest juz tylko mylaca pamiatka.
-    Remove-JezykSladBledu
+        # Okno stoi, nic nie padlo - stary opis awarii jest juz tylko mylaca pamiatka.
+        Remove-JezykSladBledu
 
-    # ShowDialog wstrzymuje skrypt do zamkniecia okna; dalej dzialaja procedury zdarzen.
-    [void]$form.ShowDialog()
+        # ShowDialog wstrzymuje skrypt do zamkniecia okna; dalej dzialaja procedury zdarzen.
+        [void]$form.ShowDialog()
 
-    $form.Dispose()
+        $form.Dispose()
+    } *>&1 | ForEach-Object { Add-JezykBladOkna $_ }
 }
 catch {
     Show-JezykBladStartu -Blad $_

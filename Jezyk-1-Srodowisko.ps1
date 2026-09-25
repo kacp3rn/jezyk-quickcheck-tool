@@ -82,6 +82,57 @@ public static int PolaczUdzial(IntPtr hwndOwner, string sciezka, int flagi)
     zasob.lpRemoteName = sciezka;            // lpLocalName zostaje null: polaczenie BEZ litery
     return WNetAddConnection3(hwndOwner, ref zasob, null, null, flagi);
 }
+
+// --- ZAPIS AWARII: wyjatek, ktorego nikt nie zlapal (dowolny watek), zostawia wpis w pliku ---
+// W C#, bo kod skryptu nie wykona sie na obcym watku; naglowek taki sam jak w Add-JezykWpisAwarii.
+private static string sciezkaAwarii;
+private static string wersjaAwarii;
+
+public static void PodepnijZapisAwarii(string sciezka, string wersja)
+{
+    sciezkaAwarii = sciezka;
+    wersjaAwarii  = wersja;
+    AppDomain.CurrentDomain.UnhandledException += ZapiszNieobsluzony;
+}
+
+private static void ZapiszNieobsluzony(object nadawca, UnhandledExceptionEventArgs e)
+{
+    ZapiszAwarie(sciezkaAwarii, wersjaAwarii, e.ExceptionObject);
+}
+
+// Dopisuje wpis; nie rzuca - proces i tak konczy prace, a obsluga nie moze dolozyc drugiej awarii.
+public static bool ZapiszAwarie(string sciezka, string wersja, object wyjatek)
+{
+    try
+    {
+        if (String.IsNullOrEmpty(sciezka)) { return false; }
+
+        int    pid     = 0;
+        string start   = "n/d";
+        string pamiec  = "n/d";
+        string uchwyty = "n/d";
+        try
+        {
+            System.Diagnostics.Process proces = System.Diagnostics.Process.GetCurrentProcess();
+            pid = proces.Id;
+            try { start   = proces.StartTime.ToString("yyyy-MM-dd HH:mm:ss"); } catch { }
+            try { pamiec  = (proces.PrivateMemorySize64 / 1048576).ToString() + " MB"; } catch { }
+            try { uchwyty = proces.HandleCount.ToString(); } catch { }
+        }
+        catch { }
+
+        string nl   = "\r\n";
+        string wpis = "=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " | PID " + pid +
+                      " | Nieobsłużony wyjątek procesu - Jeżyk kończy pracę ===" + nl +
+                      Convert.ToString(wyjatek) + nl +
+                      "Wersja: " + wersja + "; działa od: " + start + "; pamięć prywatna: " + pamiec +
+                      "; uchwyty: " + uchwyty + nl + nl;
+
+        System.IO.File.AppendAllText(sciezka, wpis, new System.Text.UTF8Encoding(true));
+        return true;
+    }
+    catch { return false; }
+}
 '@
     }
 
@@ -459,6 +510,20 @@ $Script:TytulyInformacji = @{
     # Widok komputera ma wlasne klucze (osobne kontrolki); tytuly celowo te same - nazywaja pole.
     MacMaszyny            = 'Adres MAC'
     StatusMaszyny         = 'Status'
+}
+
+# Plik bledow krytycznych w %TEMP% - dopisuja do niego Add-JezykWpisAwarii i obsluga awarii ponizej.
+$Script:PlikAwarii = 'Jezyk-awaria.txt'
+
+# Wyjatek, ktorego nikt nie zlapal (dowolny watek), zostawia wpis w pliku awarii (README: Kod > Jezyk-1-Srodowisko).
+# Straz na metodzie: typ z wczesniejszego uruchomienia w tej samej sesji moze jej nie miec.
+try {
+    if ($env:TEMP -and ('Jezyk.Native' -as [type]) -and [Jezyk.Native].GetMethod('PodepnijZapisAwarii')) {
+        [Jezyk.Native]::PodepnijZapisAwarii((Join-Path $env:TEMP $Script:PlikAwarii), [string]$Script:Config.Wersja)
+    }
+}
+catch {
+    $Script:BladKonsoli = "Zapis awarii: $($_.Exception.Message)"
 }
 
 # Opis konfiguracji w mocy (dzis nic jej nie wola). Funkcja kontrolna - zostaje ostatnia w pliku.

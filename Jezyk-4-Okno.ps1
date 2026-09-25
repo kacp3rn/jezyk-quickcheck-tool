@@ -1101,6 +1101,16 @@ $Script:DiagnostykaTla    = @()
 $Script:ProgDiagnostykiMs = 250
 $Script:LimitDiagnostyki  = 20
 
+# Bledy z procedur okna w tej sesji (ostatnie 20) - pokazuje je "!" przy Status (Add-JezykBladOkna).
+$Script:BledyOkna          = @()
+$Script:LimitBledowOkna    = 20
+$Script:ZapisBleduOknaTrwa = $false
+
+# Plik bledow krytycznych w %TEMP%: sufit wpisow i to, co w tej sesji juz do niego trafilo.
+$Script:LimitWpisowAwarii  = 20
+$Script:AwariaZapisana     = ''
+$Script:ZamkniecieZapisane = ''
+
 # Zapisuje wywolanie (Open, BeginInvoke, BeginStop, Dispose), ktore trzymalo watek dluzej niz prog.
 function Add-JezykDiagnostyke {
     param([string]$Nazwa, [long]$Ms)
@@ -3254,8 +3264,14 @@ function New-JezykForm {
     })
     $Script:ZegarJeza = $zegarJeza
 
-    # Sprzatanie zadan i zegara jeza przy zamykaniu okna.
+    # Wyjatek, ktory wyszedl z procedury zdarzenia: pod "!" i do pliku awarii zamiast okna .NET.
+    # Uwaga: ta obsluga nie moze rzucic - wyjatek wyszedlby z ShowDialog i zamknal program (README: Pulapki).
+    [System.Windows.Forms.Application]::add_ThreadException({ Add-JezykBladOkna $_.Exception -Krytyczny })
+
+    # Sprzatanie zadan i zegara jeza przy zamykaniu okna; slad zamkniecia nie przez operatora najpierw -
+    # przy wylogowaniu czasu jest malo.
     $form.Add_FormClosing({
+        Write-JezykZamkniecie ([string]$_.CloseReason)
         Stop-JezykZadaniaTla
         if ($Script:ZegarJeza) { $Script:ZegarJeza.Stop() }
     })

@@ -1080,34 +1080,228 @@ function Set-JezykInfo {
     $przycisk.Visible = $jest
 }
 
-# Czy slad zamulen tla nie jest pusty? (@($null).Count to 1, a zmienna powstaje w czesci 4.)
+# Czy slad zamulen tla albo bledow okna nie jest pusty? (@($null).Count to 1, a zmienne powstaja w czesci 4.)
 function Test-JezykJestDiagnostyka {
-    if (-not $Script:DiagnostykaTla) { return $false }
-    return (@($Script:DiagnostykaTla).Count -gt 0)
+    if ($Script:DiagnostykaTla -and @($Script:DiagnostykaTla).Count -gt 0) { return $true }
+    if ($Script:BledyOkna      -and @($Script:BledyOkna).Count      -gt 0) { return $true }
+    return $false
 }
 
-# Pokazuje tresc spod "!" (klikniecie przycisku); przy Status dokleja slad zamulen tla.
-function Show-JezykInformacja {
+# Tresc spod "!" bez pokazywania okna; przy Status dokleja slad zamulen tla i bledy okna tej sesji.
+function Get-JezykTrescInformacji {
     param([string]$Klucz)
 
     $czesci = @()
     $tekst  = [string]$Script:Informacje[$Klucz]
     if ($tekst) { $czesci += $tekst }
 
-    if ($Klucz -eq 'Status' -and (Test-JezykJestDiagnostyka)) {
+    if ($Klucz -eq 'Status' -and $Script:DiagnostykaTla -and @($Script:DiagnostykaTla).Count -gt 0) {
         $czesci += @('', 'Zadania w tle, które zatrzymały okno na dłużej niż ćwierć sekundy:',
                      '') + @($Script:DiagnostykaTla)
     }
 
-    if (@($czesci).Count -eq 0) { return }
+    if ($Klucz -eq 'Status' -and $Script:BledyOkna -and @($Script:BledyOkna).Count -gt 0) {
+        $czesci += @('', 'Błędy w procedurach okna w tej sesji:', '')
+        foreach ($blad in @($Script:BledyOkna)) {
+            $linia = if ($blad.Ile -gt 1) { '{0} (powtórzone {1} razy)' -f $blad.Linia, $blad.Ile }
+                     else                 { [string]$blad.Linia }
+            $czesci += $linia
+        }
+
+        # Plik wymieniony tylko wtedy, gdy zapis naprawde sie udal.
+        if ($Script:AwariaZapisana) {
+            $czesci += @('', ('Błędy, które przerwały procedurę, zapisano też w pliku {0}' -f $Script:AwariaZapisana))
+        }
+    }
+
+    return ($czesci -join [Environment]::NewLine)
+}
+
+# Pokazuje tresc spod "!" (klikniecie przycisku).
+function Show-JezykInformacja {
+    param([string]$Klucz)
+
+    $tresc = Get-JezykTrescInformacji $Klucz
+    if (-not $tresc) { return }
 
     $tytul = [string]$Script:TytulyInformacji[$Klucz]
     if (-not $tytul) { $tytul = 'Informacja' }
 
     [void][System.Windows.Forms.MessageBox]::Show(
-        ($czesci -join [Environment]::NewLine), ('Jeżyk - {0}' -f $tytul),
+        $tresc, ('Jeżyk - {0}' -f $tytul),
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information)
+}
+
+# Sciezka pliku bledow krytycznych w %TEMP% albo '' - bez TEMP nie ma gdzie pisac.
+function Get-JezykSciezkaAwarii {
+    if (-not $env:TEMP -or -not $Script:PlikAwarii) { return '' }
+    return (Join-Path $env:TEMP $Script:PlikAwarii)
+}
+
+# Stan procesu do wpisu awarii: wersja, start, pamiec prywatna i uchwyty (nieudany odczyt - "n/d").
+function Get-JezykStanProcesu {
+    $start   = 'n/d'
+    $pamiec  = 'n/d'
+    $uchwyty = 'n/d'
+
+    try {
+        $proces = [System.Diagnostics.Process]::GetCurrentProcess()
+        try { $start   = '{0:yyyy-MM-dd HH:mm:ss}' -f $proces.StartTime } catch { }
+        try { $pamiec  = '{0} MB' -f [math]::Round($proces.PrivateMemorySize64 / 1MB) } catch { }
+        try { $uchwyty = [string]$proces.HandleCount } catch { }
+    }
+    catch { }
+
+    'Wersja: {0}; działa od: {1}; pamięć prywatna: {2}; uchwyty: {3}' -f
+        [string]$Script:Config.Wersja, $start, $pamiec, $uchwyty
+}
+
+# Dopisuje wpis do pliku bledow krytycznych (%TEMP%, ostatnie $Script:LimitWpisowAwarii); $true po udanym zapisie.
+# Format naglowka taki sam jak w obsludze awarii procesu (Jezyk.Native w czesci 1).
+function Add-JezykWpisAwarii {
+    param([string]$Rodzaj, [string]$Tresc)
+
+    try {
+        $sciezka = Get-JezykSciezkaAwarii
+        if (-not $sciezka) { return $false }
+
+        $naglowek = '=== {0:yyyy-MM-dd HH:mm:ss} | PID {1} | {2} ===' -f (Get-Date), $PID, $Rodzaj
+        $wpis     = @($naglowek, $Tresc, (Get-JezykStanProcesu), '', '') -join [Environment]::NewLine
+
+        # Dotychczasowe wpisy dzielone po naglowku; ponad limit odpadaja najstarsze.
+        $wpisy = @()
+        if (Test-Path -LiteralPath $sciezka -ErrorAction Stop) {
+            $dotad = Get-Content -LiteralPath $sciezka -Raw -Encoding UTF8 -ErrorAction Stop
+            if ($dotad) {
+                $wpisy = @([regex]::Split($dotad, '(?m)^(?==== \d{4}-\d{2}-\d{2} )') | Where-Object { $_.Trim() })
+            }
+        }
+        $wpisy += $wpis
+        if ($wpisy.Count -gt $Script:LimitWpisowAwarii) {
+            $wpisy = @($wpisy | Select-Object -Last $Script:LimitWpisowAwarii)
+        }
+
+        Set-Content -LiteralPath $sciezka -Value ($wpisy -join '') -Encoding UTF8 -NoNewline -ErrorAction Stop
+        return $true
+    }
+    catch { return $false }
+}
+
+# Blad bez konsoli, do ktorej dalo sie go wypisac, albo wyjatek, ktory przerwal procedure okna - pod "!" przy Status.
+# -Krytyczny (procedura przerwana) dopisuje go takze do pliku awarii; obiekty niebedace bledem pomija.
+function Add-JezykBladOkna {
+    param($Blad, [switch]$Krytyczny)
+
+    # Uwaga: wolana z obslugi wyjatkow okna - wyjatek stad wyszedlby z ShowDialog i zamknal program (README: Pulapki).
+    # Znacznik wejscia: blad napisany w trakcie trafilby tu z powrotem przez zbieracz strumieni.
+    if ($Script:ZapisBleduOknaTrwa) { return }
+    $Script:ZapisBleduOknaTrwa = $true
+
+    try {
+        # Wyjatek PowerShella niesie rekord (miejsce w skrypcie, slad wywolan); rekord bledu niesie wyjatek.
+        $rekord  = $null
+        $wyjatek = $null
+        if ($Blad -is [System.Exception]) {
+            $wyjatek = $Blad
+            if ($Blad.PSObject.Properties['ErrorRecord'] -and $Blad.ErrorRecord) { $rekord = $Blad.ErrorRecord }
+        }
+        elseif ($Blad -and $Blad.PSObject.Properties['Exception'] -and $Blad.PSObject.Properties['InvocationInfo']) {
+            $rekord  = $Blad
+            $wyjatek = $Blad.Exception
+        }
+        if (-not $wyjatek) { return }
+
+        $czynnosc = if ($Krytyczny) { 'Procedura okna przerwana' } else { 'Procedura okna' }
+        $opis     = Get-JezykOpisBledu ([pscustomobject]@{ Exception = $wyjatek }) $czynnosc
+
+        # Miejsce: pierwsza ramka sladu wywolan (dokladna takze dla Write-Error), inaczej InvocationInfo.
+        # Ramka bywa po polsku ("wiersz") albo po angielsku ("line") - liczy sie plik i liczba.
+        $miejsce = ''
+        $ramka   = if ($rekord -and $rekord.ScriptStackTrace) { ([string]$rekord.ScriptStackTrace -split "`r?`n")[0] } else { '' }
+        if ($ramka -match '([^\\/]+\.ps1): \S+ (\d+)') {
+            $miejsce = ' ({0}, linia {1})' -f $Matches[1], $Matches[2]
+        }
+        elseif ($rekord -and $rekord.InvocationInfo -and $rekord.InvocationInfo.ScriptLineNumber -gt 0) {
+            $plik    = [System.IO.Path]::GetFileName([string]$rekord.InvocationInfo.ScriptName)
+            $miejsce = ' ({0}, linia {1})' -f $plik, $rekord.InvocationInfo.ScriptLineNumber
+        }
+
+        # Ten sam blad raz za razem (np. co takt zegara) podbija licznik zamiast dopisywac wiersze.
+        # Puste pozycje odsiane - @($null) ma jeden element.
+        $bledy    = @($Script:BledyOkna | Where-Object { $_ })
+        $podpis   = '{0}|{1}|{2}' -f $wyjatek.GetType().FullName, $wyjatek.Message, $miejsce
+        $ostatni  = $bledy | Select-Object -Last 1
+        $powtorka = ($ostatni -and $ostatni.Podpis -eq $podpis)
+
+        if ($powtorka) {
+            $ostatni.Ile = $ostatni.Ile + 1
+        }
+        else {
+            $bledy += [pscustomobject]@{
+                Podpis = $podpis
+                Linia  = '{0:HH:mm:ss}  {1}{2}' -f (Get-Date), $opis.Krotki, $miejsce
+                Ile    = 1
+            }
+            if ($bledy.Count -gt $Script:LimitBledowOkna) {
+                $bledy = @($bledy | Select-Object -Last $Script:LimitBledowOkna)
+            }
+            $Script:BledyOkna = $bledy
+        }
+
+        # Rejestr bywa pusty (blad przed zbudowaniem okna) - wpis do pliku i tak ma pasc.
+        $przycisk = if ($Script:Kontrolki) { $Script:Kontrolki['InfoStatus'] } else { $null }
+        if ($przycisk) { $przycisk.Visible = $true }
+
+        if ($Krytyczny -and -not $powtorka) {
+            $szczegoly = @($opis.Szczegoly)
+            if ($rekord -and $rekord.InvocationInfo -and $rekord.InvocationInfo.PositionMessage) {
+                $szczegoly += @('', [string]$rekord.InvocationInfo.PositionMessage)
+            }
+            if ($rekord -and $rekord.ScriptStackTrace) {
+                $szczegoly += @('', 'Ślad wywołań:', [string]$rekord.ScriptStackTrace)
+            }
+            elseif (-not $rekord) {
+                # Wyjatek .NET bez rekordu - pelny opis ze sladem stosu.
+                $szczegoly += @('', [string]$wyjatek)
+            }
+
+            if (Add-JezykWpisAwarii -Rodzaj 'Wyjątek przerwał procedurę okna' -Tresc ($szczegoly -join [Environment]::NewLine)) {
+                $Script:AwariaZapisana = Get-JezykSciezkaAwarii
+            }
+        }
+    }
+    catch {
+        # Obsluga bledu nie ma prawa sama sie wywrocic - jak Register-JezykBladCzesci.
+    }
+    finally {
+        $Script:ZapisBleduOknaTrwa = $false
+    }
+}
+
+# Zamkniecie okna nie przez operatora (powod z FormClosing jako napis) - wpis do pliku awarii.
+function Write-JezykZamkniecie {
+    param([string]$Powod)
+
+    try {
+        if (-not $Powod -or $Powod -eq 'UserClosing') { return }
+
+        # Wylogowanie potrafi wyslac FormClosing dwa razy - drugi wpis niczego nie dodaje.
+        if ($Script:ZamkniecieZapisane -eq $Powod) { return }
+
+        $opis = switch ($Powod) {
+            'WindowsShutDown'    { 'Okno zamknął system Windows: wylogowanie, ponowne uruchomienie albo wyłączenie komputera (np. po aktualizacjach).' }
+            'TaskManagerClosing' { 'Okno zamknął inny program: Menedżer zadań, polecenie taskkill (bez /f) albo narzędzie administracyjne.' }
+            default              { 'Okno zamknięto bez udziału operatora (powód podany przez Windows: {0}).' -f $Powod }
+        }
+
+        if (Add-JezykWpisAwarii -Rodzaj 'Okno zamknięte nie przez operatora' -Tresc $opis) {
+            $Script:ZamkniecieZapisane = $Powod
+        }
+    }
+    catch {
+        # Wyjatek w FormClosing przerwalby zamykanie okna - zapis sladu nie moze do tego doprowadzic.
+    }
 }
 
 # Wynik obejscia kontrolerow do pola daty i jego "!"; domena z uchwytu zadania, nie z biezacego wyboru.
