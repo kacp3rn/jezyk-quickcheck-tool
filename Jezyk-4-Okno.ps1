@@ -1023,20 +1023,22 @@ function Set-JezykWidok {
 
 
 # --- ZADANIA W TLE -------------------------------------------------------------------
-# Szesc niezaleznych zadan (Logowanie, Komputer, Uzytkownik, Ping, Numer, Dysk), kazde z wlasnym
-# licznikiem pokolen; wynik odbiera zegar WinForms na watku interfejsu (README: Praca w tle).
+# Siedem niezaleznych zadan (Logowanie, Komputer, Uzytkownik, Ping, Numer, Dysk, Grupa), kazde
+# z wlasnym licznikiem pokolen; wynik odbiera zegar WinForms na watku interfejsu (README: Praca w tle).
 $Script:PokolenieLogowania  = 0
 $Script:PokolenieKomputera  = 0
 $Script:PokolenieUzytkownika = 0
 $Script:PokoleniePingu      = 0
 $Script:PokolenieNumeru     = 0
 $Script:PokolenieDysku      = 0
+$Script:PokolenieGrupy      = 0
 $Script:ZadanieLogowania    = $null
 $Script:ZadanieKomputera    = $null
 $Script:ZadanieUzytkownika  = $null
 $Script:ZadaniePingu        = $null
 $Script:ZadanieNumeru       = $null
 $Script:ZadanieDysku        = $null
+$Script:ZadanieGrupy        = $null
 $Script:ZegarTla            = $null
 
 # Czy Status niesie notke "trwa szukanie po numerze" (a nie odpowiedz); zerowany przy kazdym szukaniu.
@@ -1053,6 +1055,9 @@ $Script:StatusCzekaNaDysk    = $false
 
 # Zdanie sprzed notki "Łączenie" - wraca przy rezygnacji z okna poswiadczen.
 $Script:StatusPrzedLaczeniem = ''
+
+# Okno grup, ktorego Status niesie notke "Sprawdzanie" ($null - zadne; okno nie jest w rejestrze kontrolek).
+$Script:OknoSprawdzaniaGrupy = $null
 
 # Numer klatki kropek - wspolny dla wszystkich notek.
 $Script:KlatkaKropek        = 0
@@ -1117,7 +1122,7 @@ $Script:LogowaniePrzyblizone = $null
 
 # Sklada (raz) tekst skryptu dla przestrzeni w tle: KOMPLET wstrzykiwanych funkcji, param() pierwsze.
 function New-JezykSkryptTla {
-    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer', 'Dysk')][string]$Zadanie)
+    param([ValidateSet('Logowanie', 'Komputer', 'Uzytkownik', 'Ping', 'Numer', 'Dysk', 'Grupa')][string]$Zadanie)
 
     if ($Script:SkryptyTla.ContainsKey($Zadanie)) { return $Script:SkryptyTla[$Zadanie] }
 
@@ -1159,6 +1164,16 @@ function New-JezykSkryptTla {
 
         $naglowek  = 'param($Netbios, $Litera)'
         $wywolanie = 'Connect-JezykUdzialDysku -Netbios $Netbios -Litera $Litera'
+    }
+    elseif ($Zadanie -eq 'Grupa') {
+        # "Sprawdz nazwy" w oknie grup - drugi przebieg (cn=*...*) przeglada cala domene.
+        $funkcje = 'Get-JezykFrazaLdap', 'Get-JezykOpisBledu', 'Get-JezykFolderAd',
+                   'Get-JezykPodpisyGrup', 'Find-JezykGrupyPoNazwie'
+
+        # Import modulu AD bezwarunkowo - Get-ADGroup jest tu jedyna droga.
+        $naglowek  = 'param($Fraza, $Limit, $Serwer)'
+        $naglowek += "`r`n" + 'Import-Module ActiveDirectory -ErrorAction SilentlyContinue'
+        $wywolanie = 'Find-JezykGrupyPoNazwie -Fraza $Fraza -Limit $Limit -Serwer $Serwer'
     }
     elseif ($Zadanie -eq 'Logowanie') {
         $funkcje = 'Test-JezykNazwaHosta', 'Test-JezykDn',
@@ -1480,6 +1495,47 @@ function Start-JezykZadanieDysku {
     }
 }
 
+# Uruchamia w tle "Sprawdz nazwy" okna grup; okno jedzie w uchwycie - odpowiedz wie, dokad wrocic.
+function Start-JezykZadanieGrupy {
+    param($Okno, [string]$Fraza, [int]$Limit)
+
+    Stop-JezykZadanieGrupy
+
+    $Script:PokolenieGrupy++
+    $mojePokolenie = $Script:PokolenieGrupy
+
+    try {
+        $zegar = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $zadanie = New-JezykPrzestrzenTla (New-JezykSkryptTla 'Grupa')
+        [void]$zadanie.Ps.AddArgument($Fraza).
+                          AddArgument($Limit).
+                          AddArgument([string]$Script:Config.Domena)
+
+        $Script:ZadanieGrupy = [pscustomobject]@{
+            Ps          = $zadanie.Ps
+            Przestrzen  = $zadanie.Przestrzen
+            Uchwyt      = $zadanie.Ps.BeginInvoke()
+            Pokolenie   = $mojePokolenie
+            Okno        = $Okno
+            Fraza       = $Fraza
+            Limit       = $Limit
+            Przerwane   = $false
+            PorzuconeO  = $null
+        }
+
+        Add-JezykDiagnostyke 'uruchomienie zadania sprawdzania nazwy grupy' $zegar.ElapsedMilliseconds
+
+        if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
+    }
+    catch {
+        # Nieudane uruchomienie to przerwanie, nie pusty wynik - ta sama droga co odpowiedz.
+        Update-JezykNazwaGrupyWTle -Okno $Okno -Fraza $Fraza -Limit $Limit -Wynik ([pscustomobject]@{
+            Trafienia = @(); ZaDuzo = $false; Przerwane = $true
+            Powod     = 'Nie udało się uruchomić sprawdzania nazwy grupy: {0}' -f $_.Exception.Message })
+    }
+}
+
 # Odbiera wynik zadania daty, jesli gotowy; wynik z innego pokolenia odrzucany.
 function Receive-JezykZadanieLogowania {
     $zadanie = $Script:ZadanieLogowania
@@ -1611,6 +1667,40 @@ function Receive-JezykZadanieDysku {
     Update-JezykDyskWTle -Wynik $wynik
 }
 
+# Odbiera odpowiedz "Sprawdz nazwy" - zadanie zdjete z rejestru PRZED renderowaniem.
+# Uwaga: okno wyboru grupy pompuje takty zegara (README: Kod > Jezyk-4-Okno > Zadania w tle).
+function Receive-JezykZadanieGrupy {
+    $zadanie = $Script:ZadanieGrupy
+    if (-not $zadanie -or -not $zadanie.Uchwyt.IsCompleted) { return }
+
+    $Script:ZadanieGrupy = $null
+
+    $wynik = $null
+    try {
+        $dane = @($zadanie.Ps.EndInvoke($zadanie.Uchwyt))
+        if ($dane.Count -gt 0) { $wynik = $dane[0] }
+    }
+    catch {
+        $wynik = [pscustomobject]@{
+            Trafienia = @(); ZaDuzo = $false; Przerwane = $true
+            Powod     = 'Sprawdzanie nazwy grupy zawiodło: {0}' -f $_.Exception.Message }
+    }
+
+    Stop-JezykZadanieTla $zadanie
+
+    if ($zadanie.Pokolenie -ne $Script:PokolenieGrupy) { return }
+
+    # Pusta odpowiedz tez jest odpowiedzia - notka nie moze zostac.
+    if ($null -eq $wynik) {
+        $wynik = [pscustomobject]@{
+            Trafienia = @(); ZaDuzo = $false; Przerwane = $true
+            Powod     = 'Zadanie w tle zakończyło się, nie oddając wyniku.' }
+    }
+
+    Update-JezykNazwaGrupyWTle -Okno $zadanie.Okno -Wynik $wynik `
+                               -Fraza ([string]$zadanie.Fraza) -Limit ([int]$zadanie.Limit)
+}
+
 # Sprzata zadanie: zakonczone zwalnia od razu, biegnace przerywa asynchronicznie (BeginStop, raz)
 # i odklada na liste porzuconych - Stop() zamrozilby okno.
 function Stop-JezykZadanieTla {
@@ -1705,7 +1795,7 @@ function Clear-JezykZadaniaPorzucone {
     $Script:ZadaniaSpisane = $czekaja
 }
 
-# Porzucenie zadania danego rodzaju (szesc blizniakow ponizej).
+# Porzucenie zadania danego rodzaju (siedem blizniakow ponizej).
 # $null najpierw - ponowne wejscie nie wezmie tego samego obiektu drugi raz.
 function Stop-JezykZadanieLogowania {
     if (-not $Script:ZadanieLogowania) { return }
@@ -1749,6 +1839,13 @@ function Stop-JezykZadanieDysku {
     Stop-JezykZadanieTla $zadanie
 }
 
+function Stop-JezykZadanieGrupy {
+    if (-not $Script:ZadanieGrupy) { return }
+    $zadanie = $Script:ZadanieGrupy
+    $Script:ZadanieGrupy = $null
+    Stop-JezykZadanieTla $zadanie
+}
+
 # Sprzatanie przy zamykaniu okna; zegar zatrzymywany na koncu (porzucenie zadania go uruchamia).
 function Stop-JezykZadaniaTla {
     Stop-JezykZadanieLogowania
@@ -1757,6 +1854,7 @@ function Stop-JezykZadaniaTla {
     Stop-JezykZadaniePingu
     Stop-JezykZadanieNumeru
     Stop-JezykZadanieDysku
+    Stop-JezykZadanieGrupy
 
     # Ostatnie podejscie do porzuconych; reszta odchodzi razem z procesem.
     Clear-JezykZadaniaPorzucone
@@ -2052,12 +2150,15 @@ function Show-JezykGrupyAd {
             PoleFiltra    = $txtFiltr
             Lista         = $lista
             PoleGrupy     = $txtGrupa
+            PrzyciskSprawdz = $btnSprawdz
             PrzyciskDodaj = $btnDodaj
             PrzyciskUsun  = $btnUsun
             Notka         = $txtNotka
             PrzyciskInfo  = $btnInfo
             Szczegoly     = ''
             Wybrana       = $null
+            # Czy "Sprawdz nazwy" czeka na odpowiedz z tla (ustawia Set-JezykSprawdzanieGrupy).
+            Sprawdzanie   = $false
             # Pary widoczne teraz na liscie, w jej kolejnosci (wypelnia Update-JezykFiltrGrup).
             WidoczneGrupy = @()
         }
@@ -2204,8 +2305,13 @@ function Show-JezykGrupyAd {
         [void]$okno.ShowDialog($Script:Kontrolki.Okno)
     }
     finally {
-        # ShowDialog nie zwalnia okna sam - Dispose zwalnia uchwyty.
-        if ($okno) { $okno.Dispose() }
+        if ($okno) {
+            # Odpowiedz "Sprawdz nazwy" nie ma juz dokad wrocic - notka i zadanie gasna przed Dispose.
+            Set-JezykSprawdzanieGrupy -Okno $okno -Wylacz
+            Stop-JezykZadanieGrupy
+            # ShowDialog nie zwalnia okna sam - Dispose zwalnia uchwyty.
+            $okno.Dispose()
+        }
     }
 }
 
@@ -3096,6 +3202,7 @@ function New-JezykForm {
         Receive-JezykZadaniePingu
         Receive-JezykZadanieNumeru
         Receive-JezykZadanieDysku
+        Receive-JezykZadanieGrupy
 
         # Kropki PO wszystkich Receive - odpowiedz z tego taktu zdazyla zgasic notke.
         Update-JezykKropkiSprawdzania
@@ -3106,6 +3213,7 @@ function New-JezykForm {
         if (-not $Script:ZadanieLogowania -and -not $Script:ZadanieKomputera -and
             -not $Script:ZadanieUzytkownika -and -not $Script:ZadaniePingu -and
             -not $Script:ZadanieNumeru -and -not $Script:ZadanieDysku -and
+            -not $Script:ZadanieGrupy -and
             @($Script:ZadaniaPorzucone).Count -eq 0) {
             $Script:ZegarTla.Stop()
         }

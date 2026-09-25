@@ -810,7 +810,7 @@ function Set-JezykNotkeLaczenia {
 # Zgaszony marker zatrzymuje wszystko - odpowiedz z tego samego taktu ma ostatnie slowo.
 function Update-JezykKropkiSprawdzania {
     if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie -and
-        -not $Script:StatusCzekaNaDysk) { return }
+        -not $Script:StatusCzekaNaDysk -and -not $Script:OknoSprawdzaniaGrupy) { return }
 
     $klatka = [int][math]::Floor($Script:KlatkaKropek / $Script:TaktowNaKlatkeKropek)
     $kropki = '.' * (1 + ($klatka % 3))
@@ -836,6 +836,12 @@ function Update-JezykKropkiSprawdzania {
     # Notka laczenia - tylko pole Status: widoku komputera (zakrywa zdanie do odtworzenia).
     if ($Script:StatusCzekaNaDysk -and $k.TxtKomputerStatus) {
         $k.TxtKomputerStatus.Text = 'Łączenie' + $kropki
+    }
+
+    # Notka "Sprawdz nazwy" - pole Status okna grup (okno na zadanie, poza rejestrem kontrolek).
+    if ($Script:OknoSprawdzaniaGrupy) {
+        $stan = $Script:OknoSprawdzaniaGrupy.Tag
+        if ($stan -and $stan.Notka) { $stan.Notka.Text = 'Sprawdzanie' + $kropki }
     }
 }
 
@@ -1282,13 +1288,45 @@ function Update-JezykGrupyWOknie {
     Set-JezykPrzyciskGrupy $Script:OstatnieKonto
 }
 
-# Obsluga "Sprawdz nazwy": rozpoznaje w AD wpisana nazwe grupy (synchronicznie - okno jest modalne).
+# Notka "Sprawdzanie" w Status okna grup i blokada wiersza nazwy na czas zadania - jedna funkcja na oba.
+# -Wylacz nie rusza tresci notki: wolajacy wpisuje zaraz odpowiedz.
+function Set-JezykSprawdzanieGrupy {
+    param($Okno, [switch]$Wylacz)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    $stan.Sprawdzanie            = -not $Wylacz
+    $Script:OknoSprawdzaniaGrupy = if ($Wylacz) { $null } else { $Okno }
+
+    # Pole tylko do odczytu, nie wyszarzone - odpowiedz wpisze do niego nazwe z AD.
+    if ($stan.PoleGrupy)       { $stan.PoleGrupy.ReadOnly       = -not $Wylacz }
+    if ($stan.PrzyciskSprawdz) { $stan.PrzyciskSprawdz.Enabled = [bool]$Wylacz }
+    # "Usun z grupy" czeka razem z wierszem - jego komunikat zakrylyby kropki.
+    Set-JezykPrzyciskUsunGrupe -Okno $Okno
+
+    if ($Wylacz) { return }
+
+    # Stary "!" nie moze stac przy kropkach.
+    Set-JezykNotkeGrup -Okno $Okno -Tekst ''
+
+    $Script:KlatkaKropek = 0
+
+    # Pierwsza klatka od razu - odpowiedz bywa krotsza niz takt zegara.
+    Update-JezykKropkiSprawdzania
+}
+
+# Obsluga "Sprawdz nazwy": zapala notke i zleca rozpoznanie nazwy grupy zadaniu w tle.
 function Invoke-JezykSprawdzenieNazwyGrupy {
     param($Okno)
 
     if (-not $Okno) { return }
     $stan = $Okno.Tag
     if (-not $stan) { return }
+
+    # Enter w polu dochodzi tu takze w trakcie sprawdzania - drugie zapytanie o to samo.
+    if ($stan.Sprawdzanie) { return }
 
     # Poprzednie rozpoznanie traci waznosc od razu, a nie po odpowiedzi.
     $stan.Wybrana = $null
@@ -1302,24 +1340,32 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
         return
     }
 
-    $ile = [int]$Script:Config.LimitPodpowiedziGrup
+    # Notka przed zadaniem - pierwsza klatka stoi, zanim zadanie ruszy.
+    Set-JezykSprawdzanieGrupy -Okno $Okno
+    Start-JezykZadanieGrupy -Okno $Okno -Fraza $fraza -Limit ([int]$Script:Config.LimitPodpowiedziGrup)
+}
 
-    $Okno.UseWaitCursor = $true
-    try {
-        $wynik = Find-JezykGrupyPoNazwie -Fraza $fraza -Limit $ile -Serwer ([string]$Script:Config.Domena)
-    }
-    finally { $Okno.UseWaitCursor = $false }
+# Odpowiedz "Sprawdz nazwy" z tla; notka i blokada gasna przed rozgalezieniem, wiec w kazdej galezi.
+function Update-JezykNazwaGrupyWTle {
+    param($Okno, $Wynik, [string]$Fraza, [int]$Limit)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    # Przed czymkolwiek innym - nastepny takt zegara nadpisalby odpowiedz kropkami.
+    Set-JezykSprawdzanieGrupy -Okno $Okno -Wylacz
 
     # Nieudane sprawdzenie odroznialne od pustego wyniku - inaczej ktos zalozylby grupe drugi raz.
-    if ($wynik.Przerwane) {
+    if ($Wynik.Przerwane) {
         Set-JezykNotkeGrup -Okno $Okno -Tekst 'Nie udało się sprawdzić nazwy grupy w AD.' `
-                           -Szczegoly ([string]$wynik.Powod)
+                           -Szczegoly ([string]$Wynik.Powod)
         return
     }
 
-    $trafienia = @($wynik.Trafienia)
+    $trafienia = @($Wynik.Trafienia)
     if ($trafienia.Count -eq 0) {
-        $pusto = 'Nie znaleziono grupy pasującej do „{0}”.' -f $fraza
+        $pusto = 'Nie znaleziono grupy pasującej do „{0}”.' -f $Fraza
         Set-JezykNotkeGrup -Okno $Okno -Tekst $pusto
         return
     }
@@ -1344,9 +1390,9 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
 
     # Pole dostaje nazwe, notka podpis (z folderem, gdy nazwa sie powtarza).
     $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Podpis
-    if ($wynik.ZaDuzo) {
+    if ($Wynik.ZaDuzo) {
         # Zdanie uniewazniajace poprzednie ZASTEPUJE je, a nie staje za nim.
-        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $ile, $wybrana.Podpis
+        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $Limit, $wybrana.Podpis
     }
     Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst
 }
@@ -1374,7 +1420,8 @@ function Set-JezykPrzyciskUsunGrupe {
     if (-not $stan -or -not $stan.PrzyciskUsun) { return }
 
     $grupa = Get-JezykZaznaczonaGrupe -Okno $Okno
-    $stan.PrzyciskUsun.Enabled = ([bool]$grupa -and [bool]$grupa.Dn -and
+    # W trakcie "Sprawdz nazwy" wyszarzony - komunikat usuniecia zakrylyby kropki.
+    $stan.PrzyciskUsun.Enabled = ([bool]$grupa -and [bool]$grupa.Dn -and -not $stan.Sprawdzanie -and
                                   (Test-JezykMoznaZarzadzacGrupami $Script:OstatnieKonto))
 }
 
