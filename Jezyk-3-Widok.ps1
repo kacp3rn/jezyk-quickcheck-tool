@@ -207,6 +207,7 @@ function Clear-JezykKonto {
     Set-JezykInfo 'KomputerWspoldzielony' ''
     Set-JezykInfo 'Status'                ''
     Set-JezykInfo 'Logowanie'             ''
+    Set-JezykInfo 'LogowanieNiepelne'     ''
     # "!" przy adresie MAC tez nalezy do poprzedniego konta.
     Set-JezykInfo 'Mac'                   ''
 
@@ -684,6 +685,7 @@ function Set-JezykPoleLogowaniaBezTla {
     Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
 
     Set-JezykInfo 'Logowanie' $(if ($Blad) { 'Uściślenie daty nie doszło do skutku: {0}' -f $Blad } else { '' })
+    Set-JezykInfo 'LogowanieNiepelne' ''
 
     $k = $Script:Kontrolki
     if (-not $k.TxtOstatnieLogowanie) { return }
@@ -1046,7 +1048,10 @@ function Update-JezykLogowanieWTle {
     # Niepelne pokrycie mowi o sobie w samym polu i pod jego "!" - nie w cudzym polu Status.
     $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Wynik $Logowanie `
                                                            -Przyblizona $Script:LogowaniePrzyblizone
-    Set-JezykInfo 'Logowanie' (Get-JezykOpisLogowania -Wynik $Logowanie -Przyblizona $Script:LogowaniePrzyblizone)
+    # Czerwony tylko gdy uscislenie nie doszlo do skutku; niepelne pokrycie - niebieski. Nigdy oba.
+    $opis = Get-JezykOpisLogowania -Wynik $Logowanie -Przyblizona $Script:LogowaniePrzyblizone
+    Set-JezykInfo 'Logowanie'         $(if ($Logowanie.Blad) { $opis } else { '' })
+    Set-JezykInfo 'LogowanieNiepelne' $(if ($Logowanie.Blad) { '' } else { $opis })
 
     # Odrzucona nazwa kontrolera to usterka konfiguracji, nie sieci - dopisek w Status.
     if (@($Logowanie.Odrzucone).Count -gt 0 -and $k.TxtStatus.Text -notmatch 'Pominięte') {

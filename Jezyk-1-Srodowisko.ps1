@@ -449,6 +449,8 @@ $Script:Informacje = @{}
 $Script:TytulyInformacji = @{
     Status                = 'Status'
     Logowanie             = 'Ostatnie logowanie'
+    # Niebieski "!" przy tej samej dacie (pokrycie niepelne) - tytul nazywa pole, jak wyzej.
+    LogowanieNiepelne     = 'Ostatnie logowanie'
     Komputer              = 'Ostatnio używany komputer'
     Uzytkownik            = 'Ostatnio zalogowany użytkownik'
     KomputerWspoldzielony = 'Komputer współdzielony'

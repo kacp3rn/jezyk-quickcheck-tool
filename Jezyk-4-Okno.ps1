@@ -2799,8 +2799,10 @@ function New-JezykForm {
     # Cala szerokosc, bo pole niesie dwie daty naraz.
     $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
     $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 7) $C
-    # Czerwony "!" - data niepelna albo nieuscislona (nie wszystkie kontrolery odpowiedzialy).
+    # Czerwony "!" - uscislenie nie doszlo do skutku; niebieski - data uscislona, ale nie ze wszystkich kontrolerow.
     $btnInfoLogowanie     = New-JezykPrzyciskInfo 'Logowanie'
+    $btnInfoLogowanieNiepelne = New-JezykPrzyciskInfo 'LogowanieNiepelne'
+    Set-JezykWyglad $btnInfoLogowanieNiepelne 'InfoNiebieski' -Rejestruj
 
     # "Status:" ma dwie linijki - niesie najdluzsze komunikaty.
     $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 8)
@@ -2814,7 +2816,7 @@ function New-JezykForm {
         $lblHasloWygasa, $txtHasloWygasa, $lblKontoWygasa, $txtKontoWygasa,
         $lblOstatniaZmiana, $txtOstatniaZmiana, $lblKontoUtworzono, $txtKontoUtworzono,
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
-        $lblOstatnieLogowanie, $txtOstatnieLogowanie, $btnInfoLogowanie,
+        $lblOstatnieLogowanie, $txtOstatnieLogowanie, $btnInfoLogowanie, $btnInfoLogowanieNiepelne,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
         $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
         $lblKomputerMac, $txtKomputerMac, $btnInfoMac,
@@ -3041,7 +3043,7 @@ function New-JezykForm {
     # Na samym koncu wyrownania - pion liczony z czcionki etykiet.
     foreach ($info in @($btnInfoStatus, $btnInfoLogowanie, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
-                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
+                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny, $btnInfoLogowanieNiepelne)) {
         # Pogrubiona czcionka z czcionki okna.
         $info.Font = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size, [System.Drawing.FontStyle]::Bold)
 
@@ -3065,11 +3067,12 @@ function New-JezykForm {
     # Wyzsze przyciski zsuwamy razem, zeby "Polacz" nie wszedl na pole wiersz wyzej.
     Set-JezykPonizejPola @($btnPolacz, $btnPinguj) $txtImieNazwisko $odstepPionowyPolacz
 
-    # Kazdy "!" konczy sie razem ze swoim polem; czerwony i niebieski przy maszynie nigdy razem.
+    # Kazdy "!" konczy sie razem ze swoim polem; czerwony i niebieski przy maszynie i przy dacie logowania nigdy razem.
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputer              $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoKomputerWspoldzielony $lblKomputerUzytkownika $txtKomputerUzytkownika
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoMac                   $lblKomputerMac         $txtKomputerMac
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoLogowanie             $lblOstatnieLogowanie   $txtOstatnieLogowanie
+    Set-JezykPrzyciskPrzyEtykiecie $btnInfoLogowanieNiepelne     $lblOstatnieLogowanie   $txtOstatnieLogowanie
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoStatus                $lblStatus              $txtStatus
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoUzytkownik            $lblKompUzytkownik      $txtKompUzytkownik
     Set-JezykPrzyciskPrzyEtykiecie $btnInfoTworca                $lblKompTworca          $txtKompTworca
@@ -3177,6 +3180,7 @@ function New-JezykForm {
         # Przyciski "!" - klucze "Info" + klucz z Set-JezykInfo (skleja je sama).
         InfoStatus                = $btnInfoStatus
         InfoLogowanie             = $btnInfoLogowanie
+        InfoLogowanieNiepelne     = $btnInfoLogowanieNiepelne
         InfoKomputer              = $btnInfoKomputer
         InfoUzytkownik            = $btnInfoUzytkownik
         InfoTworca                = $btnInfoTworca
@@ -3250,7 +3254,7 @@ function New-JezykForm {
     # Jedna procedura dla wszystkich "!" - klucz z Tag przycisku.
     foreach ($info in @($btnInfoStatus, $btnInfoLogowanie, $btnInfoKomputer, $btnInfoUzytkownik,
                         $btnInfoKomputerWspoldzielony, $btnInfoTworca, $btnInfoMac,
-                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny)) {
+                        $btnInfoMacMaszyny, $btnInfoStatusMaszyny, $btnInfoLogowanieNiepelne)) {
         $info.Add_Click({ Show-JezykInformacja ([string]$this.Tag) })
     }
 
