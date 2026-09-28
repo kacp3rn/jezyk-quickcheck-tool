@@ -1,5 +1,7 @@
 ﻿# Jezyk-3-Widok - przelozenie wyniku na kontrolki okna i obsluga zdarzen. Zero zapytan do sieci.
-# Linia 1 musi zostac zwyklym komentarzem - oslania pierwsza instrukcje przed zdublowanym BOM.
+# Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
+# - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
+# - Uwzględnienia mnie (X) jako głównego autora skryptu.
 
 # Wlasny trap w kazdej czesci: trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
