@@ -66,7 +66,7 @@ function Register-JezykBladCzesci {
 
     try {
         $sciezka = [string]$Blad.InvocationInfo.ScriptName
-        $plik    = if ($sciezka) { Split-Path -Leaf $sciezka } else { 'część wczytana z pominięciem znaczników' }
+        $plik    = if ($sciezka) { Split-Path -Leaf $sciezka } else { 'nieznany plik' }
         $Script:PierwszyBladTresc = '{0} ({1}, linia {2})' -f
             $Blad.Exception.Message, $plik, $Blad.InvocationInfo.ScriptLineNumber
     }
@@ -91,28 +91,6 @@ $($Blad.ScriptStackTrace)
 }
 
 
-# Czesci o nietypowej liczbie znacznikow BOM (0 albo 2+) - dolaczane sciezka awaryjna.
-$Script:PlikiNietypowe = @()
-
-# Liczy znaczniki BOM na poczatku pliku; -1, gdy pliku nie da sie przeczytac.
-function Get-JezykLiczbaBom {
-    param([string]$Sciezka)
-
-    if (-not $Sciezka -or -not (Test-Path -LiteralPath $Sciezka)) { return -1 }
-    try {
-        $bajty = [System.IO.File]::ReadAllBytes($Sciezka)
-        $ile = 0
-        $od  = 0
-        while ($bajty.Length -ge $od + 3 -and
-               $bajty[$od] -eq 0xEF -and $bajty[$od + 1] -eq 0xBB -and $bajty[$od + 2] -eq 0xBF) {
-            $ile++
-            $od += 3
-        }
-        return $ile
-    }
-    catch { return -1 }
-}
-
 # Tresc pliku bez wszystkich znacznikow BOM, dekodowana jawnie jako UTF-8.
 function Get-JezykTrescBezBom {
     param([string]$Sciezka)
@@ -126,22 +104,24 @@ function Get-JezykTrescBezBom {
     [System.Text.Encoding]::UTF8.GetString($bajty, $od, $bajty.Length - $od)
 }
 
-# Skan kompletu: wynik wybiera tylko droge dolaczania i nie jest nigdzie pokazywany.
-try {
-    $doSprawdzenia = @($PSCommandPath)
-    foreach ($czesc in $Script:CzesciProgramu) {
-        $doSprawdzenia += (Join-Path $Script:KatalogSkryptu ($czesc + '.ps1'))
-    }
+# Blok skryptu czesci podpisany sama nazwa pliku - kod zyje w pamieci, bez powiazania z katalogiem wdrozenia.
+# Uwaga: blok z pelna sciezka pyta o plik przy kazdej pierwszej kompilacji (README: Pulapki).
+function Get-JezykBlokCzesci {
+    param([string]$Sciezka, [string]$Nazwa)
 
-    foreach ($plik in $doSprawdzenia) {
-        $ile = Get-JezykLiczbaBom $plik
-        if ($ile -eq 0 -or $ile -ge 2) { $Script:PlikiNietypowe += (Split-Path -Leaf $plik) }
-    }
+    $tokeny = $null
+    $bledy  = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput(
+        (Get-JezykTrescBezBom $Sciezka), $Nazwa, [ref]$tokeny, [ref]$bledy)
+
+    # Blad skladni odrzuca cala czesc - tak samo jak przy dolaczaniu pliku z dysku.
+    if ($bledy.Count -gt 0) { throw [System.Management.Automation.ParseException]::new($bledy) }
+    $ast.GetScriptBlock()
 }
-catch { }
 
 
 # Dolaczenie czesci - kazda we wlasnym try/catch, bo trap wznowilby prace dopiero za petla.
+# Kropka stoi tutaj, na poziomie skryptu: postawiona w funkcji zamknelaby czesc w jej zakresie.
 foreach ($czesc in $Script:CzesciProgramu) {
     $nazwaPliku    = $czesc + '.ps1'
     $sciezkaCzesci = Join-Path $Script:KatalogSkryptu $nazwaPliku
@@ -151,14 +131,7 @@ foreach ($czesc in $Script:CzesciProgramu) {
         continue
     }
 
-    if ($Script:PlikiNietypowe -contains $nazwaPliku) {
-        # Sciezka awaryjna: bajty dekodowane jawnie jako UTF-8; bledy z niej nie niosa nazwy pliku.
-        try   { . ([scriptblock]::Create((Get-JezykTrescBezBom $sciezkaCzesci))) }
-        catch { Register-JezykBladCzesci $_ }
-        continue
-    }
-
-    try   { . $sciezkaCzesci }
+    try   { . (Get-JezykBlokCzesci $sciezkaCzesci $nazwaPliku) }
     catch { Register-JezykBladCzesci $_ }
 }
 
@@ -334,7 +307,7 @@ Szczegóły techniczne: $($_.Exception.Message)
         [void]$form.ShowDialog()
 
         $form.Dispose()
-    } *>&1 | ForEach-Object { Add-JezykBladOkna $_ }
+    } *>&1 | Add-JezykBladOknaZPotoku
 }
 catch {
     Show-JezykBladStartu -Blad $_
