@@ -161,6 +161,42 @@ function Set-JezykKolorPola {
     }
 }
 
+# Podwojne klikniecie w polu: cale slowo pod kursorem - w "DOMENA\login" sam login, adres IP w calosci.
+# Uwaga: natywne zaznaczenie jest tylko kotwica, przeciagniecia nie zwijamy (README: Kod > Jezyk-3-Widok).
+function Select-JezykSlowoPola {
+    param($Pole)
+
+    $tekst    = [string]$Pole.Text
+    $poczatek = [int]$Pole.SelectionStart
+    $koniec   = [Math]::Min($poczatek + [int]$Pole.SelectionLength, $tekst.Length)
+
+    # Separatory obok bialych znakow (z cudzyslowami polskimi); ogon odpada tylko z konca slowa.
+    $separatory    = '\/,;()"' + [char]0x201E + [char]0x201D
+    $ogon          = '.:' + [char]0x2026
+    $jestSeparator = { param([char]$Znak) [char]::IsWhiteSpace($Znak) -or $separatory.IndexOf($Znak) -ge 0 }
+
+    # Kotwica: pierwszy znak natywnego zaznaczenia nalezacy do slowa.
+    $kotwica = $poczatek
+    while ($kotwica -lt $koniec -and (& $jestSeparator $tekst[$kotwica])) { $kotwica++ }
+    if ($kotwica -ge $koniec) { return }
+
+    $start = $kotwica
+    while ($start -gt 0 -and -not (& $jestSeparator $tekst[$start - 1])) { $start-- }
+    $stop = $kotwica + 1
+    while ($stop -lt $tekst.Length -and -not (& $jestSeparator $tekst[$stop])) { $stop++ }
+
+    # Zaznaczenie siega nastepnego slowa - operator przeciagnal, jego wybor zostaje.
+    for ($i = $stop; $i -lt $koniec; $i++) {
+        if (-not (& $jestSeparator $tekst[$i])) { return }
+    }
+
+    while ($stop -gt $start -and $ogon.IndexOf($tekst[$stop - 1]) -ge 0) { $stop-- }
+    # Klikniecie w sam ogon (kropka konczaca zdanie) - zaznaczenie zostaje natywne.
+    if ($kotwica -ge $stop) { return }
+
+    $Pole.Select($start, $stop - $start)
+}
+
 # Czysci widok konta do stanu "nic nie wiadomo" - na poczatku kazdego wyniku i przy zmianie trybu.
 function Clear-JezykKonto {
     $k = $Script:Kontrolki

@@ -856,6 +856,7 @@ function New-JezykPole {
     $txt.Width     = $Szerokosc
     $txt.ReadOnly  = $true
     Set-JezykWyglad $txt 'Pole' -Rejestruj
+    $txt.Add_MouseDoubleClick({ Select-JezykSlowoPola $this })
     $txt
 }
 
@@ -2152,6 +2153,7 @@ function Show-JezykGrupyAd {
         $txtNotka.ReadOnly  = $true
         $txtNotka.Multiline = $true
         Set-JezykWyglad $txtNotka 'Pole'
+        $txtNotka.Add_MouseDoubleClick({ Select-JezykSlowoPola $this })
 
         $lblNotka.Visible = $domenaZZarzadzaniem
         $txtNotka.Visible = $domenaZZarzadzaniem
