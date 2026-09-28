@@ -1,26 +1,22 @@
-﻿# Jezyk-3-Widok - przelozenie wyniku na kontrolki okna. Zero zapytan do sieci.
-# TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM - oslania pierwsza instrukcje przed
-# zdublowanym znacznikiem BOM. Powod opisany w Kod-Jezyk.ps1.
+﻿# Jezyk-3-Widok - przelozenie wyniku na kontrolki okna i obsluga zdarzen. Zero zapytan do sieci.
+# Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
+# - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
+# - Uwzględnienia mnie (X) jako głównego autora skryptu.
 
 # Wlasny trap w kazdej czesci: trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
 
 
 #region SEKCJA 3 - RENDEROWANIE WYNIKU
-# Renderer nie wie, skad wzial sie wynik ani ktory tryb go wywolal - dostaje obiekt
-# i wypelnia kontrolki. Dzieki temu wyszukiwanie po loginie i wybor konta z listy
-# prowadza do dokladnie tego samego kodu wyswietlajacego.
+# Renderer dostaje obiekt wyniku i wypelnia kontrolki - nie wie, skad wynik przyszedl.
 
-# Data razem z dopiskiem, jak dawno temu albo za ile to nastapi: "2026-05-14 08:12
-# (98 dni temu)". Dopisek nie jest ozdobnikiem - "za 3 dni" od razu mowi, ze trzeba
-# dzialac teraz, czego sama data nie pokazuje.
-# GdyBrak: przy dacie waznosci konta brak wartosci znaczy "nigdy", a nie "nie wiem".
+# Data z dopiskiem wzglednym: "2026-05-14 08:12 (98 dni temu)"; GdyBrak - napis, gdy daty nie ma.
 function Format-JezykData {
     param($Data, [string]$GdyBrak = 'brak danych')
 
     if ($null -eq $Data) { return $GdyBrak }
 
-    # Zaokraglamy do pelnych dni - godziny w dopisku niczego nie wnosza, a sama data jest obok.
+    # Pelne dni - godziny w dopisku niczego nie wnosza.
     $dni = [int][math]::Round(((Get-Date) - $Data).TotalDays)
 
     if     ($dni -gt 0) { $wzglednie = '{0} dni temu' -f $dni }
@@ -30,23 +26,44 @@ function Format-JezykData {
     '{0:yyyy-MM-dd HH:mm} ({1})' -f $Data, $wzglednie
 }
 
-<#
-.SYNOPSIS
-    Tresc pola "Ostatnie logowanie" - jedna funkcja dla wszystkich czterech stanow.
+# Tresc pola, ktorego wartosci moze nie byc - pokazany obiekt nie ma pustych pol.
+function Get-JezykWartoscPola {
+    param([string]$Wartosc, [string]$GdyBrak = 'nie wpisano w AD')
 
-.DESCRIPTION
-    Pole wypelnia sie dwuetapowo, a ta funkcja opisuje oba etapy naraz, zeby nie dalo sie
-    ich rozjechac przy pozniejszej zmianie tekstu. Nieudane uscislenie NIE kasuje wartosci
-    przyblizonej - data przeterminowana o kilka dni jest lepsza niz komunikat o porazce.
-#>
+    if ($Wartosc) { return $Wartosc }
+    return $GdyBrak
+}
+
+# Tresc pola "Ostatnie logowanie" dla wszystkich stanow (dokladna, najpozniejsza znana, nieudana, trwa, brak).
+# "Dokladna" tylko przy komplecie odpowiedzi - rozstrzyga logika (Pelna), widok tylko ja pokazuje.
 function Get-JezykTekstLogowania {
-    param($Dokladna, $Przyblizona, [switch]$Trwa, [string]$Kropki = '...')
+    param($Wynik = $null, $Przyblizona, [switch]$Trwa, [string]$Kropki = '...', [switch]$Nieudane)
 
-    if ($null -ne $Dokladna) {
-        if ($null -ne $Przyblizona) {
-            return 'Dokładna data: {0} · poprzednia data: {1:yyyy-MM-dd HH:mm}' -f (Format-JezykData $Dokladna), $Przyblizona
+    if ($Wynik -and -not $Wynik.Blad) {
+        # Liczby po dwukropku - bez odmiany liczebnika.
+        $zakres = 'kontrolery: {0} z {1}' -f $Wynik.Odpytane, $Wynik.Wszystkie
+
+        # Odpowiedzi byly, ale zadna nie zna logowania.
+        if ($null -eq $Wynik.Data) {
+            if ($Wynik.Pelna) { return 'nigdy - żaden kontroler nie zna logowania tego konta' }
+            return 'brak danych · {0}' -f $zakres
         }
-        return 'Dokładna data: {0}' -f (Format-JezykData $Dokladna)
+
+        if (-not $Wynik.Pelna) {
+            return 'Najpóźniejsza znana: {0} · {1}' -f (Format-JezykData $Wynik.Data), $zakres
+        }
+        if ($null -ne $Przyblizona) {
+            return 'Dokładna data: {0} · poprzednia data: {1:yyyy-MM-dd HH:mm}' -f (Format-JezykData $Wynik.Data), $Przyblizona
+        }
+        return 'Dokładna data: {0}' -f (Format-JezykData $Wynik.Data)
+    }
+
+    # Uscislenie sie nie odbylo - data przyblizona zostaje, ale nie udaje jego wyniku.
+    if ($Nieudane -or $Wynik) {
+        if ($null -ne $Przyblizona) {
+            return 'Data przybliżona: {0} · nie udało się uściślić' -f (Format-JezykData $Przyblizona)
+        }
+        return 'brak danych'
     }
 
     if ($null -ne $Przyblizona) {
@@ -58,66 +75,133 @@ function Get-JezykTekstLogowania {
     return 'brak danych'
 }
 
-# Czysci widok konta do stanu "nic nie wiadomo". Wolane na poczatku kazdego renderowania
-# i przy zmianie trybu: pol jest kilkanascie i latwo przeoczyc, ze ktores nie zostalo
-# nadpisane, a zielony napis po nieudanym zapytaniu bylby najgorszym z nieporozumien.
-<#
-.SYNOPSIS
-    Sklada oba numery telefonu w jeden napis do pola "Telefon:".
+# Tresc "!" przy dacie logowania: czego obejscie kontrolerow nie objelo i dlaczego; pusta przy komplecie.
+function Get-JezykOpisLogowania {
+    param($Wynik, $Przyblizona = $null)
 
-.DESCRIPTION
-    KOLEJNOSC JEST STALA: glowny (LDAP telephoneNumber), potem komorkowy (mobile) - taka
-    sama, w jakiej stoja w oknie AD. Stala, bo pole ich NIE PODPISUJE: przy dwoch numerach
-    operator poznaje je po miejscu, a miejsce zmienne nie znaczyloby nic.
+    if (-not $Wynik -or $Wynik.Pelna) { return '' }
 
-    PUSTY NUMER JEST POMIJANY, a nie zastepowany myslnikiem ani pustym miejscem po
-    przecinku: jeden numer ma wygladac jak jeden numer, a nie jak polowa pary.
+    $linie = @()
+    if ($Wynik.Blad) {
+        $linie += [string]$Wynik.Blad
+    }
+    elseif ($Wynik.Odpytane -lt $Wynik.Wszystkie) {
+        $linie += ('Odpowiedziało {0} z {1} kontrolerów. Logowanie obsłużone przez kontroler, który nie odpowiedział, nie jest tu widoczne - prawdziwa data może być późniejsza.' -f
+                   $Wynik.Odpytane, $Wynik.Wszystkie)
+    }
 
-    Podpisy ("Glowny: ...") swiadomie odpadly - pole ma szerokosc polowy kolumny, a dwa
-    numery z prefiksem +48 i podpisami sie w niej nie miesza i zostalyby uciete.
-#>
+    # Podloga: lastLogonTimestamp nowszy od kazdego lastLogon, ktory przyszedl.
+    if ($Wynik.ZTimestampu -and $Przyblizona -is [datetime]) {
+        $zKontrolerow = if ($Wynik.DataKontrolerow -is [datetime]) {
+            '{0:yyyy-MM-dd HH:mm} z {1}' -f $Wynik.DataKontrolerow, $Wynik.ZKontrolera
+        } else { 'żaden nie zna logowania' }
+
+        if ($linie.Count) { $linie += '' }
+        $linie += ('Data z lastLogonTimestamp ({0:yyyy-MM-dd HH:mm}) jest późniejsza niż lastLogon z kontrolerów, które odpowiedziały ({1}). Logowanie obsłużył kontroler spoza listy albo atrybut odświeżyła usługa działająca w imieniu tego konta - pokazana data pochodzi z lastLogonTimestamp.' -f
+                   $Przyblizona, $zKontrolerow)
+    }
+
+    if (@($Wynik.Odrzucone).Count) {
+        if ($linie.Count) { $linie += '' }
+        $linie += ('Pominięte nazwy kontrolerów (nieprawidłowe): {0}' -f (@($Wynik.Odrzucone) -join ', '))
+    }
+
+    # Kontroler po kontrolerze - po tym widac, czy to zapora, usluga czy termin.
+    $przebieg = @(@($Wynik.Przebieg) | Where-Object { $_ })
+    if ($przebieg.Count) {
+        $linie += @('', 'Kontroler po kontrolerze (odczyt modułem AD):') + $przebieg
+    }
+    if ($Wynik.ZKontrolera -and -not $Wynik.ZTimestampu) {
+        $linie += @('', ('Najpóźniejszą datę podał: {0}' -f $Wynik.ZKontrolera))
+    }
+    if ($Wynik.Czasy) {
+        $linie += @('', ('Czas: {0}' -f $Wynik.Czasy))
+    }
+
+    return ($linie -join [Environment]::NewLine)
+}
+
+# Nazwa z SCCM ze stanem sesji: "(zalogowany teraz)", sama data ostatniej aktywnosci albo sama nazwa.
+# Bez godziny - LastActiveTime to aktywnosc klienta SCCM, nie logowanie (README: Ostatnio uzywany komputer).
+function Get-JezykTekstSesji {
+    param([string]$Nazwa, $Data = $null, [bool]$Teraz = $false)
+
+    if ($Teraz)          { return '{0} (zalogowany teraz)' -f $Nazwa }
+    if ($null -ne $Data) { return '{0} ({1:yyyy-MM-dd})' -f $Nazwa, $Data }
+    return $Nazwa
+}
+
+# Oba numery telefonu w jednym napisie: glowny, potem komorkowy, bez podpisow; pusty pomijany.
 function Get-JezykTelefony {
     param([string]$Glowny, [string]$Komorkowy)
 
     return ((@($Glowny, $Komorkowy) | Where-Object { $_ }) -join ', ')
 }
 
-<#
-.SYNOPSIS
-    Nadaje polu kolor wedlug ZNACZENIA, nie wedlug odcienia - i to znaczenie zapamietuje.
-
-.DESCRIPTION
-    JEDYNE MIEJSCE, KTORE USTAWIA ForeColor NA POLU. Paleta zmienia sie w trakcie dzialania
-    okna (przycisk motywu w prawym dolnym rogu), wiec odcien zapisany na kontrolce przestaje
-    po przelaczeniu cokolwiek znaczyc: zielen dobrana pod biale tlo na ciemnym tle jest
-    nieczytelna, a nieczytelny werdykt to werdykt, ktorego nie ma. Przemalowac da sie tylko
-    to, o czym wiadomo, CO mialo znaczyc - stad rola zamiast koloru.
-
-    Rola trafia do $Script:RoleKolorow, skad czyta ja Set-JezykMotyw. Kluczem jest SAMA
-    KONTROLKA, a nie jej nazwa z rejestru: pola sondy przychodza z Get-JezykPolaSondy juz
-    jako obiekty i nazwy przy sobie nie maja.
-
-    "Tekstu" to stan neutralny - nie "brak koloru", tylko kolor tekstu z biezacej palety.
-    Czyszczenie pola idzie ta sama droga, co kazdy inny stan: kolor zostaje na kontrolce
-    po zdjeciu tresci, wiec zerowanie NIE JEST kosmetyka.
-#>
+# Koloruje kontrolke wedlug ZNACZENIA i zapamietuje role (przezywa zmiane motywu).
+# Pole dostaje kolorowe tlo, werdykt (rola wygladu "Okno") - kolorowy napis; nigdy oba.
 function Set-JezykKolorPola {
     param($Pole, [ValidateSet('Tekstu', 'Ok', 'Problem', 'Nieznany')][string]$Rola)
 
     if (-not $Pole) { return }
 
     $Script:RoleKolorow[$Pole] = $Rola
-    $Pole.ForeColor = $Script:Config['Kolor' + $Rola]
+
+    if ($Script:KontrolkiMotywu[$Pole] -eq 'Okno') {
+        $Pole.BackColor = $Script:Config.KolorOkna
+        $Pole.ForeColor = $Script:Config['Kolor' + $Rola]
+        return
+    }
+
+    $Pole.ForeColor = $Script:Config.KolorTekstu
+    $Pole.BackColor = switch ($Rola) {
+        'Ok'      { $Script:Config.KolorPolaOk }
+        'Problem' { $Script:Config.KolorPolaProblem }
+        default   { $Script:Config.KolorTla }
+    }
 }
 
+# Podwojne klikniecie w polu: cale slowo pod kursorem - w "DOMENA\login" sam login, adres IP w calosci.
+# Uwaga: natywne zaznaczenie jest tylko kotwica, przeciagniecia nie zwijamy (README: Kod > Jezyk-3-Widok).
+function Select-JezykSlowoPola {
+    param($Pole)
+
+    $tekst    = [string]$Pole.Text
+    $poczatek = [int]$Pole.SelectionStart
+    $koniec   = [Math]::Min($poczatek + [int]$Pole.SelectionLength, $tekst.Length)
+
+    # Separatory obok bialych znakow (z cudzyslowami polskimi); ogon odpada tylko z konca slowa.
+    $separatory    = '\/,;()"' + [char]0x201E + [char]0x201D
+    $ogon          = '.:' + [char]0x2026
+    $jestSeparator = { param([char]$Znak) [char]::IsWhiteSpace($Znak) -or $separatory.IndexOf($Znak) -ge 0 }
+
+    # Kotwica: pierwszy znak natywnego zaznaczenia nalezacy do slowa.
+    $kotwica = $poczatek
+    while ($kotwica -lt $koniec -and (& $jestSeparator $tekst[$kotwica])) { $kotwica++ }
+    if ($kotwica -ge $koniec) { return }
+
+    $start = $kotwica
+    while ($start -gt 0 -and -not (& $jestSeparator $tekst[$start - 1])) { $start-- }
+    $stop = $kotwica + 1
+    while ($stop -lt $tekst.Length -and -not (& $jestSeparator $tekst[$stop])) { $stop++ }
+
+    # Zaznaczenie siega nastepnego slowa - operator przeciagnal, jego wybor zostaje.
+    for ($i = $stop; $i -lt $koniec; $i++) {
+        if (-not (& $jestSeparator $tekst[$i])) { return }
+    }
+
+    while ($stop -gt $start -and $ogon.IndexOf($tekst[$stop - 1]) -ge 0) { $stop-- }
+    # Klikniecie w sam ogon (kropka konczaca zdanie) - zaznaczenie zostaje natywne.
+    if ($kotwica -ge $stop) { return }
+
+    $Pole.Select($start, $stop - $start)
+}
+
+# Czysci widok konta do stanu "nic nie wiadomo" - na poczatku kazdego wyniku i przy zmianie trybu.
 function Clear-JezykKonto {
     $k = $Script:Kontrolki
 
-    # WYCZYSZCZONY WIDOK NIE WIE O KONCIE NIC - i werdykt ma to powiedziec wprost. Stal
-    # tu napis "Konto zablokowane": szary, wiec kolorem o niczym nieprzesadzajacy, ale
-    # nazywajacy JEDEN z mozliwych stanow konta, ktorego nikt jeszcze nie sprawdzal.
-    # Widac to bylo przy kazdej zmianie domeny i trybu - obie ida przez Set-JezykWidok,
-    # a ten czysci widok i nie wpisuje potem zadnego wyniku.
+    # Wyczyszczony widok nie wie o koncie nic - werdykt mowi to wprost.
     $k.WerdyktBox.Checked   = $false
     $k.Werdykt.Text         = 'Nie sprawdzono'
     Set-JezykKolorPola $k.Werdykt 'Nieznany'
@@ -134,79 +218,52 @@ function Clear-JezykKonto {
         if ($pole) { $pole.Text = '' }
     }
 
-    # Etykieta pierwszego pola wraca do stanu domyslnego. Widok kontaktu przestawia ja na
-    # "Nazwa:" - bez tego zostalaby tak przy nastepnym wyszukaniu KONTA i opisywalaby login
-    # slowem "Nazwa".
+    # Etykieta pierwszego pola wraca na "Login:" (kontakt przestawia ja na "Nazwa:").
     if ($k.EtykietaLoginKonta) { $k.EtykietaLoginKonta.Text = 'Login:' }
 
-    # Adres, do ktorego dopasowano MAC, opisuje POPRZEDNIA maszyne - zostawiony kazalby
-    # ponownemu pingowi porownywac sie z czyms, czego w oknie juz nie ma.
+    # Adres dopasowania MAC dotyczyl poprzedniej maszyny.
     $Script:MacDlaAdresu = ''
 
-    # Notka o trwajacym zapytaniu do SCCM gasnie razem z polami. Trzy pola sa tu czyszczone
-    # WPROST, z pominieciem obu funkcji, ktore normalnie ja zdejmuja - zapomniany marker
-    # kazalby zegarowi tla wpisywac kropki do widoku, w ktorym nic juz nie trwa.
+    # Notka SCCM gasnie razem z polami - inaczej zegar wpisywalby kropki do pustego widoku.
     Set-JezykNotkeSprawdzania -Wylacz
+    Stop-JezykNotkeKonsoli -Widok Konto
 
-    # Data przyblizona nalezy do KONKRETNEGO konta - zostawiona wpisalaby sie do pola
-    # opisujacego juz kogos innego.
+    # Data przyblizona i wynik naleza do poprzedniego konta.
     $Script:LogowaniePrzyblizone = $null
     $Script:OstatnieKonto        = $null
 
-    # Nazwa maszyny nalezy do KONKRETNEGO konta - zostawiona kazalaby przyciskowi "Pinguj"
-    # sprawdzac komputer kogos, kogo juz nie ma na ekranie.
+    # Maszyna poprzedniego konta - zostawiona kazalaby "Pinguj" sprawdzac cudzy komputer.
     $Script:OstatniKomputer  = ''
-    # Wynik sondy zapominany RAZEM z maszyna, ktorej dotyczyl - zostawiony zapalalby akcje
-    # zdalne dla nastepnego konta, zanim cokolwiek o jego maszynie wiadomo.
+    # Wynik sondy ginie razem z maszyna, ktorej dotyczyl.
     $Script:MaszynaOdpowiada = $null
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = $false }
     Set-JezykPrzyciskiZdalne ''
 
-    # Grupy naleza do KONKRETNEGO konta - zostawiony czynny przycisk pokazywalby liste
-    # opisujaca kogos, kogo juz nie ma w oknie. Samej listy nie ma czego zerowac osobno:
-    # jedzie w $Script:OstatnieKonto, ktore gasnie linijke wyzej.
+    # Przycisk grup gasnie razem z kontem, ktorego grupy pokazywal.
     Set-JezykPrzyciskGrupy $null
 
     Set-JezykInfo 'Komputer'              ''
     Set-JezykInfo 'KomputerWspoldzielony' ''
     Set-JezykInfo 'Status'                ''
-    # "!" przy adresie MAC nalezy do TEGO konta, a nie do okna - zostawiony tlumaczylby
-    # przy nastepnym koncie karte sieciowa maszyny poprzedniego. Widok maszyny gasi swoj
-    # odpowiednik (MacMaszyny) od zawsze; ten byl jedynym pominietym.
+    Set-JezykInfo 'Logowanie'             ''
+    Set-JezykInfo 'LogowanieNiepelne'     ''
+    # "!" przy adresie MAC tez nalezy do poprzedniego konta.
     Set-JezykInfo 'Mac'                   ''
 
-    # ZADANIA W TLE GASNA RAZEM Z WIDOKIEM. Bez tego zadanie z poprzedniego wyszukania
-    # bieglo dalej po wejsciu na sciezke "nie znaleziono", "zbyt wiele trafien" i "blad"
-    # oraz po zmianie trybu i domeny - a te sciezki nie podbijaja licznika pokolen, wiec
-    # spozniony wynik SCCM sprzed dwoch wyszukan wpisywal sie do pola opisujacego JUZ
-    # KOGOS INNEGO. Drugi, dotkliwszy skutek: kolejne wyszukanie musialo przerwac zywe
-    # zadanie tkwiace w wywolaniu DCOM, a takie przerwanie potrafi zamrozic okno.
+    # Zadania w tle gasna razem z widokiem - inaczej spozniony wynik wpisalby sie do cudzego widoku.
     Stop-JezykZadanieLogowania
     Stop-JezykZadanieKomputera
     Stop-JezykZadaniePingu
 
-    # Przycisk gasnie razem z widokiem: zostawiony czynny odblokowywalby konto, ktorego
-    # juz nie widac na ekranie.
+    # Przycisk gasnie - inaczej odblokowalby konto, ktorego juz nie widac.
     Set-JezykPrzyciskOdblokuj $null
 
-    # PRZYWROCENIE KOLORU JEST WARUNKIEM POPRAWNOSCI, NIE KOSMETYKA - i dotyczy teraz
-    # DWOCH pol. "Haslo wygasa" bywa czerwone, a "Ostatnio uzywany komputer" czerwony albo
-    # zielony; bez zerowania pierwsza taka wartosc zabarwialaby pole na stale i KAZDE
-    # nastepne konto wygladaloby tak samo, niezaleznie od tego, co o nim wiadomo.
+    # Zerowanie koloru jest warunkiem poprawnosci: kolor zostaje na kontrolce po zdjeciu tresci.
     Set-JezykKolorPola $k.TxtHasloWygasa 'Tekstu'
     Set-JezykKolorPola $k.TxtKomputerUzytkownika 'Tekstu'
 }
 
-<#
-.SYNOPSIS
-    Wypelnia widok konta danymi z obiektu wyniku.
-
-.DESCRIPTION
-    Werdykt: zaznaczony i czerwony = z kontem jest problem, a napis mowi jaki. Siatka
-    znacznikow pod spodem pokazuje surowe fakty, z ktorych werdykt powstal - powielenie
-    pozycji "Konto zablokowane" w obu miejscach jest swiadome: napis podaje wniosek,
-    siatka dane zrodlowe.
-#>
+# Wypelnia widok konta z obiektu wyniku: werdykt (wniosek) i znaczniki (fakty zrodlowe).
 function Set-JezykResult {
     param($Result)
 
@@ -214,17 +271,13 @@ function Set-JezykResult {
     Clear-JezykKonto
     $Script:OstatnieKonto = $Result
 
-    # JEDNO WYWOLANIE NA WSZYSTKIE GALEZIE. Wynik bez konta ("nie znaleziono", "blad",
-    # pusty login) niesie pusta liste grup, wiec warunek w Set-JezykPrzyciskGrupy gasi
-    # przycisk sam - bez wpisu w kazdej galezi switcha z osobna.
+    # Jedno wywolanie na wszystkie galezie - wynik bez konta niesie pusta liste grup.
     Set-JezykPrzyciskGrupy $Result
 
     switch ($Result.Status) {
 
         'Ok' {
-            # Dwa niezalezne stany konta. Objaw dla uzytkownika jest ten sam ("nie moge sie
-            # zalogowac"), ale naprawa inna: blokade zdejmuje Unlock-ADAccount i mija ona
-            # tez sama po czasie, wylaczenie zdejmuje Enable-ADAccount.
+            # Blokada i wylaczenie to dwa niezalezne stany (kazdy naprawia sie inaczej).
             $zablokowane = [bool]$Result.LockedOut
             $wylaczone   = -not [bool]$Result.Enabled
             $problem     = ($zablokowane -or $wylaczone)
@@ -244,29 +297,17 @@ function Set-JezykResult {
             $k.ChkFlagaHasla.Checked  = [bool]$Result.ZmianaHaslaWymuszona
 
             $k.TxtLoginKonta.Text   = [string]$Result.Login
-            $k.TxtImieNazwisko.Text = Get-JezykOsoba ([string]$Result.DisplayName) `
-                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko)
+            $k.TxtImieNazwisko.Text = Get-JezykWartoscPola (Get-JezykOsoba ([string]$Result.DisplayName) `
+                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko))
 
-            # Brak adresu zostawia pole PUSTE: napis "brak danych" sugerowalby nieudany
-            # odczyt, a tu chodzi o konto, ktore po prostu nie ma skrzynki.
-            $k.TxtEmail.Text = [string]$Result.Email
+            # Brak wartosci mowi o sobie wprost - puste pole wygladaloby na nieudany odczyt.
+            $k.TxtEmail.Text = Get-JezykWartoscPola ([string]$Result.Email)
 
-            # NUMER MOWI O SWOIM BRAKU WPROST, tak samo jak przelozony nizej. Pustka nigdy
-            # nie znaczy tu porazki odczytu: oba numery przychodza z tego samego zapytania,
-            # co reszta konta, wiec puste pole ma dokladnie jedno znaczenie - w AD nie ma
-            # zadnego numeru. Skoro znaczenie jest jedno i pewne, ma byc NAPISANE, a nie
-            # zgadywane z pustki.
-            #
-            # E-mail zostaje przy pustce swiadomie: konto bez skrzynki to stan normalny
-            # i czesty, a napis przy kazdym takim koncie bylby samym halasem.
+            # Numery przychodza tym samym zapytaniem - pustka znaczy tylko "nie wpisano w AD".
             $telefony = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
             $k.TxtTelefon.Text  = if ($telefony) { $telefony } else { 'nie wpisano w AD' }
 
-            # PRZELOZONY MOWI O SWOIM BRAKU WPROST. Pusty napis czytalo sie jak nieudany
-            # odczyt, a tutaj pustka NIGDY nie znaczy porazki: nieudane rozwiazanie nazwy
-            # wyrozniajacej spada w Get-JezykPodpisMenedzera do CN z DN, wiec puste pole
-            # ma dokladnie jedno znaczenie - w atrybucie Manager nikogo nie ma. Skoro
-            # znaczenie jest jedno i pewne, ma byc napisane, a nie zgadywane z pustki.
+            # Przelozony: pustka znaczy tylko "nie wpisano w AD" (nierozwiazany DN spada do CN).
             $k.TxtMenedzer.Text = if ($Result.Menedzer) { [string]$Result.Menedzer } else { 'nie wpisano w AD' }
 
             # Trzy stany hasla, kazdy znaczy co innego dla osoby przy telefonie.
@@ -274,8 +315,7 @@ function Set-JezykResult {
             elseif ($Result.HasloNigdyNieWygasa)  { $k.TxtHasloWygasa.Text = 'nigdy' }
             else                                  { $k.TxtHasloWygasa.Text = Format-JezykData $Result.HasloWygasa }
 
-            # Barwimy wylacznie wtedy, gdy termin FAKTYCZNIE minal. Przy wymuszonej zmianie
-            # pole zawiera tekst, a nie date, wiec czerwony termin nie mialby czego dotyczyc.
+            # Czerwien tylko wtedy, gdy termin naprawde minal.
             if ($Result.HasloWygasa -and $Result.HasloWygasa -lt (Get-Date)) {
                 Set-JezykKolorPola $k.TxtHasloWygasa 'Problem'
             }
@@ -284,21 +324,21 @@ function Set-JezykResult {
             $k.TxtOstatniaZmiana.Text = Format-JezykData $Result.OstatniaZmianaHasla 'nigdy nie ustawiono'
             $k.TxtKontoUtworzono.Text = Format-JezykData $Result.KontoUtworzono
 
-            # Dwa wolne pola, dwa NIEZALEZNE zadania w tle. Data nie czeka nawet na wlasne
-            # zadanie: wartosc przyblizona przyszla razem z reszta konta, wiec pokazujemy ja
-            # od razu, a tlo tylko ja uscisli. Komputer czekac musi - AD nie wie o nim nic.
+            # Dwa niezalezne zadania w tle: data przyblizona od razu (tlo ja uscisli), komputer czeka na SCCM.
+            # Komputer tylko w domenie znanej SCCM - poza nia jego pola sa schowane.
+            $zSccm = Test-JezykDomenaZSccm $Script:Config.Domena
             $Script:LogowaniePrzyblizone   = $Result.OstatnieLogowaniePrzyblizone
-            Set-JezykNotkeSprawdzania
+            Set-JezykNotkeSprawdzania -Notka $(if ($zSccm) { 'Obie' } else { 'Logowanie' })
             Set-JezykInfo 'Komputer'              ''
             Set-JezykInfo 'KomputerWspoldzielony' ''
-            Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn)
-            Start-JezykZadanieKomputera -Login ([string]$Result.Login)
+            Start-JezykZadanieLogowania -Login ([string]$Result.Login) -Dn ([string]$Result.Dn) `
+                                        -Przyblizona $Result.OstatnieLogowaniePrzyblizone
+            if ($zSccm) { Start-JezykZadanieKomputera -Login ([string]$Result.Login) }
 
-            $k.TxtKatalog.Text = [string]$Result.Lokalizacja
+            # Lokalizacja z CanonicalName - pustka znaczy "nie udalo sie ustalic".
+            $k.TxtKatalog.Text = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
 
-            # Moment zalozenia blokady dopisujemy do statusu WYLACZNIE przy aktywnej
-            # blokadzie: AD nie zeruje LockoutTime po samoczynnym wygasnieciu, wiec poza
-            # tym przypadkiem data wprowadzalaby w blad.
+            # Czas blokady tylko przy aktywnej blokadzie - AD nie zeruje LockoutTime po jej wygasnieciu.
             $status = [string]$Result.Message
             if ($zablokowane -and $Result.LockoutTime) {
                 $status = '{0} Blokada od {1:yyyy-MM-dd HH:mm}.' -f $status, $Result.LockoutTime
@@ -307,44 +347,33 @@ function Set-JezykResult {
         }
 
         'Kontakt' {
-            # Kontakt nie ma stanu konta, wiec werdykt nie ma o czym orzekac - mowi wprost,
-            # z jakim rodzajem pozycji ma sie do czynienia. Kolor nieznany, bo tu nie ma
-            # ani problemu, ani jego braku.
+            # Kontakt nie ma stanu konta - werdykt nazywa rodzaj pozycji, kolor neutralny.
             $k.WerdyktBox.Checked = $false
             $k.Werdykt.Text       = 'Pozycja typu Kontakt - to nie jest konto'
             Set-JezykKolorPola $k.Werdykt 'Nieznany'
 
-            $k.TxtImieNazwisko.Text = Get-JezykOsoba ([string]$Result.DisplayName) `
-                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko)
-            $k.TxtEmail.Text          = [string]$Result.Email
-            # Kontakt to wpis ksiazki adresowej, wiec numer jest tu najbardziej na miejscu -
-            # i tym bardziej jego brak zasluguje na slowo zamiast pustki.
+            $k.TxtImieNazwisko.Text = Get-JezykWartoscPola (Get-JezykOsoba ([string]$Result.DisplayName) `
+                                                     ([string]$Result.Imie) ([string]$Result.Nazwisko))
+            $k.TxtEmail.Text          = Get-JezykWartoscPola ([string]$Result.Email)
             $telefonyKontaktu = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
             $k.TxtTelefon.Text        = if ($telefonyKontaktu) { $telefonyKontaktu } else { 'nie wpisano w AD' }
             $k.TxtKontoUtworzono.Text = Format-JezykData $Result.KontoUtworzono
-            $k.TxtKatalog.Text        = [string]$Result.Lokalizacja
+            $k.TxtKatalog.Text        = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
             $k.TxtStatus.Text         = [string]$Result.Message
 
-            # PIERWSZE POLE ZMIENIA ZNACZENIE: kontakt nie ma loginu, ma za to nazwe
-            # obiektu w AD (atrybut Name, czyli cn). Etykieta idzie za trescia, zeby pole
-            # nie opisywalo czegos, czego w nim nie ma. Clear-JezykKonto przywraca "Login:".
+            # Kontakt nie ma loginu - pierwsze pole pokazuje nazwe obiektu (cn), etykieta idzie za trescia.
             if ($k.EtykietaLoginKonta) { $k.EtykietaLoginKonta.Text = 'Nazwa:' }
             $k.TxtLoginKonta.Text = [string]$Result.NazwaObiektu
 
-            # "Nie dotyczy", a nie pusto. Puste pole wyglada jak nieudany odczyt, a tych
-            # wartosci nie ma z czego wziac: kontakt po prostu ich nie posiada.
-            # Menedzer jest w tej liscie, bo kontakt nie ma przelozonego w strukturze
-            # firmy; telefon NIE JEST - kontakt numer miec moze i wlasnie po to istnieje.
+            # Pola, ktorych kontakt nie posiada: "nie dotyczy", a nie pustka (telefon kontakt miec moze).
             foreach ($pole in @($k.TxtHasloWygasa, $k.TxtKontoWygasa,
                                 $k.TxtOstatniaZmiana, $k.TxtMenedzer,
                                 $k.TxtOstatnieLogowanie, $k.TxtKomputerUzytkownika,
-                                $k.TxtKomputerIp)) {
+                                $k.TxtKomputerIp, $k.TxtKomputerMac)) {
                 if ($pole) { $pole.Text = 'nie dotyczy (kontakt)' }
             }
 
-            # ZADNYCH ZADAN W TLE. Kontakt nigdy sie nie loguje i nie ma go w inwentaryzacji
-            # SCCM, wiec obejscie kontrolerow i zapytanie do SCCM pytalyby o nieistniejace
-            # konto - i tak wlasnie wygladalaby ich odpowiedz.
+            # Kontakt: zadnych zadan w tle - nie loguje sie i nie ma go w SCCM.
         }
 
         'NotFound' { $k.Werdykt.Text = 'Nie znaleziono konta'; $k.TxtStatus.Text = [string]$Result.Message }
@@ -355,29 +384,21 @@ function Set-JezykResult {
         default    { $k.Werdykt.Text = 'Błąd sprawdzenia';     $k.TxtStatus.Text = [string]$Result.Message }
     }
 
-    # Pelna tresc idzie pod przycisk "!" przy polu Status, nie na ekran - w polu jest na
-    # nia za malo miejsca. ALE TYLKO PRZY STANIE PROBLEMOWYM: znalezione konto ('Ok')
-    # i znaleziony kontakt ('Kontakt') to sukcesy, a wykrzyknik ma znaczyc wylacznie
-    # "cos nie dziala". Kontakt zapalal go dotad zawsze, bo jego odczyt wypelnial Szczegoly
-    # takze po udanym znalezieniu.
+    # Pelna tresc bledu pod "!" przy Status - wylacznie przy stanie problemowym.
     $problem = ($Result.Status -notin 'Ok', 'Kontakt', 'Empty')
     Set-JezykInfo 'Status' $(if ($problem) { [string]$Result.Szczegoly } else { '' })
 
-    # POZA switch-em, zeby przeliczyc przycisk przy KAZDYM stanie - takze wtedy, gdy konta
-    # nie znaleziono.
+    # Poza switch-em - przycisk przeliczany przy kazdym stanie.
     Set-JezykPrzyciskOdblokuj $Result
 }
 
-# Czysci widok komputera do stanu "nic nie wiadomo" - odpowiednik Clear-JezykKonto po
-# drugiej stronie okna. Gasi takze zadanie w tle: bez tego spozniona odpowiedz SCCM sprzed
-# dwoch wyszukan wpisalaby sie do pola opisujacego JUZ INNA maszyne.
+# Czysci widok komputera do stanu "nic nie wiadomo" i porzuca jego zadania w tle.
 function Clear-JezykKomputer {
     $k = $Script:Kontrolki
 
     Stop-JezykZadanieUzytkownika
     Stop-JezykZadaniePingu
-    # Laczenie z udzialem nalezy do TEJ maszyny: porzucone otwieraloby dysk komputera,
-    # ktorego nikt juz nie oglada, a po drodze animowaloby pole opisujace inna maszyne.
+    # Laczenie z udzialem nalezy do tej maszyny.
     Stop-JezykZadanieDysku
 
     foreach ($pole in @($k.TxtKomputerKatalog, $k.TxtKomputerUzytkownikMaszyny,
@@ -386,27 +407,20 @@ function Clear-JezykKomputer {
         if ($pole) { $pole.Text = '' }
     }
 
-    # Pola SCCM czyscimy tu wprost, z pominieciem funkcji, ktore normalnie gasza marker
-    # kropek - wiec gasimy go osobno. Zostawiony animowalby napis nad polami, w ktorych
-    # nic juz nie stoi. To samo dotyczy notki laczenia z udzialem: pole Status: czyscimy
-    # nizej wprost, wiec kropki mialyby nad czym migac az do konca zycia okna.
+    # Pola czyscimy wprost, wiec markery kropek (SCCM, laczenie, konsola) gasimy osobno.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
     Set-JezykNotkeLaczenia -Wylacz
+    Stop-JezykNotkeKonsoli -Widok Maszyna
 
-    # POLE KOLOROWANE CZYSCI SIE DWA RAZY: z tresci i z koloru. Sam tekst zdjety zostawia
-    # czerwien na kontrolce, wiec pierwsze wylaczone konto zabarwiloby pole NA STALE
-    # i kazda nastepna maszyna wygladalaby na wylaczona. Dotyczy to takze pola adresu IP,
-    # ktore po tej stronie okna niesie kolor sondy.
+    # Pole kolorowane czysci sie z tresci i z koloru (takze adres IP z kolorem sondy).
     foreach ($pole in @($k.TxtKomputerWlaczone, $k.TxtKomputerIpMaszyny)) {
         Set-JezykKolorPola $pole 'Tekstu'
     }
 
-    # Maszyna zapomniana RAZEM z polami: to ona jest zrodlem prawdy dla obu przyciskow,
-    # a nie pole tekstowe. Przyciski gasna tu, a nie przy wyniku - wynik nie-Ok idzie
-    # ta sama droga i niczego nie zapala.
+    # Maszyna zapomniana razem z polami - to ona steruje przyciskami, nie pole tekstowe.
     $Script:OstatniKomputer  = ''
     $Script:MacDlaAdresu     = ''
-    # Jak po drugiej stronie okna: wynik sondy nalezy do TEJ maszyny i ginie razem z nia.
+    # Wynik sondy ginie razem z maszyna.
     $Script:MaszynaOdpowiada = $null
     if ($k.PrzyciskPingujMaszyny) { $k.PrzyciskPingujMaszyny.Enabled = $false }
     # "Polacz" i "Dyski" gasi jedno miejsce z warunkiem - patrz Set-JezykPrzyciskiZdalne.
@@ -418,18 +432,7 @@ function Clear-JezykKomputer {
     Set-JezykInfo 'StatusMaszyny' ''
 }
 
-<#
-.SYNOPSIS
-    Sklada tresc pola "Dodany do AD przez" z podpisu wlasciciela i daty zalozenia.
-
-.DESCRIPTION
-    Jedno pole, bo to jedna odpowiedz na jedno pytanie - a dwa pola na tak krotkie wartosci
-    podwyzszalyby panel bez powodu. Data jest w tym samym zapisie, co "Konto utworzono"
-    w widoku konta, wiec obie strony okna czyta sie tak samo.
-
-    Pusty podpis znaczy "deskryptora nie udalo sie odczytac", a nie "nikt nie dodal" -
-    stad wlasny napis, a nie puste pole wygladajace jak brak wyszukiwania.
-#>
+# Tresc pola "Dodany do AD przez": podpis wlasciciela i data zalozenia; pusty podpis = nie ustalono.
 function Get-JezykOpisTworcy {
     param($Podpis, $Utworzono)
 
@@ -441,10 +444,7 @@ function Get-JezykOpisTworcy {
     $tekst
 }
 
-# Widok komputera odpowiada na trzy pytania: gdzie w drzewie AD lezy ten komputer, kto
-# ostatnio z niego korzystal i kto go do AD dodal. Pierwsze i trzecie wie AD i sa w wyniku
-# od razu; drugie wie wylacznie SCCM, wiec idzie w tlo - tak samo jak droga odwrotna
-# w widoku konta.
+# Wypelnia widok komputera: katalog i tworca z AD od razu, uzytkownik z SCCM w tle.
 function Set-JezykComputerResult {
     param($Result)
 
@@ -452,37 +452,31 @@ function Set-JezykComputerResult {
     Clear-JezykKomputer
 
     if ($Result.Status -eq 'Ok') {
-        $k.TxtKomputerKatalog.Text = [string]$Result.Lokalizacja
+        $k.TxtKomputerKatalog.Text = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
 
-        # Nazwa Z AD, a nie z pola tekstowego: idzie do zapytania WQL i do zdalnej konsoli,
-        # a AD zna ja w oryginalnej pisowni. Ona tez jest zrodlem prawdy dla obu przyciskow.
+        # Nazwa z AD, nie z pola tekstowego - idzie do WQL i do zdalnej konsoli.
         $Script:OstatniKomputer = [string]$Result.Nazwa
         if ($k.PrzyciskPingujMaszyny) {
             $k.PrzyciskPingujMaszyny.Enabled = [bool]$Script:OstatniKomputer
         }
-        # "Polacz" i "Dyski" NIE zapalaja sie samym znalezieniem komputera: obie siegaja
-        # do maszyny po sieci, wiec czekaja na sonde. Tu ustawiaja sie na stan "jeszcze
-        # nie wiadomo", ktory Clear-JezykKomputer wyzej wlasnie odlozyl.
+        # "Polacz" i "Dyski" czekaja na sonde - tu stan "jeszcze nie wiadomo".
         Set-JezykPrzyciskiZdalne $Script:OstatniKomputer -Widok Maszyna
 
-        # Kropki zamiast napisu nieruchomego: trzy pola czekaja teraz na to samo zapytanie
-        # (uzytkownik, adres IP, adres MAC), a napis nieruchomy nie odroznia trwajacej
-        # pracy od zawieszonej.
-        Set-JezykNotkeSprawdzania -Notka 'Sccm'
-        Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
+        # Zapytanie o uzytkownika i sonda tylko w domenie znanej SCCM.
+        if (Test-JezykDomenaZSccm $Script:Config.Domena) {
+            # Kropki - trzy pola czekaja na to samo zapytanie.
+            Set-JezykNotkeSprawdzania -Notka 'Sccm'
+            Start-JezykZadanieUzytkownika -Netbios ([string]$Result.Nazwa)
 
-        # ZADANIE SCCM BYWA NIEURUCHOMIONE - bez ustawien wraca, zanim cokolwiek zbuduje.
-        # Dostepnosc maszyny jest wtedy nadal odpowiedzia, bo ICMP nie potrzebuje SCCM do
-        # niczego; bez tego sonda "automatyczna" nie odbylaby sie w takim wdrozeniu ani raz.
-        if (-not $Script:ZadanieUzytkownika) { Invoke-JezykPing -Widok Maszyna }
+            # Zadanie SCCM bywa nieuruchomione (brak ustawien) - wtedy sonda zapasowa.
+            if (-not $Script:ZadanieUzytkownika) { Invoke-JezykPing -Widok Maszyna }
+        }
 
         if ($k.TxtKomputerTworca) {
             $k.TxtKomputerTworca.Text = Get-JezykOpisTworcy $Result.Tworca $Result.Utworzono
         }
 
-        # TRZY STANY, TRZY KOLORY - jak przy dostepnosci maszyny. "Nie wiadomo" dostaje
-        # kolor neutralny, bo pomalowanie go zielenia albo czerwienia byloby nieprawda:
-        # nieodczytany atrybut to nie to samo, co odczytane "wyłączone".
+        # Trzy stany, trzy kolory: "nie wiadomo" dostaje kolor neutralny.
         if ($k.TxtKomputerWlaczone) {
             $k.TxtKomputerWlaczone.Text = if ($null -eq $Result.Wlaczone) { 'Nie wiadomo' }
                                           elseif ($Result.Wlaczone)      { 'Włączone' }
@@ -494,9 +488,7 @@ function Set-JezykComputerResult {
             Set-JezykKolorPola $k.TxtKomputerWlaczone $rolaWlaczone
         }
 
-        # "!" zapala sie WYLACZNIE wtedy, gdy pole nie nazywa osoby - inaczej bylby stalym
-        # wyjasnieniem, a takie z tego okna zostaly celowo usuniete. Trzy stany, nie dwa:
-        # $true osoba, $false grupa albo SID, $null deskryptor nieodczytany.
+        # "!" tylko gdy pole nie nazywa osoby: $false grupa albo SID, $null deskryptor nieodczytany.
         if ($Result.TworcaOsoba -eq $true) {
             Set-JezykInfo 'Tworca' ''
         }
@@ -516,10 +508,8 @@ function Set-JezykComputerResult {
     $k.TxtKomputerStatus.Text = [string]$Result.Message
 }
 
-# Lista przechowuje CALE obiekty kandydatow, a nie same napisy - dzieki DisplayMember
-# pokazuje opis, a kod ma pod reka login potrzebny do pelnego odczytu.
-# Blokada zdarzen jest konieczna: kazde dodanie pozycji wywoluje SelectedIndexChanged,
-# wiec bez niej jedno wyszukanie odpalaloby kilka pelnych zapytan do AD.
+# Wypelnia liste trafien calymi obiektami (DisplayMember pokazuje opis).
+# Blokada zdarzen - kazde dodanie pozycji wywoluje SelectedIndexChanged.
 function Set-JezykListaKont {
     param($Konta)
 
@@ -532,9 +522,7 @@ function Set-JezykListaKont {
     finally { $Script:BlokadaZdarzen = $false }
 }
 
-# Wybor pozycji z listy: komplet atrybutow czytamy dopiero tutaj, dla jednej pozycji.
-# Rozgalezienie po TYPIE, bo kontakt nie ma loginu - jego jedyna tozsamoscia jest nazwa
-# wyrozniajaca i czyta go inne polecenie.
+# Wybor pozycji z listy: pelny odczyt jednej pozycji - konta po loginie, kontaktu po DN.
 function Invoke-JezykWyborKonta {
     if ($Script:BlokadaZdarzen) { return }
 
@@ -549,56 +537,30 @@ function Invoke-JezykWyborKonta {
     Set-JezykResult -Result (Get-JezykUserStatus -Login ([string]$wybrane.Login))
 }
 
-<#
-.SYNOPSIS
-    Obsluga "Szukaj" - jedyne miejsce, w ktorym tryb przeklada sie na funkcje logiki.
-
-.DESCRIPTION
-    Zapytanie po NAZWIE jest synchroniczne, wiec okno na moment przestaje reagowac; bez
-    wylaczenia przycisku niecierpliwe podwojne klikniecie ustawialoby w kolejce drugie
-    zapytanie. Blok finally jest niezbedny - gdyby renderowanie przerwalo sie w polowie,
-    przycisk zostalby wylaczony na stale.
-
-    "Na moment" jest tu doslowne: filtr po nazwie idzie po atrybutach indeksowanych,
-    z gwiazdka na koncu wartosci, wiec wraca od razu. Wyszukiwanie po NUMERZE takie nie
-    jest i wlasnie dlatego rusza osobno, w tle - patrz Start-JezykZadanieNumeru.
-#>
+# Obsluga "Szukaj": jedyne miejsce, w ktorym tryb przeklada sie na funkcje logiki.
+# Przycisk wylaczony na czas zapytania; finally przywraca go takze po bledzie.
 function Invoke-JezykSearch {
     $k    = $Script:Kontrolki
     $okno = $k.Okno
     $tryb = [string]$k.Tryb.SelectedItem
     $tekst = $k.PoleSzukaj.Text
 
-    # ZATRZYMANIE POPRZEDNIEGO SZUKANIA PO NUMERZE IDZIE PIERWSZE i PRZED ROZGALEZIENIEM
-    # NA TRYB. Bez tego trafienia z poprzedniego numeru dolaczylyby do listy zbudowanej
-    # wlasnie teraz - a w trybie komputera doklejalyby sie do listy, ktorej nikt nie widzi,
-    # i dopisywaly notke do panelu konta stojacego wtedy poza ekranem.
-    #
-    # Start-JezykZadanieNumeru robi to samo na wejsciu, ale odpala sie wylacznie wtedy, gdy
-    # nowy wpis wyglada na numer - a porzucic poprzednie zadanie trzeba ZAWSZE.
+    # Poprzednie szukanie po numerze porzucane ZAWSZE i przed rozgalezieniem na tryb.
     Stop-JezykZadanieNumeru
 
     $k.Przycisk.Enabled = $false
     $okno.UseWaitCursor = $true
 
-    # JEZ ZAPALA SIE PRZY KAZDYM SZUKANIU, nie tylko po numerze telefonu: operator ma
-    # widziec, ze okno pracuje, niezaleznie od tego, czego szuka. Gasnie w finally - chyba
-    # ze wlasnie ruszylo zadanie numeru i jest jeszcze na co czekac.
-    #
-    # Przy zapytaniu synchronicznym jez jest widoczny, ale NIERUCHOMY: klatki odmierza zegar
-    # na watku interfejsu, a ten stoi wtedy w zapytaniu. Zapytania po nazwie ida po atrybutach
-    # indeksowanych i trwaja ulamek sekundy, wiec jez mignie - i tyle ma zrobic.
+    # Jez przy kazdym szukaniu; przy zapytaniu synchronicznym stoi nieruchomo (README: Praca w tle).
     Set-JezykStanJeza 'Szuka'
 
-    # Domyslnie "nie znaleziono": finally biegnie takze po wyjatku, a wyjatek na pewno nie
-    # jest udanym wyszukaniem.
+    # Domyslnie "nie znaleziono" - finally biegnie takze po wyjatku.
     $znaleziono = $false
 
     # Pole Status niesie na razie odpowiedz, a nie notke o trwajacym szukaniu - patrz nizej.
     $Script:StatusCzekaNaNumer = $false
 
-    # Wymuszenie przerysowania - inaczej zmiana kursora i zapalenie jeza pojawilyby sie
-    # dopiero po zakonczeniu zapytania, czyli gdy nie sa juz potrzebne.
+    # Przerysowanie teraz - inaczej kursor i jez pojawilyby sie dopiero po zapytaniu.
     $okno.Refresh()
 
     try {
@@ -614,8 +576,7 @@ function Invoke-JezykSearch {
             $znaleziono = ($lista.Status -eq 'Ok')
 
             if ($lista.Status -eq 'Ok') {
-                # Przypisanie zaznaczenia odpala Invoke-JezykWyborKonta, ktore wykona pelny
-                # odczyt - dzieki temu pierwsza pozycja pokazuje sie bez dodatkowego klikniecia.
+                # Zaznaczenie odpala Invoke-JezykWyborKonta - pierwsza pozycja pokazuje sie od razu.
                 $Script:Kontrolki.ListaKont.SelectedIndex = 0
             }
             else {
@@ -628,30 +589,13 @@ function Invoke-JezykSearch {
                 Set-JezykInfo 'Status' ([string]$lista.Szczegoly)
             }
 
-            # NUMER TELEFONU RUSZA NA KONCU, JUZ PO ZAZNACZENIU PIERWSZEJ POZYCJI.
-            # Zaznaczenie uruchamia Set-JezykResult, a ten nadpisuje pole Status opisem
-            # konta - cokolwiek dopisanego wczesniej zgineloby bez sladu, dokladnie tak,
-            # jak kiedys ginelo potwierdzenie odblokowania.
-            #
-            # Zadanie rusza takze wtedy, gdy po nazwie NIC nie znaleziono: to najczestszy
-            # przypadek przy szukaniu po numerze i wtedy wlasnie jest najbardziej potrzebne.
+            # Numer telefonu rusza na koncu, po zaznaczeniu - Set-JezykResult nadpisuje pole Status.
+            # Rusza takze wtedy, gdy po nazwie nic nie znaleziono.
             if (Test-JezykWygladaNaTelefon $tekst) {
                 Start-JezykZadanieNumeru -Cyfry (Get-JezykCyfry $tekst)
 
-                # NOTKA ZASTEPUJE ZDANIE, KTORE WLASNIE PRZESTALO BYC PRAWDA. Po pustym
-                # wyniku po nazwie okno mowilo "Nie znaleziono konta ani kontaktu pasujacego
-                # do ..." - brzmialo to jak werdykt i bylo nim przez kilkanascie sekund,
-                # podczas gdy szukanie po numerze, czyli to, po ktore operator tu przyszedl,
-                # dopiero sie zaczynalo. Kto nie wiedzial, ze cos jeszcze trwa, zamykal okno
-                # przed odpowiedzia.
-                #
-                # WYLACZNIE PRZY 'NotFound'. Przy bledzie odczytu i przy "zbyt wielu
-                # trafieniach" pole niesie zdanie prawdziwe i wazne - notka zakrylaby jedyna
-                # wiadomosc o awarii.
-                #
-                # I wylacznie, gdy zadanie NAPRAWDE ruszylo: nieudane uruchomienie zostawia
-                # $Script:ZadanieNumeru pustym, a wtedy nie ma juz na co czekac i "trwa"
-                # bylo by klamstwem od pierwszej chwili.
+                # Notka zastepuje zdanie, ktore przestalo byc prawda - wylacznie przy 'NotFound'
+                # i tylko gdy zadanie naprawde ruszylo (README: Wyszukiwanie po numerze telefonu).
                 if ($Script:ZadanieNumeru -and $lista.Status -eq 'NotFound') {
                     $k.Werdykt.Text   = 'Trwa szukanie po numerze'
                     $k.TxtStatus.Text = 'Po nazwie nic nie znaleziono. Trwa jeszcze szukanie po numerze telefonu w domenie {0} - to potrwa dłużej, poczekaj na wynik.' -f
@@ -665,44 +609,17 @@ function Invoke-JezykSearch {
         $okno.UseWaitCursor = $false
         $k.Przycisk.Enabled = $true
 
-        # Jez STAJE Z WYNIKIEM, CHYBA ZE zadanie numeru wlasnie ruszylo i biegnie - wtedy ma
-        # biec dalej, bo werdykt jeszcze nie jest znany. Nieudany start zostawia
-        # $Script:ZadanieNumeru pusty, wiec jez staje takze wtedy.
-        #
-        # Poza zostaje na ekranie az do nastepnego klikniecia "Szukaj".
+        # Jez staje z wynikiem, chyba ze biegnie zadanie numeru; poza zostaje do nastepnego szukania.
         if (-not $Script:ZadanieNumeru) {
-            # Wynik przez ZMIENNA, a nie wprost w argumencie: "Polecenie (if ...)" nie jest
-            # poprawne w Windows PowerShell 5.1.
+            # Uwaga: przez zmienna - "Polecenie (if ...)" nie jest poprawne w Windows PowerShell 5.1.
             $stan = if ($znaleziono) { 'Jablko' } else { 'NaPlecach' }
             Set-JezykStanJeza $stan
         }
     }
 }
 
-<#
-.SYNOPSIS
-    Przycisk "Odblokuj konto": widoczny tylko w domenie z odblokowaniem, czynny tylko przy
-    znalezionym i FAKTYCZNIE zablokowanym koncie.
-
-.DESCRIPTION
-    DWA WARUNKI, DWIE WLASCIWOSCI - i to celowo.
-
-    DOMENA DECYDUJE O WIDOCZNOSCI. W domenie spoza listy DomenyZOdblokowaniem przycisk
-    nie zadziala NIGDY, dopoki ktos nie zmieni konfiguracji - to fakt o wdrozeniu, a nie
-    stan, ktory minie. Wyszarzony na stale bylby obietnica, ktorej nikt tam nie spelni;
-    ten sam powod, dla ktorego znika "Polacz" bez sciezki do konsoli ConfigMgr.
-
-    KONTO DECYDUJE O DOSTEPNOSCI. Kontakt zamiast konta, brak wyszukanego konta i konto
-    niezablokowane to stany przejsciowe - przycisk jest, ale nie teraz, i to mowi samo
-    wyszarzenie.
-
-    BEZ ZADNEGO WYKRZYKNIKA. Zadna z tych przyczyn nie jest bledem - to NORMALNE,
-    SPODZIEWANE stany. Wykrzyknik przy takim stanie zapalal sie zaraz po starcie okna
-    i przestawal cokolwiek znaczyc - a ma znaczyc dokladnie jedno: "cos nie dziala".
-
-    Wolana z Clear-JezykKonto, czyli takze przy starcie okna i przy KAZDEJ zmianie domeny
-    (Set-JezykWidok czysci widok) - widocznosc nie potrzebuje wiec osobnego miejsca.
-#>
+# "Odblokuj konto": domena decyduje o widocznosci, konto (znalezione i zablokowane) o dostepnosci.
+# Bez "!" - to normalne stany, nie bledy.
 function Set-JezykPrzyciskOdblokuj {
     param($Result)
 
@@ -718,24 +635,12 @@ function Set-JezykPrzyciskOdblokuj {
     )
 }
 
-<#
-.SYNOPSIS
-    Obsluga klikniecia w "Odblokuj konto".
-
-.DESCRIPTION
-    Okno logowania jest zarazem POTWIERDZENIEM: wpisanie loginu i hasla jest mocniejsze niz
-    klikniecie "tak". Prawo zapisu w katalogu bywa przypisane innemu kontu niz to, na ktorym
-    pracuje administrator - stad pytanie o poswiadczenia zamiast ustawien.
-
-    Poswiadczenia trafiaja wylacznie do jednego wywolania i gina razem z nim: nie ma zmiennej
-    skryptowej, ktora by je przezyla, nie ma zapisu do pliku ani do zadania w tle.
-#>
+# Obsluga "Odblokuj konto": okno logowania = potwierdzenie; poswiadczenia gina z wywolaniem.
 function Invoke-JezykOdblokowanie {
     $k      = $Script:Kontrolki
     $domena = $Script:Config.Domena
 
-    # LOGIN Z OBIEKTU WYNIKU, NIE Z KONTROLKI. Kontrolka sluzy do pokazywania, a nie do
-    # przenoszenia stanu - zrodlem prawdy dla operacji zapisu jest ostatni odczyt z AD.
+    # Login z obiektu wyniku, nie z kontrolki - zrodlem prawdy jest ostatni odczyt z AD.
     if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return }
     $login = [string]$Script:OstatnieKonto.Login
     if (-not $login) { return }
@@ -758,46 +663,32 @@ function Invoke-JezykOdblokowanie {
 
         $wynik = Unlock-JezykKonto -Login $login -Domena $domena -Poswiadczenia $poswiadczenia
 
-        # Niepowodzenie konczy sie tutaj: nie ma czego odswiezac, a powod odmowy jest
-        # jedyna rzecza, ktora ma zostac na ekranie.
+        # Niepowodzenie: powod odmowy zostaje na ekranie.
         if (-not $wynik.Udane) {
             $k.TxtStatus.Text = $wynik.Komunikat
             Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
             return
         }
 
-        # ODSWIEZENIE IDZIE PRZED KOMUNIKATEM, a nie po nim. Odswiezenie zaczyna sie od
-        # Clear-JezykKonto, ktore czysci pole Status - komunikat wpisany wczesniej ginal
-        # w nim bez sladu i nikt nigdy nie widzial potwierdzenia.
-        #
-        # Odczyt idzie z kontrolera, KTORY PRZYJAL ZAPIS. Stan blokady replikuje sie
-        # pilnie, ale nie natychmiast, wiec odczyt z przypadkowego kontrolera potrafil
-        # oddac stan sprzed odblokowania i pokazac "Konto zablokowane" sekunde po udanej
-        # operacji. Sam odczyt idzie na koncie Jezyka; podane poswiadczenia sluzyly
-        # wylacznie do zapisu.
+        # Odswiezenie przed komunikatem (Clear-JezykKonto czysci Status), z kontrolera, ktory przyjal zapis.
         $poZapisie = Get-JezykUserStatus -Login $login -Serwer ([string]$wynik.Serwer)
         Set-JezykResult -Result $poZapisie
 
         $status     = [string]$wynik.Komunikat
         $tresc      = @([string]$wynik.Komunikat)
         $ikona      = [System.Windows.Forms.MessageBoxIcon]::Information
-        # Domyslnie PUSTE - odblokowanie sie udalo, wiec przycisk "!" nie ma czego
-        # sygnalizowac. Dwie ponizsze galezie to jedyne miejsca, w ktorych cos NIE dziala
-        # tak jak powinno, i tylko wtedy dostaje tresc.
+        # Domyslnie puste - "!" tylko w dwoch galeziach ponizej, gdy cos nie poszlo jak trzeba.
         $infoStatus = ''
 
         if ($poZapisie.Status -ne 'Ok') {
-            # Zapis sie udal, odczyt po nim nie - jego powod jest wazniejszy niz
-            # potwierdzenie i nie wolno go zgubic.
+            # Zapis sie udal, odczyt nie - powod odczytu nie moze zginac.
             $status = '{0} Ponowny odczyt konta: {1}' -f $status, $poZapisie.Message
             $tresc += @('', ('Zapis się powiódł, ale ponowny odczyt konta zawiódł: {0}' -f $poZapisie.Message))
             $ikona  = [System.Windows.Forms.MessageBoxIcon]::Warning
             $infoStatus = [string]$wynik.Szczegoly
         }
         elseif ($poZapisie.LockedOut) {
-            # Odczyt z kontrolera, ktory przyjal zapis, a konto nadal zablokowane - to nie
-            # jest opoznienie replikacji, tylko blokada zalozona od nowa. Zwykle usluga
-            # albo zadanie logujace sie na stare haslo.
+            # Kontroler, ktory przyjal zapis, znow widzi blokade - blokada od nowa, nie replikacja.
             $status = '{0} UWAGA: konto jest zablokowane PONOWNIE - coś loguje się na nieaktualne hasło.' -f $status
             $tresc += @('', 'UWAGA: konto jest już zablokowane PONOWNIE.',
                         'Kontroler, który przyjął zapis, nadal widzi blokadę - to nie jest opóźnienie replikacji. Zwykle znaczy to, że jakaś usługa, zadanie albo urządzenie loguje się na nieaktualne hasło.')
@@ -811,8 +702,7 @@ function Invoke-JezykOdblokowanie {
         $k.TxtStatus.Text = $status
         Set-JezykInfo 'Status' $infoStatus
 
-        # Okno na SAMYM KONCU: pod nim jest juz odswiezony widok, wiec po zamknieciu
-        # komunikatu widac stan PO operacji, a nie przed nia.
+        # Komunikat na koncu - po jego zamknieciu widac stan PO operacji.
         [void][System.Windows.Forms.MessageBox]::Show(
             ($tresc -join [Environment]::NewLine),
             $Script:Config.TytulOkna,
@@ -820,8 +710,7 @@ function Invoke-JezykOdblokowanie {
             $ikona)
     }
     finally {
-        # Haslo NISZCZYMY, a nie tylko zapominamy referencje: samo przypisanie $null
-        # zostawialoby je w pamieci do czasu odsmiecania, a okno bywa otwarte godzinami.
+        # Haslo niszczone (Dispose), a nie tylko zapominane - okno bywa otwarte godzinami.
         if ($poswiadczenia) {
             try { $poswiadczenia.Password.Dispose() } catch { }
         }
@@ -829,18 +718,22 @@ function Invoke-JezykOdblokowanie {
     }
 }
 
-# Zamyka pole daty po nieudanym uscisleniu: data przyblizona ZOSTAJE, znika tylko dopisek
-# "precyzowanie...", bo nic sie juz nie precyzuje.
+# Zamyka pole daty bez wyniku uscislenia: data przyblizona zostaje, znika "precyzowanie...".
+# Z powodem (awaria zadania) pole i "!" mowia wprost, ze uscislenie sie nie odbylo.
 function Set-JezykPoleLogowaniaBezTla {
+    param([string]$Blad = '')
     Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
+
+    Set-JezykInfo 'Logowanie' $(if ($Blad) { 'Uściślenie daty nie doszło do skutku: {0}' -f $Blad } else { '' })
+    Set-JezykInfo 'LogowanieNiepelne' ''
 
     $k = $Script:Kontrolki
     if (-not $k.TxtOstatnieLogowanie) { return }
-    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone
+    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
+                                                           -Nieudane:([bool]$Blad)
 }
 
-# Zamyka pole komputera po nieudanym zapytaniu do SCCM. Dostepnosc gasnie razem z nim:
-# bez nazwy maszyny nie ma czego pingowac, a zostawiony kolor opisywalby poprzednia.
+# Zamyka pole komputera po nieudanym zapytaniu SCCM; dostepnosc maszyny gasnie razem z nim.
 function Set-JezykPoleKomputeraBezTla {
     param([string]$Blad)
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
@@ -854,18 +747,7 @@ function Set-JezykPoleKomputeraBezTla {
     Set-JezykInfo 'KomputerWspoldzielony' ''
 }
 
-<#
-.SYNOPSIS
-    Oddaje kontrolki sondy nalezace do WSKAZANEGO panelu - oba widoki maja wlasna trojke.
-
-.DESCRIPTION
-    WIDOK PODAJE SIE JAWNIE, a nie odczytuje z listy trybu. Sonda obsluguje obie polowki
-    okna, a Set-JezykWidok czysci JE OBIE juz PO przestawieniu listy - czyszczenie konta
-    trafialoby wtedy w kontrolki maszyny. Wolajacy zawsze wie, czyj wynik renderuje.
-
-    W widoku maszyny kolor niesie SAMO pole adresu: nazwy maszyny nie ma tam w zadnym polu,
-    bo to ona jest pytaniem wpisanym przez operatora.
-#>
+# Kontrolki sondy wskazanego panelu - widok podawany jawnie, nie odczytywany z listy trybu.
 function Get-JezykPolaSondy {
     param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
@@ -884,33 +766,7 @@ function Get-JezykPolaSondy {
                        KluczMac = 'Mac' }
 }
 
-<#
-.SYNOPSIS
-    Maluje pole komputera wedlug dostepnosci maszyny i wpisuje jej adres IP.
-
-.DESCRIPTION
-    JEDNO MIEJSCE, W KTORYM ZAPADA DECYZJA O KOLORZE - wolaja je i sonda automatyczna
-    po wyszukaniu, i przycisk "Pinguj", i sciezki bledu. Dwie kopie tej decyzji rozjechalyby
-    sie przy pierwszej zmianie i pole potrafiloby zostac zielone po nieudanej probie.
-
-    TRZY STANY, BO TYLE ICH JEST:
-      $true  - zielony, maszyna odpowiedziala,
-      $false - czerwony, maszyna milczy,
-      $null  - kolor NEUTRALNY: nie sprawdzono albo nie wiadomo. Zielony i czerwony maja
-               znaczyc fakt; pomalowanie niewiedzy ktorymkolwiek z nich bylo by klamstwem.
-
-    Adres IP zostaje wpisany takze wtedy, gdy maszyna nie odpowiada - DNS ja zna, a to
-    osobny fakt od tego, czy jest wlaczona. Sam adres do niczego wtedy nie wystarcza:
-    akcje zdalne ("Polacz", "Dyski") gasna, dopoki sonda nie potwierdzi odpowiedzi -
-    patrz Set-JezykPrzyciskiZdalne, tam stoi tez cena tej decyzji.
-
-    STAD ODKLADANA JEST TU ODPOWIEDZ SONDY. Ta funkcja jest jedynym punktem, przez ktory
-    przechodza wszystkie trzy stany z obu widokow - zarowno sonda wliczona w zadania SCCM,
-    jak i przycisk "Pinguj", jak i sciezki bledu. Warunek przyciskow ma wiec jedno zrodlo
-    i nie trzeba go dopisywac przy kazdym z piatki wywolan.
-
-    Ktory panel wypelnic, mowi -Widok - patrz Get-JezykPolaSondy wyzej.
-#>
+# Jedyne miejsce decyzji o kolorze dostepnosci (trzy stany) i o adresie IP w polu.
 function Set-JezykDostepnoscKomputera {
     param($Odpowiada, [string]$Adres, [string]$Opis = '',
           [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
@@ -929,36 +785,12 @@ function Set-JezykDostepnoscKomputera {
                         else { 'nie sprawdzono' }
     }
 
-    # ODPOWIEDZ ODKLADANA TU, BO TO JEDYNY PUNKT WIDZACY WSZYSTKIE TRZY STANY OBU WIDOKOW.
-    # Dzieki temu przyciski siegajace do maszyny nie wymagaja ani jednej linii w piatce
-    # funkcji, ktore te sonde przynosza - i zadna przyszla nie zostanie pominieta.
-    # Kolor kontrolki na warunek sie nie nadaje: trzyma go rejestr rol i odtwarza motyw.
+    # Odpowiedz sondy odkladana tu - jedyny punkt widzacy wszystkie stany obu widokow.
     $Script:MaszynaOdpowiada = $Odpowiada
     Set-JezykPrzyciskiZdalne $Script:OstatniKomputer -Widok $Widok
 }
 
-<#
-.SYNOPSIS
-    Sklada tresc pod przyciskiem "!" przy adresie MAC - z danych, nie z gotowych zdan.
-
-.DESCRIPTION
-    Logika oddaje DANE (podstawa dopasowania, karty, liczba wierszy), a zdania powstaja
-    tutaj - tak samo jak przy datach. MacSzczegoly niesie tylko twarde awarie i wtedy idzie
-    pod "!" bez zmian.
-
-    LICZBA SAMA NIE JEST ODPOWIEDZIA. Dotychczas pod "!" stalo "Zadna z 17 kart sieciowych
-    znanych SCCM nie ma adresu X" - a operator nie mial z tym co zrobic, bo wsrod tych
-    siedemnastu wpisow wiekszosc to tunele i karty wirtualne bez zapisanego adresu. Dlatego
-    wymieniamy KARTY Z ADRESEM, kazda z jej adresem i maska, a pozostale wpisy podajemy
-    jednym zdaniem.
-
-    Pelne wiersze tylko dla kart z adresem IPv4, bo MessageBox nie przewija: przy
-    siedemnastu wpisach z opisami okno przestaloby byc czytelne.
-
-    Maske podajemy WYLACZNIE wtedy, gdy przyszla z inwentaryzacji. Zapas 255.255.255.0
-    wypisany bez slowa wygladalby jak wartosc odczytana - a obietnica pod "!" ma byc
-    sprawdzona, nie zalozona.
-#>
+# Tresc "!" przy adresie MAC skladana z danych: dopasowanie po podsieci albo lista kart z adresem.
 function Get-JezykTrescMac {
     param($Wynik)
 
@@ -971,15 +803,12 @@ function Get-JezykTrescMac {
     if (-not $podstawa -or $podstawa -eq 'Adres') { return '' }
 
     $adresSondy = [string]$Wynik.Adres
-    # @() wokol POTOKU, nie wokol zmiennej: @($null).Count rowna sie 1, wiec brak pola
-    # dalby jeden wiersz opisujacy karte $null.
+    # @() wokol potoku, nie zmiennej - @($null).Count to 1.
     $karty  = @(@($Wynik.MacKarty) | Where-Object { $_ })
     $wpisow = [int]$Wynik.MacWpisow
     $linie  = @()
 
-    # Straz na brakujaca karte: bez niej zdanie o dopasowaniu powstaloby z pustym adresem
-    # i pusta maska, czyli wygladaloby na odpowiedz, nie bedac nia. Wtedy lepiej wymienic
-    # karty, tak jak przy braku trafienia.
+    # Bez trafionej karty zdanie o dopasowaniu powstaloby z pustym adresem.
     $trafiona = $Wynik.MacKarta
     if ($podstawa -eq 'Podsiec' -and $trafiona) {
         $oMasce = if ($trafiona.MaskaZSccm) { 'maska {0} z inwentaryzacji' -f $trafiona.Maska }
@@ -1034,8 +863,7 @@ function Get-JezykTrescMac {
         $linie += 'Żadna karta znana SCCM nie ma zapisanego adresu IPv4.'
     }
 
-    # Liczby podajemy po dwukropku, a nie w zdaniu: "pozostale 2 wpisow" wymagaloby odmiany
-    # liczebnika, a ta nie ma tu nic do powiedzenia o karcie sieciowej.
+    # Liczby po dwukropku - bez odmiany liczebnika.
     $linie += ''
     $linie += ('Wiersze inwentaryzacji: {0}.' -f $wpisow)
     if (($wpisow - $karty.Count) -gt 0) {
@@ -1046,23 +874,7 @@ function Get-JezykTrescMac {
     return ($linie -join [Environment]::NewLine)
 }
 
-<#
-.SYNOPSIS
-    Wypelnia pole "Adres MAC" i rozstrzyga przy nim przycisk "!".
-
-.DESCRIPTION
-    O TRESCI POLA DECYDUJE PODSTAWA DOPASOWANIA, a nie to, czy jest co wyjasnic. Napis
-    "nie dopasowano" rozstrzygal sie dotad po niepustosci tresci pod "!" - a odkad zwykly
-    brak trafienia nie jest awaria i tresc powstaje w widoku, to samo pole zaczeloby mowic
-    "nie sprawdzono" o rzeczy sprawdzonej. Podstawy sa cztery i pusta: patrz
-    Get-JezykDopasowanieMac.
-
-    MAC Z TEJ SAMEJ PODSIECI JEST OZNACZONY W POLU, bo operator czyta je raz i goly adres
-    wygladalby jak trafienie dokladne. Przy najwiekszych czcionkach Windows znacznik moze
-    nie zmiescic sie w kolumnie - i wlasnie dlatego "!" zapala sie tu MIMO pokazanego
-    MAC-a: jego obecnosc przy wypelnionym polu sama niesie te wiadomosc. Stalym
-    wyjasnieniem to nie jest, bo przy trafieniu dokladnym tresci nie ma wcale.
-#>
+# Pole "Adres MAC" i jego "!": tresc wedlug podstawy dopasowania; MAC z podsieci oznaczony w polu.
 function Set-JezykAdresMac {
     param([string]$Mac, [string]$Szczegoly,
           [ValidateSet('', 'Adres', 'Podsiec', 'Wiele', 'Brak')][string]$Podstawa = '',
@@ -1079,28 +891,8 @@ function Set-JezykAdresMac {
     Set-JezykInfo $pola.KluczMac $Szczegoly
 }
 
-<#
-.SYNOPSIS
-    Zapala i gasi notki "sprawdzanie" w polach czekajacych na odpowiedz z tla.
-
-.DESCRIPTION
-    DWIE NOTKI, BO DWA NIEZALEZNE ZADANIA. Trzy pola SCCM ("Ostatnio uzywany komputer",
-    "Adres IP", "Adres MAC") czekaja na zadanie Komputer, a "Ostatnie logowanie" na zadanie
-    Logowanie - koncza sie w innych chwilach, wiec kazde gasi WYLACZNIE swoja notke.
-    Licznik klatek jest przy tym wspolny, zeby kropki w obu miejscach szly rownym krokiem.
-
-    JEDNO MIEJSCE NA WSZYSTKIE CZYNNOSCI - dokladnie ta sama zasada, co przy
-    Set-JezykStanJeza. Notka to markery, licznik klatek ORAZ tresc pol; rozpisana po
-    miejscach wywolania rozjechalaby sie przy pierwszej zmianie i zostawilaby w oknie slowo
-    "sprawdzanie" nad praca, ktora dawno sie skonczyla.
-
-    MARKER, A NIE SAMA TRESC POLA. Po napisie w polu nie poznasz, czy to notka, czy juz
-    odpowiedz - "nie sprawdzono" wyglada jak kazdy inny wynik. Dopiero marker pozwala
-    zegarowi tla odroznic pole, ktore wolno przemalowac, od pola z gotowa odpowiedzia.
-
-    -Wylacz NIE RUSZA TRESCI POL. Kazdy wolajacy wpisuje zaraz potem wartosc prawdziwa,
-    a wyczyszczenie pol tutaj dawaloby mrugniecie pustka miedzy jednym a drugim.
-#>
+# Zapala i gasi notki "sprawdzanie" (SCCM i logowanie - dwa niezalezne zadania, wspolny licznik).
+# -Wylacz nie rusza tresci pol: wolajacy wpisuje zaraz wartosc prawdziwa.
 function Set-JezykNotkeSprawdzania {
     param([ValidateSet('Obie', 'Sccm', 'Logowanie')][string]$Notka = 'Obie', [switch]$Wylacz)
 
@@ -1110,34 +902,14 @@ function Set-JezykNotkeSprawdzania {
 
     if ($Wylacz) { return }
 
-    # Licznik zerujemy WYLACZNIE przy zapalaniu. Zgaszenie jednej notki nie moze odrzucic
-    # kropek drugiej na poczatek cyklu - zadania koncza sie niezaleznie od siebie.
+    # Licznik zerowany tylko przy zapalaniu - zgaszenie jednej notki nie cofa kropek drugiej.
     $Script:KlatkaKropek = 0
 
-    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara. Zapytanie bywa krotsze niz
-    # cwierc sekundy i pola staly wtedy puste przez cale swoje czekanie.
+    # Pierwsza klatka od razu - zapytanie bywa krotsze niz takt zegara.
     Update-JezykKropkiSprawdzania
 }
 
-<#
-.SYNOPSIS
-    Zapala i gasi notke "Łączenie" w polu Status: widoku komputera.
-
-.DESCRIPTION
-    TRZECIA NOTKA, BO TRZECIE NIEZALEZNE ZADANIE - i jedyna, ktora ZAKRYWA ZDANIE
-    PRAWDZIWE. Tamte dwie stoja w polach czekajacych na swoja pierwsza odpowiedz, a to
-    pole niesie w tej chwili diagnostyke wyszukiwania. Dlatego notka musi miec z czego
-    odtworzyc stan sprzed siebie i dlatego zapamietanie zdania stoi TUTAJ, razem
-    z markerem i pierwsza klatka - rozpisane po miejscach wywolania rozjechaloby sie
-    przy pierwszej zmianie.
-
-    ZAPAMIETUJE WYLACZNIE PRZY PIERWSZYM ZAPALENIU. Drugie klikniecie "Dyski" trafia
-    w pole, w ktorym stoi juz "Łączenie.." - zapamietane wtedy, wrocilyby do niego wlasne
-    kropki zamiast zdania, ktore je poprzedzalo.
-
-    -Wylacz NIE RUSZA TRESCI POLA, tak samo jak przy notce sprawdzania: kazdy wolajacy
-    wpisuje zaraz potem zdanie prawdziwe, a czyszczenie tutaj dawaloby mrugniecie pustka.
-#>
+# Notka "Łączenie" w polu Status: widoku komputera - zapamietuje zakryte zdanie (tylko za pierwszym razem).
 function Set-JezykNotkeLaczenia {
     param([switch]$Wylacz)
 
@@ -1146,6 +918,9 @@ function Set-JezykNotkeLaczenia {
         return
     }
 
+    # Notka konsoli oddaje pole z potwierdzeniem - inaczej zapamietalibysmy jej kropki.
+    if ($Script:NotkaKonsoli -and $Script:NotkaKonsoli.Widok -eq 'Maszyna') { Update-JezykNotkeKonsoli -Teraz }
+
     $pole = $Script:Kontrolki.TxtKomputerStatus
     if (-not $Script:StatusCzekaNaDysk) {
         $Script:StatusPrzedLaczeniem = if ($pole) { [string]$pole.Text } else { '' }
@@ -1153,36 +928,80 @@ function Set-JezykNotkeLaczenia {
 
     $Script:StatusCzekaNaDysk = $true
 
-    # Licznik klatek jest WSPOLNY z notka sprawdzania, zeby kropki w oknie szly rownym
-    # krokiem - zerujemy go przy zapalaniu, dokladnie tak samo jak tamta.
+    # Licznik klatek wspolny z notka sprawdzania - kropki ida rownym krokiem.
     $Script:KlatkaKropek = 0
 
-    # Pierwsza klatka OD RAZU, nie dopiero za takt zegara: polaczenie z maszyna stojaca
-    # w tej samej podsieci bywa krotsze niz cwierc sekundy.
+    # Pierwsza klatka od razu - polaczenie bywa krotsze niz takt zegara.
     Update-JezykKropkiSprawdzania
 }
 
-<#
-.SYNOPSIS
-    Jedna klatka animowanych kropek w polach czekajacych na odpowiedz z tla.
+# Notka "Trwa laczenie z NAZWA" po "Polacz" - w polu Status: tego widoku, z ktorego kliknieto.
+# Poprzednia notka konsoli konczy sie najpierw, a pierwsza klatka jest odrysowana od razu.
+function Set-JezykNotkeKonsoli {
+    param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto',
+          $Pole, [string]$Klucz, [string]$Netbios)
 
-.DESCRIPTION
-    BEZ WLASNEGO ZEGARA. Wolana z taktu $Script:ZegarTla, bo ten budzi sie co 250 ms i chodzi
-    dokladnie tak dlugo, jak zyja zadania w tle - czyli w tym samym oknie czasu, o ktore tu
-    chodzi. Osobny zegar budzilby watek interfejsu drugi raz po to samo, a zapomniany
-    chodzilby nad nieruchomym napisem do konca dnia.
+    Update-JezykNotkeKonsoli -Teraz
 
-    TAKT ZEGARA TO NIE KLATKA. Kropki zmieniaja sie co 500 ms, czyli co drugie budzenie -
-    stad dzielenie licznika przez $Script:TaktowNaKlatkeKropek. Cztery zmiany na sekunde
-    czytaja sie jak migotanie, a nie jak trwajaca praca.
+    # Napis rowny obecnej tresci - pierwsza klatka rozpoznaje pole jako swoje.
+    $Script:NotkaKonsoli = [pscustomobject]@{
+        Widok   = $Widok
+        Pole    = $Pole
+        Klucz   = $Klucz
+        Netbios = $Netbios
+        Napis   = if ($Pole) { [string]$Pole.Text } else { '' }
+        Proces  = $null
+        Termin  = (Get-Date).AddSeconds($Script:TerminNotkiKonsoli)
+    }
 
-    ZGASZONY MARKER ZATRZYMUJE WSZYSTKO i to jest zapora, nie oszczednosc: odpowiedz, ktora
-    przyszla w tym samym takcie, gasi swoj marker w Receive-JezykZadanie... - a te ida
-    w zegarze PRZED ta funkcja, wiec klatka nie ma juz czego nadpisac.
-#>
+    $Script:KlatkaKropek = 0
+    Update-JezykKropkiSprawdzania
+
+    # Uruchomienie z udzialu zajmuje watek okna - bez odrysowania notka pokazalaby sie po fakcie.
+    if ($Pole -and $Pole.PSObject.Methods['Refresh']) { $Pole.Refresh() }
+}
+
+# Gasi notke konsoli bez ruszania pola (wolajacy wpisuje wartosc sam); z -Widok tylko notke tego widoku.
+function Stop-JezykNotkeKonsoli {
+    param([ValidateSet('', 'Konto', 'Maszyna')][string]$Widok = '')
+
+    $notka = $Script:NotkaKonsoli
+    if (-not $notka) { return }
+    if ($Widok -and $notka.Widok -ne $Widok) { return }
+
+    $Script:NotkaKonsoli = $null
+
+    # Zwalnia tylko uchwyt - konsola biegnie dalej sama.
+    if ($notka.Proces) { try { $notka.Proces.Dispose() } catch { } }
+}
+
+# Konczy notke konsoli, gdy konsola pokazala okno, zamknela sie albo minal termin (-Teraz - od razu).
+# Wynik trafia do pola tylko wtedy, gdy pole nadal niesie notke; puste szczegoly gasza "!".
+function Update-JezykNotkeKonsoli {
+    param([switch]$Teraz)
+
+    $notka = $Script:NotkaKonsoli
+    if (-not $notka) { return }
+
+    $stan = Get-JezykStanKonsoli -Proces $notka.Proces -Netbios $notka.Netbios `
+                                 -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
+    if ($stan.Stan -eq 'Czeka' -and -not $Teraz -and (Get-Date) -lt $notka.Termin) { return }
+
+    # Obcy napis w polu to nowsza wiadomosc - zostaje.
+    $swoje = ($notka.Pole -and [string]$notka.Pole.Text -eq $notka.Napis)
+    Stop-JezykNotkeKonsoli
+    if (-not $swoje) { return }
+
+    $notka.Pole.Text = [string]$stan.Komunikat
+    Set-JezykInfo $notka.Klucz ([string]$stan.Szczegoly)
+}
+
+# Klatka kropek w polach czekajacych na tlo; bez wlasnego zegara - takt ZegarTla, klatka co 500 ms.
+# Zgaszony marker zatrzymuje wszystko - odpowiedz z tego samego taktu ma ostatnie slowo.
 function Update-JezykKropkiSprawdzania {
     if (-not $Script:PolaCzekajaNaSccm -and -not $Script:PoleCzekaNaLogowanie -and
-        -not $Script:StatusCzekaNaDysk) { return }
+        -not $Script:StatusCzekaNaDysk -and -not $Script:OknoSprawdzaniaGrupy -and
+        -not $Script:NotkaKonsoli) { return }
 
     $klatka = [int][math]::Floor($Script:KlatkaKropek / $Script:TaktowNaKlatkeKropek)
     $kropki = '.' * (1 + ($klatka % 3))
@@ -1190,10 +1009,7 @@ function Update-JezykKropkiSprawdzania {
 
     $k = $Script:Kontrolki
 
-    # SZESC POL, NIE TRZY: oba widoki maja swoja trojke i oba czekaja na zapytanie do SCCM.
-    # Jeden marker wystarcza, bo zadania "Komputer" i "Uzytkownik" nigdy nie biegna naraz -
-    # Set-JezykWidok przerywa przy zmianie trybu oba. Kropki lecace w panelu niewidocznym
-    # nikomu nie przeszkadzaja, a czyszczenie przy powrocie i tak je zdejmie.
+    # Szesc pol (oba widoki) - zadania "Komputer" i "Uzytkownik" nigdy nie biegna naraz.
     if ($Script:PolaCzekajaNaSccm) {
         foreach ($pole in @($k.TxtKomputerUzytkownika, $k.TxtKomputerIp, $k.TxtKomputerMac,
                             $k.TxtKomputerUzytkownikMaszyny, $k.TxtKomputerIpMaszyny,
@@ -1202,48 +1018,55 @@ function Update-JezykKropkiSprawdzania {
         }
     }
 
-    # Data przyblizona przyszla razem z kontem i siedzi juz w polu, wiec notka jest tu
-    # DOPISKIEM do prawdziwej odpowiedzi, a nie zamiast niej - stad ta sama funkcja
-    # skladajaca tekst, co przy gotowym wyniku.
+    # Notka logowania jest dopiskiem do daty przyblizonej, nie zamiast niej.
     if ($Script:PoleCzekaNaLogowanie -and $k.TxtOstatnieLogowanie) {
         $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Przyblizona $Script:LogowaniePrzyblizone `
                                                                -Trwa -Kropki $kropki
     }
 
-    # JEDNO POLE, NIE SZESC: notka laczenia z udzialem stoi wylacznie w polu Status: widoku
-    # komputera. Na tym poleceniu konczy sie podobienstwo do dwoch powyzszych - tamte pisza
-    # do pol pustych, a to zakrywa zdanie, ktore trzeba pozniej odtworzyc.
+    # Notka konsoli ustepuje, gdy pole zapisal ktos inny; stoi PRZED laczeniem - "Dyski" wygrywa.
+    if ($Script:NotkaKonsoli) {
+        $notka = $Script:NotkaKonsoli
+        if (-not $notka.Pole -or [string]$notka.Pole.Text -ne $notka.Napis) {
+            Stop-JezykNotkeKonsoli
+        }
+        else {
+            $notka.Napis     = 'Trwa łączenie z {0}{1}' -f $notka.Netbios, $kropki
+            $notka.Pole.Text = $notka.Napis
+        }
+    }
+
+    # Notka laczenia - tylko pole Status: widoku komputera (zakrywa zdanie do odtworzenia).
     if ($Script:StatusCzekaNaDysk -and $k.TxtKomputerStatus) {
         $k.TxtKomputerStatus.Text = 'Łączenie' + $kropki
     }
+
+    # Notka "Sprawdz nazwy" - pole Status okna grup (okno na zadanie, poza rejestrem kontrolek).
+    if ($Script:OknoSprawdzaniaGrupy) {
+        $stan = $Script:OknoSprawdzaniaGrupy.Tag
+        if ($stan -and $stan.Notka) { $stan.Notka.Text = 'Sprawdzanie' + $kropki }
+    }
 }
 
-# Obsluga przycisku "Pinguj": sprawdza JESZCZE RAZ maszyne, ktora jest juz na ekranie.
-# Nazwa idzie z $Script:OstatniKomputer, a nie z pola tekstowego - pole sluzy do
-# pokazywania i niesie takze date, wiec nie jest zrodlem prawdy.
+# Obsluga "Pinguj": sonda maszyny z ekranu (nazwa z pamieci, nie z pola tekstowego).
 function Invoke-JezykPing {
     param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
     if (-not $Script:OstatniKomputer) { return }
 
-    # KTORY WIDOK ZAMOWIL SONDE, ODKLADAMY TERAZ. Wynik wraca z tla po sekundach, przez
-    # osobne zadanie, a wtedy nikt juz nie pamieta, ktory przycisk go zamowil - i nie ma
-    # tego skad odczytac, bo obie polowki okna maja wlasna trojke pol.
+    # Widok zamawiajacy odkladamy teraz - odpowiedz z tla nie wie, kto ja zamowil.
     $Script:WidokSondy = $Widok
 
     $pola = Get-JezykPolaSondy -Widok $Widok
-    # NAPIS STATYCZNY, nie animowany. Ta praca trwa do poltorej sekundy - nie ma czym migac,
-    # a zapalenie markera kropek gasiloby odpowiedzi zadania SCCM, ktore o tym nie wie.
+    # Napis statyczny - marker kropek gasilby odpowiedzi zadania SCCM.
     if ($pola.Ip)    { $pola.Ip.Text = 'sprawdzanie...' }
     Set-JezykKolorPola $pola.Kolor 'Tekstu'
 
-    # W TLE, NIE TUTAJ. Rozwiazanie nazwy i sonda ICMP to do poltorej sekundy, a policzone
-    # na watku interfejsu byloby tyle samo zamrozonego okna.
+    # W tle - rozwiazanie nazwy i sonda to do 1,5 s zamrozonego okna.
     Start-JezykZadaniePingu -Netbios $Script:OstatniKomputer
 }
 
-# Przepisuje wynik sondy na zadanie z przycisku "Pinguj". Pole z nazwa maszyny zostaje
-# nietkniete - zmienia sie wylacznie jego kolor i adres obok.
+# Wynik sondy z przycisku "Pinguj": kolor dostepnosci i adres IP; inny adres uniewaznia pokazany MAC.
 function Update-JezykPingWTle {
     param($Ping)
 
@@ -1255,10 +1078,7 @@ function Update-JezykPingWTle {
                                  -Opis ([string]$Ping.Blad) `
                                  -Widok $widok
 
-    # POKAZANY MAC OPISUJE KARTE SPOD KONKRETNEGO ADRESU. Gdy maszyna odpowiada juz spod
-    # innego - a wlasnie po to klika sie "Pinguj" po dluzszej chwili - dotychczasowy adres
-    # MAC przestaje byc odpowiedzia i nie wolno go zostawic. Sonda nie ma przy tym skad
-    # wziac nowego: idzie sama, bez sesji do SCCM.
+    # MAC opisuje karte spod konkretnego adresu - inny adres uniewaznia pokazany MAC.
     $adres = [string]$Ping.Adres
     if ($Script:MacDlaAdresu -and $adres -and $adres -ne $Script:MacDlaAdresu) {
         Set-JezykAdresMac -Widok $widok -Mac '' -Podstawa 'Brak' -Szczegoly (
@@ -1271,9 +1091,7 @@ function Update-JezykPingWTle {
 # To samo po drugiej stronie okna: zamyka pole uzytkownika maszyny w widoku komputera.
 function Set-JezykPoleUzytkownikaBezTla {
     param([string]$Blad)
-    # Marker gasnie PRZED czymkolwiek innym, w kazdej galezi, ktora odpowiedz moze wyjsc -
-    # slowo "sprawdzanie" zostawione po skonczonej pracy klamie tak samo, jak jego brak
-    # w trakcie.
+    # Marker gasnie przed czymkolwiek innym, w kazdej galezi.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
 
     $k = $Script:Kontrolki
@@ -1284,22 +1102,7 @@ function Set-JezykPoleUzytkownikaBezTla {
     Set-JezykInfo 'Uzytkownik' $Blad
 }
 
-<#
-.SYNOPSIS
-    Odklada tresc pod przycisk "!" przy danym polu - albo zdejmuje ja razem z przyciskiem.
-
-.DESCRIPTION
-    Nastepczyni dymka nad kontrolka. Dymek niosl cala diagnostyke narzedzia, ale nic
-    w oknie nie sygnalizowalo, ze tam jest - kto nie wiedzial, ten nie najezdzal kursorem.
-    Przycisk widac.
-
-    Tresc trzymamy OSOBNO od przycisku: przycisk odpowiada wylacznie za widocznosc, a tekst
-    ma przezyc kazde przerysowanie okna. Przycisk pojawia sie dokladnie wtedy, gdy jest
-    co pokazac, i znika razem z trescia.
-
-    Osobna funkcja takze dlatego, ze w testach kontrolek nie ma wcale - jeden warunek
-    tutaj zastepuje warunek przy kazdym z kilkunastu wywolan.
-#>
+# Odklada tresc pod "!" przy polu i pokazuje przycisk tylko wtedy, gdy jest co pokazac.
 function Set-JezykInfo {
     param([string]$Klucz, [string]$Tekst)
 
@@ -1308,123 +1111,285 @@ function Set-JezykInfo {
     $przycisk = $Script:Kontrolki['Info' + $Klucz]
     if (-not $przycisk) { return }
 
-    # Pole Status niesie dodatkowo slad po zamulonych wywolaniach tla - patrz
-    # Show-JezykInformacja. Gdy jest tylko on, przycisk i tak ma sie pokazac.
+    # Status pokazuje "!" takze dla samego sladu zamulen tla.
     $jest = [bool]$Tekst
     if ($Klucz -eq 'Status' -and (Test-JezykJestDiagnostyka)) { $jest = $true }
 
     $przycisk.Visible = $jest
 }
 
-# Czy jest cokolwiek w sladzie zamulen tla? Osobna funkcja, bo zmienna powstaje dopiero
-# w SEKCJI 4, a @($null).Count wynosi JEDEN - warunek napisany wprost mowilby "jest",
-# zanim cokolwiek by sie wydarzylo.
+# Czy slad zamulen tla albo bledow okna nie jest pusty? (@($null).Count to 1, a zmienne powstaja w czesci 4.)
 function Test-JezykJestDiagnostyka {
-    if (-not $Script:DiagnostykaTla) { return $false }
-    return (@($Script:DiagnostykaTla).Count -gt 0)
+    if ($Script:DiagnostykaTla -and @($Script:DiagnostykaTla).Count -gt 0) { return $true }
+    if ($Script:BledyOkna      -and @($Script:BledyOkna).Count      -gt 0) { return $true }
+    return $false
 }
 
-<#
-.SYNOPSIS
-    Pokazuje tresc odlozona przez Set-JezykInfo. Wolane z klikniecia w przycisk "!".
-
-.DESCRIPTION
-    Do pola Status doklejany jest slad po wywolaniach, ktore ZA DLUGO trzymaly watek
-    interfejsu. To jedyne miejsce, w ktorym da sie go zobaczyc bez debuggera, a odpowiada
-    na jedyne pytanie, ktore pada po zamarciu okna: co je zamrozilo.
-#>
-function Show-JezykInformacja {
+# Tresc spod "!" bez pokazywania okna; przy Status dokleja slad zamulen tla i bledy okna tej sesji.
+function Get-JezykTrescInformacji {
     param([string]$Klucz)
 
     $czesci = @()
     $tekst  = [string]$Script:Informacje[$Klucz]
     if ($tekst) { $czesci += $tekst }
 
-    if ($Klucz -eq 'Status' -and (Test-JezykJestDiagnostyka)) {
+    if ($Klucz -eq 'Status' -and $Script:DiagnostykaTla -and @($Script:DiagnostykaTla).Count -gt 0) {
         $czesci += @('', 'Zadania w tle, które zatrzymały okno na dłużej niż ćwierć sekundy:',
                      '') + @($Script:DiagnostykaTla)
     }
 
-    if (@($czesci).Count -eq 0) { return }
+    if ($Klucz -eq 'Status' -and $Script:BledyOkna -and @($Script:BledyOkna).Count -gt 0) {
+        $czesci += @('', 'Błędy w procedurach okna w tej sesji:', '')
+        foreach ($blad in @($Script:BledyOkna)) {
+            $linia = if ($blad.Ile -gt 1) { '{0} (powtórzone {1} razy)' -f $blad.Linia, $blad.Ile }
+                     else                 { [string]$blad.Linia }
+            $czesci += $linia
+        }
+
+        # Plik wymieniony tylko wtedy, gdy zapis naprawde sie udal.
+        if ($Script:AwariaZapisana) {
+            $czesci += @('', ('Błędy, które przerwały procedurę, zapisano też w pliku {0}' -f $Script:AwariaZapisana))
+        }
+    }
+
+    return ($czesci -join [Environment]::NewLine)
+}
+
+# Pokazuje tresc spod "!" (klikniecie przycisku).
+function Show-JezykInformacja {
+    param([string]$Klucz)
+
+    $tresc = Get-JezykTrescInformacji $Klucz
+    if (-not $tresc) { return }
 
     $tytul = [string]$Script:TytulyInformacji[$Klucz]
     if (-not $tytul) { $tytul = 'Informacja' }
 
     [void][System.Windows.Forms.MessageBox]::Show(
-        ($czesci -join [Environment]::NewLine), ('Jeżyk - {0}' -f $tytul),
+        $tresc, ('Jeżyk - {0}' -f $tytul),
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information)
 }
 
-<#
-.SYNOPSIS
-    Przepisuje wynik obejscia kontrolerow do pola daty logowania.
+# Sciezka pliku bledow krytycznych w %TEMP% albo '' - bez TEMP nie ma gdzie pisac.
+function Get-JezykSciezkaAwarii {
+    if (-not $env:TEMP -or -not $Script:PlikAwarii) { return '' }
+    return (Join-Path $env:TEMP $Script:PlikAwarii)
+}
 
-.DESCRIPTION
-    Nazwa domeny przychodzi z UCHWYTU ZADANIA, a nie z biezacego wyboru w oknie: lista
-    kontrolerow nalezy do domeny, w ktorej zadanie wystartowalo, a wybor mogl sie w tym
-    czasie zmienic.
-#>
+# Stan procesu do wpisu awarii: wersja, start, pamiec prywatna i uchwyty (nieudany odczyt - "n/d").
+function Get-JezykStanProcesu {
+    $start   = 'n/d'
+    $pamiec  = 'n/d'
+    $uchwyty = 'n/d'
+
+    try {
+        $proces = [System.Diagnostics.Process]::GetCurrentProcess()
+        try { $start   = '{0:yyyy-MM-dd HH:mm:ss}' -f $proces.StartTime } catch { }
+        try { $pamiec  = '{0} MB' -f [math]::Round($proces.PrivateMemorySize64 / 1MB) } catch { }
+        try { $uchwyty = [string]$proces.HandleCount } catch { }
+    }
+    catch { }
+
+    'Wersja: {0}; działa od: {1}; pamięć prywatna: {2}; uchwyty: {3}' -f
+        [string]$Script:Config.Wersja, $start, $pamiec, $uchwyty
+}
+
+# Dopisuje wpis do pliku bledow krytycznych (%TEMP%, ostatnie $Script:LimitWpisowAwarii); $true po udanym zapisie.
+# Format naglowka taki sam jak w obsludze awarii procesu (Jezyk.Native w czesci 1).
+function Add-JezykWpisAwarii {
+    param([string]$Rodzaj, [string]$Tresc)
+
+    try {
+        $sciezka = Get-JezykSciezkaAwarii
+        if (-not $sciezka) { return $false }
+
+        $naglowek = '=== {0:yyyy-MM-dd HH:mm:ss} | PID {1} | {2} ===' -f (Get-Date), $PID, $Rodzaj
+        $wpis     = @($naglowek, $Tresc, (Get-JezykStanProcesu), '', '') -join [Environment]::NewLine
+
+        # Dotychczasowe wpisy dzielone po naglowku; ponad limit odpadaja najstarsze.
+        $wpisy = @()
+        if (Test-Path -LiteralPath $sciezka -ErrorAction Stop) {
+            $dotad = Get-Content -LiteralPath $sciezka -Raw -Encoding UTF8 -ErrorAction Stop
+            if ($dotad) {
+                $wpisy = @([regex]::Split($dotad, '(?m)^(?==== \d{4}-\d{2}-\d{2} )') | Where-Object { $_.Trim() })
+            }
+        }
+        $wpisy += $wpis
+        if ($wpisy.Count -gt $Script:LimitWpisowAwarii) {
+            $wpisy = @($wpisy | Select-Object -Last $Script:LimitWpisowAwarii)
+        }
+
+        Set-Content -LiteralPath $sciezka -Value ($wpisy -join '') -Encoding UTF8 -NoNewline -ErrorAction Stop
+        return $true
+    }
+    catch { return $false }
+}
+
+# Blad bez konsoli, do ktorej dalo sie go wypisac, albo wyjatek, ktory przerwal procedure okna - pod "!" przy Status.
+# -Krytyczny (procedura przerwana) dopisuje go takze do pliku awarii; obiekty niebedace bledem pomija.
+function Add-JezykBladOkna {
+    param($Blad, [switch]$Krytyczny)
+
+    # Uwaga: wolana z obslugi wyjatkow okna - wyjatek stad wyszedlby z ShowDialog i zamknal program (README: Pulapki).
+    # Znacznik wejscia: blad napisany w trakcie trafilby tu z powrotem przez zbieracz strumieni.
+    if ($Script:ZapisBleduOknaTrwa) { return }
+    $Script:ZapisBleduOknaTrwa = $true
+
+    try {
+        # Wyjatek PowerShella niesie rekord (miejsce w skrypcie, slad wywolan); rekord bledu niesie wyjatek.
+        $rekord  = $null
+        $wyjatek = $null
+        if ($Blad -is [System.Exception]) {
+            $wyjatek = $Blad
+            if ($Blad.PSObject.Properties['ErrorRecord'] -and $Blad.ErrorRecord) { $rekord = $Blad.ErrorRecord }
+        }
+        elseif ($Blad -and $Blad.PSObject.Properties['Exception'] -and $Blad.PSObject.Properties['InvocationInfo']) {
+            $rekord  = $Blad
+            $wyjatek = $Blad.Exception
+        }
+        if (-not $wyjatek) { return }
+
+        $czynnosc = if ($Krytyczny) { 'Procedura okna przerwana' } else { 'Procedura okna' }
+        $opis     = Get-JezykOpisBledu ([pscustomobject]@{ Exception = $wyjatek }) $czynnosc
+
+        # Miejsce: pierwsza ramka sladu wywolan (dokladna takze dla Write-Error), inaczej InvocationInfo.
+        # Ramka bywa po polsku ("wiersz") albo po angielsku ("line") - liczy sie plik i liczba.
+        $miejsce = ''
+        $ramka   = if ($rekord -and $rekord.ScriptStackTrace) { ([string]$rekord.ScriptStackTrace -split "`r?`n")[0] } else { '' }
+        if ($ramka -match '([^\\/]+\.ps1): \S+ (\d+)') {
+            $miejsce = ' ({0}, linia {1})' -f $Matches[1], $Matches[2]
+        }
+        elseif ($rekord -and $rekord.InvocationInfo -and $rekord.InvocationInfo.ScriptLineNumber -gt 0) {
+            $plik    = [System.IO.Path]::GetFileName([string]$rekord.InvocationInfo.ScriptName)
+            $miejsce = ' ({0}, linia {1})' -f $plik, $rekord.InvocationInfo.ScriptLineNumber
+        }
+
+        # Ten sam blad raz za razem (np. co takt zegara) podbija licznik zamiast dopisywac wiersze.
+        # Puste pozycje odsiane - @($null) ma jeden element.
+        $bledy    = @($Script:BledyOkna | Where-Object { $_ })
+        $podpis   = '{0}|{1}|{2}' -f $wyjatek.GetType().FullName, $wyjatek.Message, $miejsce
+        $ostatni  = $bledy | Select-Object -Last 1
+        $powtorka = ($ostatni -and $ostatni.Podpis -eq $podpis)
+
+        if ($powtorka) {
+            $ostatni.Ile = $ostatni.Ile + 1
+        }
+        else {
+            $bledy += [pscustomobject]@{
+                Podpis = $podpis
+                Linia  = '{0:HH:mm:ss}  {1}{2}' -f (Get-Date), $opis.Krotki, $miejsce
+                Ile    = 1
+            }
+            if ($bledy.Count -gt $Script:LimitBledowOkna) {
+                $bledy = @($bledy | Select-Object -Last $Script:LimitBledowOkna)
+            }
+            $Script:BledyOkna = $bledy
+        }
+
+        # Rejestr bywa pusty (blad przed zbudowaniem okna) - wpis do pliku i tak ma pasc.
+        $przycisk = if ($Script:Kontrolki) { $Script:Kontrolki['InfoStatus'] } else { $null }
+        if ($przycisk) { $przycisk.Visible = $true }
+
+        if ($Krytyczny -and -not $powtorka) {
+            $szczegoly = @($opis.Szczegoly)
+            if ($rekord -and $rekord.InvocationInfo -and $rekord.InvocationInfo.PositionMessage) {
+                $szczegoly += @('', [string]$rekord.InvocationInfo.PositionMessage)
+            }
+            if ($rekord -and $rekord.ScriptStackTrace) {
+                $szczegoly += @('', 'Ślad wywołań:', [string]$rekord.ScriptStackTrace)
+            }
+            elseif (-not $rekord) {
+                # Wyjatek .NET bez rekordu - pelny opis ze sladem stosu.
+                $szczegoly += @('', [string]$wyjatek)
+            }
+
+            if (Add-JezykWpisAwarii -Rodzaj 'Wyjątek przerwał procedurę okna' -Tresc ($szczegoly -join [Environment]::NewLine)) {
+                $Script:AwariaZapisana = Get-JezykSciezkaAwarii
+            }
+        }
+    }
+    catch {
+        # Obsluga bledu nie ma prawa sama sie wywrocic - jak Register-JezykBladCzesci.
+    }
+    finally {
+        $Script:ZapisBleduOknaTrwa = $false
+    }
+}
+
+# Zamkniecie okna nie przez operatora (powod z FormClosing jako napis) - wpis do pliku awarii.
+function Write-JezykZamkniecie {
+    param([string]$Powod)
+
+    try {
+        if (-not $Powod -or $Powod -eq 'UserClosing') { return }
+
+        # Wylogowanie potrafi wyslac FormClosing dwa razy - drugi wpis niczego nie dodaje.
+        if ($Script:ZamkniecieZapisane -eq $Powod) { return }
+
+        $opis = switch ($Powod) {
+            'WindowsShutDown'    { 'Okno zamknął system Windows: wylogowanie, ponowne uruchomienie albo wyłączenie komputera (np. po aktualizacjach).' }
+            'TaskManagerClosing' { 'Okno zamknął inny program: Menedżer zadań, polecenie taskkill (bez /f) albo narzędzie administracyjne.' }
+            default              { 'Okno zamknięto bez udziału operatora (powód podany przez Windows: {0}).' -f $Powod }
+        }
+
+        if (Add-JezykWpisAwarii -Rodzaj 'Okno zamknięte nie przez operatora' -Tresc $opis) {
+            $Script:ZamkniecieZapisane = $Powod
+        }
+    }
+    catch {
+        # Wyjatek w FormClosing przerwalby zamykanie okna - zapis sladu nie moze do tego doprowadzic.
+    }
+}
+
+# Wynik obejscia kontrolerow do pola daty i jego "!"; domena z uchwytu zadania, nie z biezacego wyboru.
 function Update-JezykLogowanieWTle {
     param($Logowanie, [string]$Domena = '')
 
-    # Dokladna data przyszla - slowo "precyzowanie" przestaje byc prawdziwe.
+    # Wynik przyszedl - slowo "precyzowanie" przestaje byc prawdziwe.
     Set-JezykNotkeSprawdzania -Notka 'Logowanie' -Wylacz
 
     $k = $Script:Kontrolki
 
-    # Pamiec kontrolerow: ich rozpoznanie to osobne zapytanie, a lista zmienia sie raz na
-    # wiele miesiecy - zapamietujemy ja pod nazwa domeny i podajemy nastepnemu zadaniu.
+    # Lista kontrolerow zapamietywana per domena dla nastepnych zadan.
     if ($Domena -and @($Logowanie.Kontrolery).Count -gt 0) {
         $Script:KontroleryCache[$Domena] = @($Logowanie.Kontrolery)
     }
 
-    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Dokladna $Logowanie.Data `
+    # Niepelne pokrycie mowi o sobie w samym polu i pod jego "!" - nie w cudzym polu Status.
+    $k.TxtOstatnieLogowanie.Text = Get-JezykTekstLogowania -Wynik $Logowanie `
                                                            -Przyblizona $Script:LogowaniePrzyblizone
+    # Czerwony tylko gdy uscislenie nie doszlo do skutku; niepelne pokrycie - niebieski. Nigdy oba.
+    $opis = Get-JezykOpisLogowania -Wynik $Logowanie -Przyblizona $Script:LogowaniePrzyblizone
+    Set-JezykInfo 'Logowanie'         $(if ($Logowanie.Blad) { $opis } else { '' })
+    Set-JezykInfo 'LogowanieNiepelne' $(if ($Logowanie.Blad) { '' } else { $opis })
 
-    # Niepelne pokrycie znaczy, ze data MOZE byc zanizona - prawdziwe logowanie moglo trafic
-    # na kontroler, ktory zamilkl.
-    if ($Logowanie.Wszystkie -gt 0 -and $Logowanie.Odpytane -lt $Logowanie.Wszystkie -and
-        $k.TxtStatus.Text -notmatch 'zaniżona') {
-        $k.TxtStatus.Text = ('{0} Data logowania MOŻE być zaniżona - odpowiedziało {1} z {2} kontrolerów.' -f
-                             $k.TxtStatus.Text, $Logowanie.Odpytane, $Logowanie.Wszystkie).Trim()
-    }
-
-    # Odrzucona nazwa to NIE to samo co milczacy kontroler: pierwsze jest usterka
-    # konfiguracji, druga problemem z siecia. Idzie do pola Status, a nie pod przycisk "!"
-    # przy dacie - tamten niesie stale wyjasnienie, skad biora sie dwie daty.
+    # Odrzucona nazwa kontrolera to usterka konfiguracji, nie sieci - dopisek w Status.
     if (@($Logowanie.Odrzucone).Count -gt 0 -and $k.TxtStatus.Text -notmatch 'Pominięte') {
         $k.TxtStatus.Text = ('{0} Pominięte nazwy kontrolerów: {1}.' -f
                              $k.TxtStatus.Text, (@($Logowanie.Odrzucone) -join ', ')).Trim()
     }
 }
 
-# Przepisuje wynik zapytania do SCCM do pola "Ostatnio zalogowany uzytkownik" w widoku
-# komputera. Ta sama zasada co przy polu obok: przycisk "!" zapala sie WYLACZNIE przy
-# bledzie, bo ma znaczyc dokladnie jedno - "cos nie dziala".
+# Wynik SCCM do pola "Ostatnio zalogowany uzytkownik" w widoku komputera; "!" tylko przy bledzie.
 function Update-JezykUzytkownikaWTle {
     param($Uzytkownik)
 
-    # Marker kropek gasnie PRZED wpisaniem czegokolwiek - inaczej nastepny takt zegara
-    # nadpisalby gotowa odpowiedz napisem "sprawdzanie".
+    # Marker gasnie przed wpisaniem odpowiedzi - inaczej nastepny takt nadpisalby ja kropkami.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
 
     $k = $Script:Kontrolki
     if (-not $k.TxtKomputerUzytkownikMaszyny) { return }
 
     if ($Uzytkownik.Uzytkownik) {
-        $k.TxtKomputerUzytkownikMaszyny.Text = if ($null -ne $Uzytkownik.Data) {
-            '{0} ({1:yyyy-MM-dd HH:mm})' -f $Uzytkownik.Uzytkownik, $Uzytkownik.Data
-        } else {
-            [string]$Uzytkownik.Uzytkownik
-        }
+        $k.TxtKomputerUzytkownikMaszyny.Text = Get-JezykTekstSesji -Nazwa ([string]$Uzytkownik.Uzytkownik) `
+                                                   -Data $Uzytkownik.Data -Teraz ([bool]$Uzytkownik.ZalogowanyTeraz)
     }
     else {
         $k.TxtKomputerUzytkownikMaszyny.Text = if ($Uzytkownik.Blad) { $Uzytkownik.Blad } else { 'brak danych' }
     }
 
-    # Dostepnosc i karta sieciowa przychodza TYM SAMYM wynikiem, co uzytkownik - jedna
-    # podroz po sieci na trzy pola, dokladnie jak po drugiej stronie okna.
+    # Dostepnosc i karta sieciowa przychodza tym samym wynikiem.
     Set-JezykDostepnoscKomputera -Odpowiada $Uzytkownik.Odpowiada `
                                  -Adres ([string]$Uzytkownik.Adres) -Widok Maszyna
 
@@ -1432,54 +1397,27 @@ function Update-JezykUzytkownikaWTle {
                       -Szczegoly (Get-JezykTrescMac -Wynik $Uzytkownik) `
                       -Podstawa ([string]$Uzytkownik.MacPodstawa) -Widok Maszyna
 
-    # Adres, do ktorego MAC zostal dopasowany - ponowny ping sprawdzi po nim, czy pokazana
-    # karta nadal opisuje te maszyne.
+    # Adres dopasowania MAC - ponowny ping sprawdzi, czy karta nadal pasuje.
     $Script:MacDlaAdresu = if ($Uzytkownik.Mac) { [string]$Uzytkownik.Adres } else { '' }
 
     Set-JezykInfo 'Uzytkownik' $(if ($Uzytkownik.Blad) { [string]$Uzytkownik.Szczegoly } else { '' })
 }
 
-<#
-.SYNOPSIS
-    Doklada do listy wyboru konta znalezione po NUMERZE TELEFONU - juz po tym, jak okno
-    pokazalo wynik wyszukiwania po nazwie.
-
-.DESCRIPTION
-    CZTERY ROZNE ODPOWIEDZI, NIE DWIE. Trafienia, "jest ich za wielu", "nie udalo sie
-    sprawdzic" i "nikogo nie ma" prowadza do zupelnie innych zdan w oknie, a pusta lista
-    umie powiedziec tylko to ostatnie.
-
-    DOKLEJAMY NA KONIEC, BEZ SORTOWANIA I BEZ RUSZANIA ZAZNACZENIA. Zapytanie trwa sekundy,
-    wiec operator zdazyl juz kogos wybrac i ma przed soba jego dane - przestawienie listy
-    albo zaznaczenia zabraloby mu to sprzed oczu w losowym momencie. Wyjatkiem jest lista
-    PUSTA: tam nie ma czego zabierac, a bez zaznaczenia trafienie nie pokazaloby sie samo.
-
-    ZBYT WIELU WLASCICIELI TO NIE USTERKA. Kontroler odpowiedzial i odpowiedz jest pelna -
-    wiemy na pewno, ze trafien jest wiecej niz limit. Przycisku "!" wiec nie zapalamy,
-    bo nie ma czego pod nim pokazac.
-
-    NOTKE "TRWA SZUKANIE" ZASTEPUJEMY, A NIE DOKLEJAMY ZA NIA. Invoke-JezykSearch stawia ja
-    w polu Status na czas pracy zadania i od chwili, w ktorej ta funkcja ruszyla, jest ona
-    nieprawdziwa - szukanie wlasnie sie skonczylo. Doklejenie zostawiloby "trwa" na ekranie
-    do konca dnia. Ktore zdanie tam stoi, mowi $Script:StatusCzekaNaNumer, bo po samej
-    pustej liscie tego nie poznasz.
-#>
+# Doklada trafienia po numerze telefonu: na koniec listy, bez sortowania i bez ruszania zaznaczenia.
+# Cztery odpowiedzi; notke "trwa" zastepuje (README: Wyszukiwanie po numerze telefonu).
 function Update-JezykNumerWTle {
     param($Wynik)
 
     $k = $Script:Kontrolki
 
-    # Czytamy RAZ, na wejsciu: galezie nizej same zmieniaja pole Status, wiec pytanie
-    # zadane pozniej dotyczyloby juz zdania, ktore ta funkcja dopiero co tam wpisala.
+    # Stan notki czytany raz, na wejsciu - galezie nizej zmieniaja pole Status.
     $notka = $Script:StatusCzekaNaNumer
 
     try {
         if ($Wynik.Przerwane) {
-            # "NIE UDALO SIE SPRAWDZIC" TO NIE "NIKOGO NIE MA". Lista jest niepelna i operator
-            # musi o tym wiedziec: ktos, kogo szukal, mogl sie na niej nie znalezc.
+            # "Nie udalo sie sprawdzic" to nie "nikogo nie ma" - lista moze byc niepelna.
             if ($notka) {
-                # Pole mowilo "trwa" i nie ma za czym doklejac - a samo "nie powiodlo sie"
-                # zostawiloby operatora bez odpowiedzi na pytanie, ktore zadal.
+                # Pole mowilo "trwa" - zastepujemy pelnym zdaniem.
                 $k.Werdykt.Text   = 'Nie udało się sprawdzić numeru'
                 $k.TxtStatus.Text = 'Po nazwie nic nie znaleziono, a przeszukanie numerów telefonu się nie powiodło - nie wiadomo, czy ten numer do kogoś należy.'
             }
@@ -1492,29 +1430,18 @@ function Update-JezykNumerWTle {
         }
 
         if ($Wynik.ZaDuzo) {
-            # Bez cytowania wpisanej wartosci: od uruchomienia zadania minely sekundy i operator
-            # mogl juz zaczac wpisywac co innego - pole tekstowe niesie wtedy inny numer niz ten,
-            # ktorego dotyczy ta odpowiedz.
-            #
-            # Jedno zdanie na oba przypadki: czyta sie i samodzielnie, i doklejone za innym.
+            # Bez cytowania wpisanej wartosci - pole moze juz niesc inny numer.
             $zaWielu = 'Numeru używa w domenie {0} więcej niż {1} osób - to zwykle numer infolinii albo wspólny numer działu. Poszukaj po nazwisku albo loginie.' -f
                        $Script:Config.Domena, [int]$Script:Config.LimitNumeru
 
             if ($k.ListaKont.Items.Count -eq 0) {
-                # PRZY PUSTEJ LISCIE POLE NIE NIESIE NIC, ZA CZYM WARTO DOKLEJAC: albo notke
-                # "trwa szukanie", ktora wlasnie przestala byc prawda, albo - zanim ja tu
-                # postawiono - "Nie znaleziono konta ani kontaktu", czyli zdanie DOKLADNIE
-                # odwrotne do stanu faktycznego: kont z tym numerem nie brakuje, jest ich za
-                # wielu. Doklejone na koncu wyjasnienie ginelo poza widoczna czescia pola,
-                # wiec operator czytal tylko to pierwsze zdanie. Dlatego ZASTEPUJEMY, a nie
-                # doklejamy - razem z werdyktem.
+                # Pusta lista: komunikat ZASTEPUJE tresc pola razem z werdyktem (doklejony ginal poza polem).
                 $k.TxtStatus.Text     = $zaWielu
                 $k.Werdykt.Text       = 'Numer należy do wielu osób'
                 Set-JezykKolorPola $k.Werdykt 'Nieznany'
             }
             else {
-                # Cos znalazlo sie po nazwie, wiec zdanie o tych trafieniach jest prawdziwe
-                # i ma zostac. Numer dopisuje sie za nim jako druga, osobna informacja.
+                # Zdanie o trafieniach po nazwie zostaje - numer dopisuje sie za nim.
                 $k.TxtStatus.Text = ('{0} {1}' -f $k.TxtStatus.Text, $zaWielu).Trim()
             }
             return
@@ -1523,12 +1450,7 @@ function Update-JezykNumerWTle {
         $trafienia = @($Wynik.Trafienia)
         if ($trafienia.Count -eq 0) {
             if ($notka) {
-                # Szukanie skonczylo sie i nikogo nie ma. Bez tego zdanie "trwa jeszcze
-                # szukanie" zostawaloby na ekranie do nastepnego klikniecia "Szukaj" -
-                # klamiac tak samo jak to, ktore mialo zastapic.
-                #
-                # Bez cytowania wpisanej wartosci, z tego samego powodu, co przy "za wielu":
-                # od uruchomienia zadania minely sekundy i w polu moze juz stac co innego.
+                # Koniec szukania, nikogo nie ma - zdanie "trwa" nie moze zostac.
                 $k.Werdykt.Text   = 'Nie znaleziono konta'
                 $k.TxtStatus.Text = 'Nie znaleziono nikogo w domenie {0} - ani po nazwie, ani po numerze telefonu.' -f
                                     $Script:Config.Domena
@@ -1538,29 +1460,23 @@ function Update-JezykNumerWTle {
 
         $lista = $k.ListaKont
 
-        # Bez duplikatow: konto z numerem w loginie potrafi trafic do obu zapytan, a dwa razy
-        # ta sama osoba na liscie wyglada jak usterka.
+        # Bez duplikatow (po DN) - konto z numerem w loginie trafia do obu zapytan.
         $juzSa = @{}
         foreach ($pozycja in $lista.Items) { $juzSa[[string]$pozycja.Dn] = $true }
 
-        # Notka tu nie dotrwa i nie trzeba jej sprzatac: stawiana jest wylacznie przy PUSTEJ
-        # liscie, a z pustej listy $juzSa wychodzi pusty i zadne trafienie nie odpada.
+        # Notka stoi tylko przy pustej liscie, wiec tu nie dotrwa.
         $nowe = @($trafienia | Where-Object { -not $juzSa.ContainsKey([string]$_.Dn) })
         if ($nowe.Count -eq 0) { return }
 
         $bylaPusta = ($lista.Items.Count -eq 0)
 
-        # Blokada zdarzen jak w Set-JezykListaKont: kazde dodanie pozycji wywoluje
-        # SelectedIndexChanged, wiec bez niej jedno doklejenie odpalaloby kilka pelnych
-        # zapytan do AD.
+        # Blokada zdarzen jak w Set-JezykListaKont.
         $Script:BlokadaZdarzen = $true
         try { foreach ($pozycja in $nowe) { [void]$lista.Items.Add($pozycja) } }
         finally { $Script:BlokadaZdarzen = $false }
 
         if ($bylaPusta) {
-            # Okno mowi w tej chwili "Nie znaleziono konta" - a wlasnie znalezlismy. Zaznaczenie
-            # odpala Invoke-JezykWyborKonta, ktore wykona pelny odczyt i nadpisze caly widok
-            # kontem, wiec werdykt i status poprawiaja sie same.
+            # Lista byla pusta - zaznaczenie odpala pelny odczyt i poprawia werdykt oraz status.
             $lista.SelectedIndex = 0
         }
         else {
@@ -1573,40 +1489,14 @@ function Update-JezykNumerWTle {
         # Odpowiedz jest, wiec notki juz nie ma - zapali sie dopiero przy nastepnym szukaniu.
         $Script:StatusCzekaNaNumer = $false
 
-        # POZA Z KONCOWEGO STANU LISTY, a nie z tego, co oddalo samo zadanie. Po nazwie mogl
-        # sie ktos znalezc, choc numer nie dal nic - i odwrotnie: przy liscie pustej to
-        # wlasnie numer jest jedynym trafieniem, jakie w ogole padlo.
-        #
-        # finally, a nie koniec funkcji: cztery odpowiedzi wychodza stad przez return,
-        # wiec poza postawiona na koncu nie doczekalaby sie zadnej z nich.
+        # Poza jeza z koncowego stanu listy; w finally, bo odpowiedzi wychodza przez return.
         $stan = if ($k.ListaKont.Items.Count -gt 0) { 'Jablko' } else { 'NaPlecach' }
         Set-JezykStanJeza $stan
     }
 }
 
-<#
-.SYNOPSIS
-    Ustawia stan jeza - jedyny wskaznik pracy i wyniku wyszukiwania.
-
-.DESCRIPTION
-    CZTERY STANY: Ukryty (nic sie nie dzieje), Szuka (biegnie), Jablko (znaleziono),
-    NaPlecach (nie znaleziono). Poza z wynikiem zostaje na ekranie az do nastepnego
-    wyszukiwania - to ona, a nie zniknieciecie wskaznika, jest odpowiedzia dla operatora.
-
-    JEDNO MIEJSCE NA WSZYSTKIE CZYNNOSCI. Wskaznik to kontrolka, licznik klatek ORAZ zegar
-    animacji; rozpisane po miejscach wywolania rozjechalyby sie przy pierwszej zmianie
-    i zostawilyby zegar chodzacy nad nieruchomym obrazkiem.
-
-    LICZNIK KLATEK ZERUJEMY WYLACZNIE PRZY 'Szuka'. Poza ma zostac tam, gdzie jez skonczyl
-    biec, wiec wyzerowanie go przy stawianiu pozy odrzucaloby jeza z powrotem na start.
-
-    INVALIDATE JEST TU KONIECZNE. Przejscie 'Szuka' -> 'Jablko' nie zmienia Visible, wiec
-    bez niego kontrolka nie przerysowalaby sie wcale i operator ogladalby biegnacego jeza
-    zamrozonego w ostatniej klatce.
-
-    ZEGARA MOZE NIE BYC. Zestaw weryfikacyjny nie buduje okna, wiec $Script:ZegarJeza jest
-    tam pusty - straz jest ta sama, co przy $Script:ZegarTla w Jezyk-4-Okno.ps1.
-#>
+# Stan jeza: Ukryty, Szuka, Jablko, NaPlecach - kontrolka, licznik klatek i zegar naraz.
+# Licznik zerowany tylko przy 'Szuka'; Invalidate konieczne (Szuka -> Jablko nie zmienia Visible).
 function Set-JezykStanJeza {
     param([ValidateSet('Ukryty', 'Szuka', 'Jablko', 'NaPlecach')][string]$Stan)
 
@@ -1622,55 +1512,19 @@ function Set-JezykStanJeza {
     }
 }
 
-<#
-.SYNOPSIS
-    Steruje przyciskami siegajacymi do maszyny - "Polacz" i "Dyski". Jedyne miejsce
-    z ich warunkami.
-
-.DESCRIPTION
-    JEDNA OS: WIDOCZNOSC. Oba przyciski albo sa, albo ich nie ma - wyszarzeniem nie
-    steruje tu nic. Warunki sa jednak TRZY i musza byc spelnione naraz:
-
-      1. jest zapamietana maszyna,
-      2. jest czym sie z nia polaczyc (dotyczy tylko "Polacz": SciezkaRemoteControl),
-      3. sonda ICMP potwierdzila, ze maszyna odpowiada.
-
-    Warunek trzeci bierze sie stad, ze obie akcje siegaja do maszyny PO SIECI - bez
-    potwierdzonej odpowiedzi konczylyby sie bledem, ktory dalo sie przewidziec.
-
-    POTWIERDZONA znaczy $true, a nie "nie $false". $null chowa tak samo: nie sprawdzono,
-    nie udalo sie sprawdzic i sprawdzono z wynikiem negatywnym to nadal trzy rozne rzeczy
-    (i trzy rozne KOLORY pola, patrz Set-JezykDostepnoscKomputera), ale zadna z dwoch
-    ostatnich nie jest zgoda na siegniecie do maszyny.
-
-    ODSTEPSTWO OD REGULY "ZNIKA KONTRA WYSZARZA SIE" JEST TU SWIADOME. Dotad chowalismy
-    to, co w danym wdrozeniu nie zadziala NIGDY (przycisk bez SciezkaRemoteControl,
-    "Odblokuj konto" w domenie spoza DomenyZOdblokowaniem), a wyszarzali stan przejsciowy
-    - "jest, ale nie teraz". Warunek trzeci jest przejsciowy, a mimo to chowa.
-
-    CENA JEST ZNANA I PRZYJETA: milczenie na ping nie dowodzi, ze maszyna jest wylaczona
-    - zapora blokuje ICMP w konfiguracji domyslnej wielu firm - wiec tam tych przyciskow
-    nie widac ANI RAZU i z samego okna nie da sie poznac, ze istnieja. Droga powrotu jest
-    jedna: "Pinguj", ktory z tego powodu nie gasnie nigdy.
-
-    Warunki stoja TUTAJ, w jednym miejscu, a nie przy kazdym z wywolan - rozpisane
-    rozjechalyby sie przy pierwszej zmianie, a przycisk zostawalby widoczny po
-    przelaczeniu na maszyne, o ktorej nic jeszcze nie wiadomo.
-#>
+# Widocznosc "Polacz" i "Dyski": maszyna, sciezka konsoli (tylko "Polacz") i potwierdzona sonda.
+# Swiadomie chowa przy stanie przejsciowym - droga powrotu to "Pinguj" (README: Kod > Jezyk-3-Widok).
 function Set-JezykPrzyciskiZdalne {
     param([string]$Netbios, [ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
     $k = $Script:Kontrolki
 
-    # Porownanie z $true, a nie [bool] na zmiennej: $null ma tu chowac tak samo jak $false,
-    # ale stan "nie wiadomo" ma dalej byc odroznialny od "milczy" - patrz opis wyzej.
+    # Porownanie z $true: $null chowa tak samo jak $false.
     $odpowiada = ($true -eq $Script:MaszynaOdpowiada)
 
     $polacz = if ($Widok -eq 'Maszyna') { $k.PrzyciskPolaczMaszyny } else { $k.PrzyciskPolacz }
     if ($polacz) {
-        # Pusta sciezka w konfiguracji = funkcja swiadomie wylaczona, dokladnie tak samo jak
-        # puste SccmSerwer. Czytamy ja przy kazdym wywolaniu, a nie raz przy starcie, bo to
-        # jedna linia mniej stanu do zgubienia.
+        # Pusta sciezka = funkcja wylaczona; czytana przy kazdym wywolaniu.
         $sciezka = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
 
         $polacz.Visible = ([bool]$Netbios -and [bool]$sciezka -and $odpowiada)
@@ -1684,83 +1538,51 @@ function Set-JezykPrzyciskiZdalne {
     }
 }
 
-# Obsluga przycisku "Polacz": oddaje wykryta maszyne zdalnej konsoli z ConfigMgr.
-# Nazwa idzie z $Script:OstatniKomputer, a nie z pola tekstowego - dokladnie z tego samego
-# powodu, co przy "Pinguj": w polu siedzi razem z data ostatniej aktywnosci.
-#
-# Wynik obslugujemy NIESYMETRYCZNIE i to jest swiadome. Niepowodzenie ma gdzie trafic
-# (pole Status i przycisk "!"), bo inaczej klikniecie nie robiloby nic i nie mowiloby
-# dlaczego. Powodzenie nie rusza NICZEGO: otwarte okno konsoli jest samo w sobie
-# potwierdzeniem, a Set-JezykInfo 'Status' '' skasowaloby diagnostyke nalezaca do
-# WYSZUKIWANIA, nie do tego klikniecia - to nie jest wykrzyknik tego przycisku.
+# Obsluga "Polacz": zdalna konsola ConfigMgr dla maszyny z pamieci.
+# Status niesie "Trwa laczenie" do okna konsoli; niepowodzenie trafia do Status i "!".
 function Invoke-JezykPolacz {
     param([ValidateSet('Konto', 'Maszyna')][string]$Widok = 'Konto')
 
     $k = $Script:Kontrolki
     if (-not $Script:OstatniKomputer) { return }
 
-    # Kazdy widok ma wlasne pole Status: i wlasny przycisk "!" przy nim - niepowodzenie ma
-    # trafic tam, gdzie operator patrzy, a nie do panelu, ktorego w tej chwili nie widac.
+    # Kazdy widok ma wlasne Status: i "!".
     $pole  = if ($Widok -eq 'Maszyna') { $k.TxtKomputerStatus } else { $k.TxtStatus }
     $klucz = if ($Widok -eq 'Maszyna') { 'StatusMaszyny' }      else { 'Status' }
+
+    # Notka przed uruchomieniem - samo uruchomienie z udzialu potrafi chwile trwac.
+    Set-JezykNotkeKonsoli -Widok $Widok -Pole $pole -Klucz $klucz -Netbios $Script:OstatniKomputer
 
     $wynik = Start-JezykRemoteControl -Netbios $Script:OstatniKomputer `
                                       -Sciezka ([string]$Script:Ustawienia.SciezkaRemoteControl)
 
     if (-not $wynik.Udane) {
+        Stop-JezykNotkeKonsoli
         if ($pole) { $pole.Text = [string]$wynik.Komunikat }
         Set-JezykInfo $klucz ([string]$wynik.Szczegoly)
+        return
     }
+
+    # Kropki ida, dopoki konsola nie pokaze okna - pilnuje tego takt ZegarTla.
+    if ($Script:NotkaKonsoli) { $Script:NotkaKonsoli.Proces = $wynik.Proces }
+    if ($Script:ZegarTla) { $Script:ZegarTla.Start() }
 }
 
-# Obsluga przycisku "Dyski" - pyta o udzial i otwiera go w Eksploratorze plikow.
-#
-# BEZ PARAMETRU -Widok, w odroznieniu od sasiada: ten przycisk stoi wylacznie w panelu
-# komputera, wiec pole Status: i klucz wykrzyknika sa jednoznaczne. Gdyby kiedys stanal
-# takze po drugiej stronie okna, widok ma przyjsc TUTAJ parametrem - nigdy z listy trybu,
-# bo ta bywa przestawiona, zanim cokolwiek wroci.
-#
-# Okno wyboru litery jest modalne, wiec funkcja czeka na odpowiedz operatora - ale na tym
-# jej praca sie KONCZY. Reszta, czyli rozmowa z serwerem, idzie w tle: to ona potrafi trwac
-# sekundy i to ona trzymala dotad watek interfejsu. Pusta odpowiedz z okna to rezygnacja,
-# a nie blad - nie zostawia sladu nigdzie.
-#
-# DRUGIE KLIKNIECIE W TRAKCIE LACZENIA porzuca pierwsza probe i zaczyna od nowa, tak samo
-# jak dwa razy klikniety "Szukaj". Nie ma tu na to warunku, bo robi to Start-JezykZadanieDysku
-# - jak kazde inne zadanie w tle.
+# Obsluga "Dyski": pyta o litere udzialu, a laczenie zleca zadaniu w tle.
+# Bez -Widok - przycisk stoi tylko w panelu komputera; pusta odpowiedz okna = rezygnacja.
 function Invoke-JezykDyski {
     if (-not $Script:OstatniKomputer) { return }
 
     $litera = Show-JezykWyborDysku
     if (-not $litera) { return }
 
-    # Notka PRZED uruchomieniem zadania: zapamietuje zdanie, ktore stoi teraz w polu, a tego
-    # nie da sie zrobic po tym, jak kropki juz je zakryly.
+    # Notka przed zadaniem - zapamietuje zdanie, zanim zakryja je kropki.
     Set-JezykNotkeLaczenia
     Start-JezykZadanieDysku -Netbios $Script:OstatniKomputer -Litera $litera
 }
 
-<#
-.SYNOPSIS
-    Rozstrzyga odpowiedz na probe polaczenia z udzialem - az do otwarcia go w Eksploratorze.
-
-.DESCRIPTION
-    CZTERY ZAKONCZENIA I KAZDE GASI NOTKE. Slowo "Łączenie" zostawione nad praca, ktora sie
-    skonczyla, klamie dokladnie tak samo jak zdanie nieprawdziwe - tylko odwrotnie w czasie.
-
-    PYTANIE O POSWIADCZENIA PADA WLASNIE TUTAJ i to jest cala przyczyna, dla ktorej
-    odpowiedz z tla wraca na watek interfejsu, zamiast konczyc sie w przestrzeni. Systemowe
-    okno poswiadczen rysuje sie tylko na tym watku i tylko tutaj ma rodzica; wywolane w tle
-    wstawaloby za Jezykiem albo nie wstawaloby wcale. Odpowiedz na nie jest juz ostateczna,
-    wiec petli nie ma - "potrzeba poswiadczen" nie moze przyjsc drugi raz.
-
-    POWODZENIE ZOSTAWIA ZDANIE, a nie cisze, i to jest zmiana wzgledem "Polacz". Pole Status:
-    niesie w tej chwili kropki, wiec jego dawna tresc i tak przepadla - i wlasnie dlatego "!"
-    tego panelu gasimy na tej sciezce JAWNIE: tlumaczyl komunikat, ktorego juz w polu nie ma.
-
-    Uchwyt okna czytamy przez PSObject.Properties, a nie po typie: [IntPtr]$null wywraca sie
-    na konwersji, a kontrolka w roli okna nie musi tej wlasciwosci miec.
-#>
+# Rozstrzyga odpowiedz proby polaczenia z udzialem; kazde z czterech zakonczen gasi notke.
+# Okno poswiadczen pada tutaj - na watku interfejsu (README: Przycisk "Dyski").
 function Update-JezykDyskWTle {
     param($Wynik)
 
@@ -1779,8 +1601,7 @@ function Update-JezykDyskWTle {
 
     Set-JezykNotkeLaczenia -Wylacz
 
-    # REZYGNACJA NIE JEST BLEDEM - pole wraca tam, gdzie bylo, a "!" zostaje nietkniety.
-    # Ta sama zasada, co przy zamknieciu okna wyboru litery.
+    # Rezygnacja nie jest bledem - pole wraca do zdania sprzed notki, "!" nietkniety.
     if ($Wynik.Stan -eq 'Anulowano') {
         if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$Script:StatusPrzedLaczeniem }
         return
@@ -1792,39 +1613,16 @@ function Update-JezykDyskWTle {
         return
     }
 
-    # SESJA JUZ STOI, wiec to wywolanie oddaje powloce gotowa sciezke i wraca od razu.
+    # Sesja juz stoi - otwarcie wraca od razu.
     $otwarcie = Open-JezykUdzialDysku -Netbios $Wynik.Netbios -Litera $Wynik.Litera
 
     if ($k.TxtKomputerStatus) { $k.TxtKomputerStatus.Text = [string]$otwarcie.Komunikat }
 
-    # JEDNO WYWOLANIE NA OBIE SCIEZKI: przy powodzeniu szczegoly sa puste i "!" gasnie,
-    # przy niepowodzeniu niosa tresc wyjatku i wykrzyknik sie zapala.
+    # Jedno wywolanie na obie sciezki: puste szczegoly gasza "!".
     Set-JezykInfo 'StatusMaszyny' ([string]$otwarcie.Szczegoly)
 }
 
-<#
-.SYNOPSIS
-    Zapala albo gasi przycisk "Grupy AD" - jedyne miejsce z warunkiem jego dostepnosci.
-
-.DESCRIPTION
-    Przycisk SIE WYSZARZA, a nie znika jak "Polacz". Roznica jest zamierzona: "Polacz"
-    ma jeden powod istnienia i we wdrozeniu bez konsoli ConfigMgr nie zadziala NIGDY,
-    a ten ma normalny stan przejsciowy - "jest, ale najpierw znajdz konto" - dokladnie
-    taki, jaki pokazuja "Pinguj" i - w domenie z odblokowaniem - "Odblokuj konto".
-
-    Warunek stoi TUTAJ, w jednym miejscu, a nie przy kazdym z dwoch wywolan. Rozpisany
-    rozjechalby sie przy pierwszej zmianie i przycisk zostawalby czynny po przelaczeniu
-    na konto bez grup - otwierajac liste opisujaca kogos, kogo juz nie ma na ekranie.
-
-    DWA POWODY, DLA KTORYCH JEST PO CO OTWIERAC. Konto z grupami - zeby je przeczytac.
-    Konto BEZ grup w domenie, w ktorej wolno dopisywac - zeby dopisac pierwsza; bez tego
-    warunku okna nie dalo by sie otworzyc dokladnie tam, gdzie dodawanie jest najbardziej
-    potrzebne. W domenie bez dodawania konto bez grup nadal zostaje wyszarzone: otwieraloby
-    puste okno bez jednej czynnej kontrolki.
-
-    Kontakt czytac wolno, dopisac go nie da sie wcale - Add-ADGroupMember przyjmuje
-    podmioty zabezpieczen, a kontakt nim nie jest.
-#>
+# Dostepnosc przycisku grup - wyszarza sie (stan przejsciowy), a nie znika.
 function Set-JezykPrzyciskGrupy {
     param($Result)
 
@@ -1834,50 +1632,30 @@ function Set-JezykPrzyciskGrupy {
     $przycisk.Enabled = Test-JezykJestPoCoOtwieracGrupy $Result
 }
 
-# Czy TO konto da sie w TEJ domenie dopisac do grupy. Trzy warunki, kazdy z innego powodu:
-# domena z listy DomenyZDodawaniemDoGrup (fakt o wdrozeniu), pozycja bedaca kontem (kontakt
-# nie jest podmiotem zabezpieczen, wiec Add-ADGroupMember go nie przyjmie) i login, ktorym
-# to konto da sie wskazac.
-#
-# JEDNO MIEJSCE Z TA DECYZJA: pyta o nia i dostepnosc przycisku w oknie glownym, i widocznosc
-# calego wiersza dodawania w oknie grup. Rozpisana po obu rozjechalaby sie przy pierwszej
-# zmianie, a objawem bylby wiersz, ktory jest, i przycisk, ktory nic nie robi.
-function Test-JezykMoznaDodacKontoDoGrupy {
+# Czy czlonkostwem tego konta wolno tu zarzadzac: domena z listy, konto (nie kontakt) i login.
+function Test-JezykMoznaZarzadzacGrupami {
     param($Result)
 
     if (-not $Result) { return $false }
     if ($Result.Status -ne 'Ok') { return $false }
     if (-not [bool]$Result.Login) { return $false }
-    return (Test-JezykWolnoDodacDoGrupy $Script:Config.Domena)
+    return (Test-JezykWolnoZarzadzacGrupami $Script:Config.Domena)
 }
 
-# Czy okno grup ma co pokazac ALBO co zrobic. Dwa powody, by je otwierac: sa grupy do
-# przeczytania, albo wolno dopisac pierwsza. Konto bez grup w domenie bez dodawania zostaje
-# wyszarzone - otwieraloby puste okno bez jednej czynnej kontrolki.
-#
-# Warunek stoi TUTAJ, a nie osobno przy przycisku i osobno w strazy Show-JezykGrupyAd:
-# dwie kopie rozjechalyby sie przy pierwszej zmianie, a roznicy nie widac - przycisk po
-# prostu przestalby cokolwiek otwierac.
+# Czy okno grup ma co pokazac albo co zrobic: sa grupy albo wolno dopisac pierwsza.
 function Test-JezykJestPoCoOtwieracGrupy {
     param($Result)
 
     if (-not $Result) { return $false }
     if ($Result.Status -ne 'Ok' -and $Result.Status -ne 'Kontakt') { return $false }
 
-    # FILTR, A NIE SAMO @().Count. W PowerShellu @($null) to tablica JEDNOELEMENTOWA,
-    # wiec licznik bez odsiania pustych zapalalby przycisk przy koncie bez grup - czyli
-    # tam, gdzie o otwarciu ma decydowac dopiero prawo dopisywania.
+    # Filtr, nie samo @().Count - @($null) ma jeden element.
     if (@($Result.Grupy | Where-Object { $_ }).Count -gt 0) { return $true }
 
-    return (Test-JezykMoznaDodacKontoDoGrupy $Result)
+    return (Test-JezykMoznaZarzadzacGrupami $Result)
 }
 
-# Notka w oknie "Grupy AD" i jej wlasny przycisk "!". Set-JezykInfo tu NIE ZADZIALA:
-# stoi na $Script:Kontrolki i $Script:TytulyInformacji, a to okno powstaje na zadanie
-# i niczego tam nie rejestruje - zarejestrowane zostawialoby martwe uchwyty po Dispose().
-#
-# "!" zapala sie WYLACZNIE warunkowo, tak samo jak w oknie glownym: przy powodzeniu
-# szczegolow nie ma i wykrzyknik gasnie.
+# Notka i "!" w oknie grup - okno na zadanie niczego nie rejestruje, wiec nie Set-JezykInfo.
 function Set-JezykNotkeGrup {
     param($Okno, [string]$Tekst, [string]$Szczegoly = '')
 
@@ -1890,39 +1668,57 @@ function Set-JezykNotkeGrup {
     if ($stan.PrzyciskInfo) { $stan.PrzyciskInfo.Visible = [bool]$Szczegoly }
 }
 
-# Nowa lista grup wchodzi w TRZY miejsca naraz: w zapamietany wynik konta, w pelna liste
-# wiszaca na kontrolce i w widoczne pozycje razem z licznikiem w tytule - a na koniec
-# przelicza przycisk w oknie glownym. Rozpisane po miejscach wywolania rozjechalyby sie
-# przy pierwszej zmianie: okno pokazywaloby nowa grupe, a przycisk liczylby stare.
+# Nowa lista grup do wyniku konta, na liste okna (z tytulem) i do przycisku w oknie glownym.
 function Update-JezykGrupyWOknie {
-    param($Okno, [string[]]$Grupy)
+    param($Okno, [object[]]$Grupy)
 
     if (-not $Okno) { return }
     $stan = $Okno.Tag
     if (-not $stan) { return }
 
-    $nowe = @($Grupy | Where-Object { $_ })
+    # Pary nazwa + DN (ta sama normalizacja co w New-JezykResult) - DN potrzebny do usuniecia.
+    $nowe = @(Get-JezykParyGrup $Grupy)
 
-    if ($Script:OstatnieKonto) { $Script:OstatnieKonto.Grupy = $nowe }
-    if ($stan.Lista)           { $stan.Lista.Tag = [string[]]$nowe }
-    if ($stan.PoleFiltra)      { Update-JezykFiltrGrup $stan.PoleFiltra }
+    if ($Script:OstatnieKonto) {
+        $Script:OstatnieKonto.GrupyPelne = $nowe
+        $Script:OstatnieKonto.Grupy      = @($nowe | ForEach-Object { $_.Nazwa })
+    }
+    if ($stan.Lista)      { $stan.Lista.Tag = $nowe }
+    if ($stan.PoleFiltra) { Update-JezykFiltrGrup $stan.PoleFiltra }
 
     Set-JezykPrzyciskGrupy $Script:OstatnieKonto
 }
 
-<#
-.SYNOPSIS
-    Rozpoznaje w AD nazwe wpisana w polu "Dodaj do grupy" - obsluga przycisku
-    "Sprawdz nazwy".
+# Notka "Sprawdzanie" w Status okna grup i blokada wiersza nazwy na czas zadania - jedna funkcja na oba.
+# -Wylacz nie rusza tresci notki: wolajacy wpisuje zaraz odpowiedz.
+function Set-JezykSprawdzanieGrupy {
+    param($Okno, [switch]$Wylacz)
 
-.DESCRIPTION
-    Zapytanie idzie SYNCHRONICZNIE, na watku interfejsu, i okno na nie stoi - stad
-    klepsydra. To nie jest przeoczenie: okno grup jest modalne, wiec wynik zadania w tle
-    musialby wrocic do kontrolek, ktore gina razem z tym oknem, a modalna petla pompuje
-    komunikaty - czyli wchodzi sie w te sama re-entrancje, ktora opisuje
-    Receive-JezykZadanieDysku. Rozpoznanie po anr= jest indeksowane i wraca w ulamku
-    sekundy, czyli kosztuje tyle, co synchroniczne Find-JezykUsers.
-#>
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    $stan.Sprawdzanie            = -not $Wylacz
+    $Script:OknoSprawdzaniaGrupy = if ($Wylacz) { $null } else { $Okno }
+
+    # Pole tylko do odczytu, nie wyszarzone - odpowiedz wpisze do niego nazwe z AD.
+    if ($stan.PoleGrupy)       { $stan.PoleGrupy.ReadOnly       = -not $Wylacz }
+    if ($stan.PrzyciskSprawdz) { $stan.PrzyciskSprawdz.Enabled = [bool]$Wylacz }
+    # "Usun z grupy" czeka razem z wierszem - jego komunikat zakrylyby kropki.
+    Set-JezykPrzyciskUsunGrupe -Okno $Okno
+
+    if ($Wylacz) { return }
+
+    # Stary "!" nie moze stac przy kropkach.
+    Set-JezykNotkeGrup -Okno $Okno -Tekst ''
+
+    $Script:KlatkaKropek = 0
+
+    # Pierwsza klatka od razu - odpowiedz bywa krotsza niz takt zegara.
+    Update-JezykKropkiSprawdzania
+}
+
+# Obsluga "Sprawdz nazwy": zapala notke i zleca rozpoznanie nazwy grupy zadaniu w tle.
 function Invoke-JezykSprawdzenieNazwyGrupy {
     param($Okno)
 
@@ -1930,9 +1726,10 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
     $stan = $Okno.Tag
     if (-not $stan) { return }
 
-    # Poprzednie rozpoznanie przestaje obowiazywac JUZ TERAZ, a nie dopiero po odpowiedzi:
-    # miedzy klknieciem a wynikiem pole i zapamietana nazwa wyrozniajaca moglyby opisywac
-    # dwie rozne grupy.
+    # Enter w polu dochodzi tu takze w trakcie sprawdzania - drugie zapytanie o to samo.
+    if ($stan.Sprawdzanie) { return }
+
+    # Poprzednie rozpoznanie traci waznosc od razu, a nie po odpowiedzi.
     $stan.Wybrana = $null
     if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
 
@@ -1944,25 +1741,32 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
         return
     }
 
-    $ile = [int]$Script:Config.LimitPodpowiedziGrup
+    # Notka przed zadaniem - pierwsza klatka stoi, zanim zadanie ruszy.
+    Set-JezykSprawdzanieGrupy -Okno $Okno
+    Start-JezykZadanieGrupy -Okno $Okno -Fraza $fraza -Limit ([int]$Script:Config.LimitPodpowiedziGrup)
+}
 
-    $Okno.UseWaitCursor = $true
-    try {
-        $wynik = Find-JezykGrupyPoNazwie -Fraza $fraza -Limit $ile -Serwer ([string]$Script:Config.Domena)
-    }
-    finally { $Okno.UseWaitCursor = $false }
+# Odpowiedz "Sprawdz nazwy" z tla; notka i blokada gasna przed rozgalezieniem, wiec w kazdej galezi.
+function Update-JezykNazwaGrupyWTle {
+    param($Okno, $Wynik, [string]$Fraza, [int]$Limit)
 
-    # Nieudane sprawdzenie ma byc ODROZNIALNE od pustego wyniku - inaczej awaria sieci
-    # wygladalaby jak brak takiej grupy i ktos zalozylby ja drugi raz.
-    if ($wynik.Przerwane) {
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan) { return }
+
+    # Przed czymkolwiek innym - nastepny takt zegara nadpisalby odpowiedz kropkami.
+    Set-JezykSprawdzanieGrupy -Okno $Okno -Wylacz
+
+    # Nieudane sprawdzenie odroznialne od pustego wyniku - inaczej ktos zalozylby grupe drugi raz.
+    if ($Wynik.Przerwane) {
         Set-JezykNotkeGrup -Okno $Okno -Tekst 'Nie udało się sprawdzić nazwy grupy w AD.' `
-                           -Szczegoly ([string]$wynik.Powod)
+                           -Szczegoly ([string]$Wynik.Powod)
         return
     }
 
-    $trafienia = @($wynik.Trafienia)
+    $trafienia = @($Wynik.Trafienia)
     if ($trafienia.Count -eq 0) {
-        $pusto = 'Nie znaleziono grupy pasującej do „{0}”.' -f $fraza
+        $pusto = 'Nie znaleziono grupy pasującej do „{0}”.' -f $Fraza
         Set-JezykNotkeGrup -Okno $Okno -Tekst $pusto
         return
     }
@@ -1978,40 +1782,122 @@ function Invoke-JezykSprawdzenieNazwyGrupy {
         }
     }
 
-    # NAZWA Z AD, A NIE WPISANA. Pole pokazuje odtad to, co odpowiedzial katalog - operator
-    # ma widziec, ktora grupe naprawde rozpoznano.
+    # W polu nazwa z AD, a nie wpisana - widac, ktora grupe rozpoznano.
     if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = [string]$wybrana.Nazwa }
 
-    # KOLEJNOSC JEST ISTOTNA I NIC JEJ NIE ZDRADZA: przepisanie pola budzi TextChanged,
-    # ktore zeruje wybor i gasi "Dodaj" (po to tam jest). Zapamietanie musi wiec isc PO
-    # nim, inaczej przycisk zostawalby wyszarzony mimo rozpoznanej grupy.
+    # Uwaga: wybor zapamietany PO przepisaniu pola - TextChanged zeruje go (README: Kod > Jezyk-3-Widok).
     $stan.Wybrana = $wybrana
     if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $true }
 
-    $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Nazwa
-    if ($wynik.ZaDuzo) {
-        # Zdanie, ktore UNIEWAZNIA poprzednie, ma je ZASTAPIC, a nie stanac za nim
-        # w kolejce - w polu o dwoch wierszach druga polowy i tak nie byloby widac.
-        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $ile, $wybrana.Nazwa
+    # Pole dostaje nazwe, notka podpis (z folderem, gdy nazwa sie powtarza).
+    $tekst = 'Rozpoznano grupę „{0}”. Kliknij „Dodaj”, aby dopisać do niej konto.' -f $wybrana.Podpis
+    if ($Wynik.ZaDuzo) {
+        # Zdanie uniewazniajace poprzednie ZASTEPUJE je, a nie staje za nim.
+        $tekst = 'Trafień było więcej niż {0} - pokazano pierwsze. Rozpoznano grupę „{1}”.' -f $Limit, $wybrana.Podpis
     }
     Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst
 }
 
-<#
-.SYNOPSIS
-    Dopisuje pokazane konto do rozpoznanej grupy - obsluga przycisku "Dodaj".
+# Grupa zaznaczona na liscie - z WidoczneGrupy (po filtrze), a nie z napisu pozycji.
+function Get-JezykZaznaczonaGrupe {
+    param($Okno)
 
-.DESCRIPTION
-    Ta sama droga, co przy odblokowaniu: konto bierzemy z ostatniego odczytu z AD, a nie
-    z kontrolki; okno logowania jest zarazem POTWIERDZENIEM operacji i nazywa konto, grupe
-    i domene; anulowanie jest cisza; poswiadczenia ida wylacznie do tego jednego wywolania
-    i gina w finally.
+    if (-not $Okno) { return $null }
+    $stan = $Okno.Tag
+    if (-not $stan -or -not $stan.Lista) { return $null }
 
-    Po udanym zapisie lista odswieza sie ODCZYTEM Z KONTROLERA, KTORY TEN ZAPIS PRZYJAL -
-    jedno zrodlo prawdy zamiast dopisywania pozycji z pamieci okna. Gdy odczyt zawiedzie,
-    POWODZENIA ZAPISU NIE WOLNO ZGUBIC: bez tego zdania operator dopisuje te sama grupe
-    drugi raz.
-#>
+    $widoczne = @($stan.WidoczneGrupy)
+    $nr = [int]$stan.Lista.SelectedIndex
+    if ($nr -lt 0 -or $nr -ge $widoczne.Count) { return $null }
+    return $widoczne[$nr]
+}
+
+# "Usun z grupy" czynny, gdy zaznaczona pozycja ma DN i wolno zarzadzac (przeliczany takze po filtrze).
+function Set-JezykPrzyciskUsunGrupe {
+    param($Okno)
+
+    if (-not $Okno) { return }
+    $stan = $Okno.Tag
+    if (-not $stan -or -not $stan.PrzyciskUsun) { return }
+
+    $grupa = Get-JezykZaznaczonaGrupe -Okno $Okno
+    # W trakcie "Sprawdz nazwy" wyszarzony - komunikat usuniecia zakrylyby kropki.
+    $stan.PrzyciskUsun.Enabled = ([bool]$grupa -and [bool]$grupa.Dn -and -not $stan.Sprawdzanie -and
+                                  (Test-JezykMoznaZarzadzacGrupami $Script:OstatnieKonto))
+}
+
+# Pyta Tak/Nie przed zmiana czlonkostwa (domyslnie "Nie"): konto, grupa, domena i folder grupy.
+function Confirm-JezykZmianyCzlonkostwa {
+    param($Okno, [string]$Login, [string]$Grupa, [string]$Domena,
+          [ValidateSet('Dodaj', 'Usun')][string]$Akcja, [string]$Folder = '')
+
+    # Uwaga: napis do zmiennej - w argumencie metody przecinki naleza do metody, nie do -f.
+    $tresc = if ($Akcja -eq 'Usun') {
+        'Usunąć konto "{0}" z grupy "{1}" w domenie {2}?' -f $Login, $Grupa, $Domena
+    } else {
+        'Dodać konto "{0}" do grupy "{1}" w domenie {2}?' -f $Login, $Grupa, $Domena
+    }
+
+    # Folder grupy w kazdym pytaniu - nazwa grupy nie jest w domenie jednoznaczna.
+    if ($Folder) { $tresc = "{0}`n`nFolder grupy w AD: {1}" -f $tresc, $Folder }
+
+    $odpowiedz = [System.Windows.Forms.MessageBox]::Show(
+        $Okno, $tresc, 'Jeżyk - Grupy AD',
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question,
+        [System.Windows.Forms.MessageBoxDefaultButton]::Button2)
+
+    return ($odpowiedz -eq [System.Windows.Forms.DialogResult]::Yes)
+}
+
+# Wspolny ogon obu zmian czlonkostwa: potwierdzenie, zapis, odczyt z kontrolera zapisu, odswiezenie.
+# $true, gdy zapis sie udal - takze gdy odczyt po nim zawiodl (powodzenia nie wolno zgubic).
+function Invoke-JezykZapisCzlonkostwa {
+    param($Okno, $Grupa, [ValidateSet('Dodaj', 'Usun')][string]$Akcja)
+
+    if (-not $Okno -or -not $Grupa) { return $false }
+
+    # Konto z obiektu wyniku, nie z kontrolki.
+    if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return $false }
+    $login = [string]$Script:OstatnieKonto.Login
+    if (-not $login) { return $false }
+
+    $domena = [string]$Script:Config.Domena
+
+    # Potwierdzenie PRZED zapisem. Rezygnacja jest cisza: zadnego zapisu, zadnego bledu.
+    $zgoda = Confirm-JezykZmianyCzlonkostwa -Okno $Okno -Login $login `
+                                            -Grupa ([string]$Grupa.Nazwa) -Domena $domena -Akcja $Akcja `
+                                            -Folder (Get-JezykFolderAd ([string]$Grupa.Dn))
+    if (-not $zgoda) { return $false }
+
+    $Okno.UseWaitCursor = $true
+    try {
+        $wynik = Set-JezykCzlonkostwoGrupy -Login $login -Dn ([string]$Script:OstatnieKonto.Dn) `
+                                           -GrupaDn ([string]$Grupa.Dn) -Domena $domena -Akcja $Akcja
+    }
+    finally { $Okno.UseWaitCursor = $false }
+
+    # Niepowodzenie: powod odmowy zostaje w notce.
+    if (-not $wynik.Udane) {
+        Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat) `
+                           -Szczegoly ([string]$wynik.Szczegoly)
+        return $false
+    }
+
+    $odczyt = Get-JezykGrupyKonta -Login $login -Serwer ([string]$wynik.Serwer)
+
+    if (-not $odczyt.Udane) {
+        $tekst = '{0} Nie udało się jednak odświeżyć listy - zamknij i otwórz okno grup.' -f $wynik.Komunikat
+        Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst -Szczegoly ([string]$odczyt.Szczegoly)
+        return $true
+    }
+
+    Update-JezykGrupyWOknie -Okno $Okno -Grupy @($odczyt.Grupy)
+    Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat)
+    return $true
+}
+
+# Obsluga przycisku "Dodaj": grupa bierze sie z rozpoznanej nazwy ("Sprawdz nazwy").
 function Invoke-JezykDodanieDoGrupy {
     param($Okno)
 
@@ -2022,91 +1908,33 @@ function Invoke-JezykDodanieDoGrupy {
     $wybrana = $stan.Wybrana
     if (-not $wybrana) { return }
 
-    # KONTO Z OBIEKTU WYNIKU, NIE Z KONTROLKI - zrodlem prawdy dla operacji zapisu jest
-    # ostatni odczyt z AD.
-    if (-not $Script:OstatnieKonto -or $Script:OstatnieKonto.Status -ne 'Ok') { return }
-    $login = [string]$Script:OstatnieKonto.Login
-    if (-not $login) { return }
+    if (-not (Invoke-JezykZapisCzlonkostwa -Okno $Okno -Grupa $wybrana -Akcja 'Dodaj')) { return }
 
-    $domena = [string]$Script:Config.Domena
-
-    $poswiadczenia = $null
-    try {
-        try {
-            $poswiadczenia = Get-Credential -Message (
-                'Konto z prawem dopisywania do grup w domenie {0}. Konto {1} zostanie dodane do grupy {2}.' -f $domena, $login, $wybrana.Nazwa)
-        }
-        catch {
-            $opis = Get-JezykOpisBledu $_ 'Okno logowania'
-            Set-JezykNotkeGrup -Okno $Okno -Tekst $opis.Krotki -Szczegoly $opis.Szczegoly
-            return
-        }
-
-        # Anulowanie okna logowania: zadnego zapisu, zadnego bledu.
-        if (-not $poswiadczenia) { return }
-
-        $Okno.UseWaitCursor = $true
-        try {
-            $wynik = Add-JezykKontoDoGrupy -Login $login -Dn ([string]$Script:OstatnieKonto.Dn) `
-                                           -GrupaDn ([string]$wybrana.Dn) -Domena $domena `
-                                           -Poswiadczenia $poswiadczenia
-        }
-        finally { $Okno.UseWaitCursor = $false }
-
-        # Niepowodzenie konczy sie tutaj: nie ma czego odswiezac, a powod odmowy jest
-        # jedyna rzecza, ktora ma zostac na ekranie. Wybor zostaje, zeby dalo sie
-        # sprobowac ponownie innym kontem.
-        if (-not $wynik.Udane) {
-            Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat) `
-                               -Szczegoly ([string]$wynik.Szczegoly)
-            return
-        }
-
-        # Zapis sie udal. Pole czyscimy JUZ TERAZ - zostawiona nazwa wygladalaby na gotowa
-        # do uzycia i drugie kliniecie dopisywaloby to samo czlonkostwo. Czyszczenie budzi
-        # TextChanged, wiec przy okazji gasi "Dodaj" i zeruje wybor.
-        if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = '' }
-        $stan.Wybrana = $null
-        if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
-
-        $odczyt = Get-JezykGrupyKonta -Login $login -Serwer ([string]$wynik.Serwer)
-
-        if (-not $odczyt.Udane) {
-            $tekst = '{0} Nie udało się jednak odświeżyć listy - zamknij i otwórz okno grup.' -f $wynik.Komunikat
-            Set-JezykNotkeGrup -Okno $Okno -Tekst $tekst -Szczegoly ([string]$odczyt.Szczegoly)
-            return
-        }
-
-        Update-JezykGrupyWOknie -Okno $Okno -Grupy @($odczyt.Grupy)
-        Set-JezykNotkeGrup -Okno $Okno -Tekst ([string]$wynik.Komunikat)
-    }
-    finally {
-        # Niszczymy haslo, a nie "zapominamy referencje" - tak samo jak przy odblokowaniu.
-        if ($poswiadczenia -and $poswiadczenia.Password) { $poswiadczenia.Password.Dispose() }
-    }
+    # Po zapisie pole czyszczone (budzi TextChanged, co gasi "Dodaj" i zeruje wybor).
+    if ($stan.PoleGrupy) { $stan.PoleGrupy.Text = '' }
+    $stan.Wybrana = $null
+    if ($stan.PrzyciskDodaj) { $stan.PrzyciskDodaj.Enabled = $false }
 }
 
-<#
-.SYNOPSIS
-    Naklada motyw na cale okno - palete, kontrolki i kolory niosace znaczenie.
+# Obsluga przycisku "Usun z grupy": grupa bierze sie z zaznaczenia na liscie.
+function Invoke-JezykUsuniecieZGrupy {
+    param($Okno)
 
-.DESCRIPTION
-    JEDNA FUNKCJA USTAWIA WSZYSTKO NARAZ, tak samo jak Set-JezykStanJeza ustawia kontrolke,
-    licznik i zegar. Rozpisana po miejscach wywolania rozjedzie sie przy pierwszej zmianie,
-    a pominiety krok nie zglasza sie niczym: kontrolka po prostu zostaje w starym kolorze.
+    $grupa = Get-JezykZaznaczonaGrupe -Okno $Okno
+    if (-not $grupa) { return }
 
-    KOLEJNOSC NIE JEST DOWOLNA:
-      1. paleta - zanim cokolwiek ja przeczyta,
-      2. bufor pedzli wylaczonego przycisku na $null - jego kolory ida z palety,
-      3. role wygladu - maluja tla, ramki i domyslny kolor tekstu,
-      4. role kolorow - i dopiero one maja ostatnie slowo. Odwrotna kolejnosc zdjelaby
-         czerwien z werdyktu i okno przez chwile twierdziloby, ze z kontem wszystko
-         w porzadku. Zdanie nieprawdziwe przez chwile kosztuje tyle samo, co nieprawdziwe
-         na stale - operator czyta werdykt raz.
+    # Pozycja bez DN (wpis memberOf bez CN=) - mowimy to wprost zamiast milczec.
+    if (-not $grupa.Dn) {
+        Set-JezykNotkeGrup -Okno $Okno `
+                           -Tekst 'Tej pozycji nie da się usunąć - katalog nie podał nazwy wyróżniającej grupy.'
+        return
+    }
 
-    Jeza prosimy o przerysowanie osobno: jego tlo dziedziczy sie po oknie, ale poza zostaje
-    ta sama, wiec nic innego by o to nie poprosilo.
-#>
+    [void](Invoke-JezykZapisCzlonkostwa -Okno $Okno -Grupa $grupa -Akcja 'Usun')
+}
+
+# Naklada motyw: paleta, bufory pedzli, role wygladu, a NA KONCU role kolorow znaczacych.
+# Uwaga: odwrotna kolejnosc zdjelaby czerwien z werdyktu (README: Ciemny motyw).
 function Set-JezykMotyw {
     param([ValidateSet('Jasny', 'Ciemny')][string]$Motyw)
 
@@ -2115,10 +1943,7 @@ function Set-JezykMotyw {
     $paleta = if ($Motyw -eq 'Ciemny') { $Script:MotywCiemny } else { $Script:MotywJasny }
     foreach ($klucz in @($paleta.Keys)) { $Script:Config[$klucz] = $paleta[$klucz] }
 
-    # DWA BUFORY PEDZLI IDA Z PALETY, wiec musza padac razem z nia - inaczej kwadrat ze
-    # strzalka i ramka flag przemalowalyby sie odcieniem poprzedniego motywu. (Pedzle ikonki
-    # tego nie wymagaja: tamte kolory sa stale. Napis przycisku nie ma pedzla wcale - idzie
-    # przez TextRenderer, ktory bierze kolor wprost z palety przy kazdym rysowaniu.)
+    # Bufory pedzli (strzalka listy, ramka flag) ida z palety - padaja razem z nia.
     $Script:PedzleStrzalki   = $null
     $Script:PedzleRamkiFlag  = $null
 
@@ -2130,12 +1955,10 @@ function Set-JezykMotyw {
         Set-JezykKolorPola $pole $Script:RoleKolorow[$pole]
     }
 
-    # PO ROLACH, A NIE PRZED NIMI. To rola "Pole" ustawia BorderStyle, a jego zmiana
-    # odtwarza uchwyt kontrolki - wysokosc nadana wczesniej przepadlaby po drodze.
+    # Po rolach: zmiana BorderStyle odtwarza uchwyt i wysokosc nadana wczesniej by przepadla.
     Set-JezykWyrownaniePol
 
-    # Obciecie ramki listy zalezy od palety, a kwadrat ze strzalka od obciecia - wiec obie
-    # rzeczy przeliczaja sie razem, jedna funkcja, tu i po pokazaniu okna.
+    # Obciecie ramki list i kwadrat ze strzalka przeliczane razem.
     Update-JezykOprawaList
 
     if ($Script:Kontrolki.JezSzukania) { $Script:Kontrolki.JezSzukania.Invalidate() }
@@ -2143,20 +1966,7 @@ function Set-JezykMotyw {
     Set-JezykMotywSystemowy
 }
 
-<#
-.SYNOPSIS
-    Uchwyt okna kontrolki albo zero, gdy go jeszcze nie ma.
-
-.DESCRIPTION
-    PYTAMY PRZEZ PSObject.Properties, A NIE PO TYPIE. Zestaw weryfikacyjny podstawia
-    [pscustomobject], wiec warunek na [System.Windows.Forms.Control] nie bylby w nim nigdy
-    prawdziwy i cala sciezka systemowa nie wykonalaby sie ani razu.
-
-    IsHandleCreated sprawdzamy PRZED Handle, bo samo siegniecie po Handle TWORZY uchwyt.
-    Motyw nakladamy na koniec budowy okna, zanim cokolwiek zostalo pokazane - wymuszenie
-    uchwytow w tamtym miejscu zmienialoby kolejnosc powstawania kontrolek. Zamiast tego
-    sciezka systemowa wykonuje sie powtornie z Add_Shown, gdy uchwyty juz sa.
-#>
+# Uchwyt okna kontrolki albo zero - bez tworzenia uchwytu (IsHandleCreated przed Handle).
 function Get-JezykUchwyt {
     param($Kontrolka)
 
@@ -2171,38 +1981,8 @@ function Get-JezykUchwyt {
     return $Kontrolka.Handle
 }
 
-<#
-.SYNOPSIS
-    Wyrownuje obszar klienta pol tekstowych po zmianie grubosci ich ramki.
-
-.DESCRIPTION
-    DWA STYLE RAMKI TO DWIE GRUBOSCI OBSZARU NIEKLIENCKIEGO, a nie dwa rysunki tej samej
-    ramki: Fixed3D zabiera 2 px z kazdej strony, FixedSingle 1 px. Wysokosc kontrolki jest
-    przy tym w obu przypadkach TA SAMA - TextBoxBase.PreferredHeight nie rozroznia stylow
-    wcale - wiec cienzsza ramka daje o 2 px wyzsze wnetrze. Pole tekstowe rysuje wiersz
-    przy GORNEJ krawedzi tego wnetrza, wiec tekst wychodzil w ciemnym motywie o piksel
-    wyzej niz w jasnym, a pod nim zostawal piksel luzu wiecej.
-
-    Przesuwamy wiec pole o roznice grubosci w dol i o jej dwukrotnosc obnizamy - wtedy
-    PROSTOKAT WNETRZA wypada w obu motywach dokladnie w tym samym miejscu. Wyrownujemy
-    wnetrze, a nie pudelko, bo to wnetrze widzi operator: w nim stoi tekst.
-
-    LICZNIK $Script:WciecieNalozone, A NIE WARUNEK "w ciemnym odejmij". Przelaczanie tam
-    i z powrotem musi WRACAC do tych samych wspolrzednych, a nie sumowac poprawke - a tego
-    nie widac po jednym przelaczeniu, tylko po kilku, kiedy pola zaczynaja wedrowac w dol.
-
-    WYSOKOSC ODCZYTANA PRZED ZDJECIEM AutoSize, a potem przypisana wprost. TextBox
-    zapamietuje "zadana" wysokosc juz w konstruktorze - czyli zmierzona czcionka DOMYSLNA -
-    i trzyma ja takze po odziedziczeniu czcionki okna. Wylaczenie AutoSize przywraca
-    wlasnie ja, wiec pole 23-pikselowe spadalo do 20, a poprawka odjeta od tego dawala 18
-    zamiast 21. Przy takiej wysokosci kontrolka nie robi juz wciecia nad tekstem i tekst
-    wychodzil w ciemnym motywie o DWA piksele wyzej, a po powrocie do jasnego pole zostawalo
-    nizsze niz na starcie. Jawne przypisanie Height nadpisuje przy okazji wysokosc zadana,
-    wiec odtworzenie uchwytu przy kolejnej zmianie ramki trzyma juz wlasciwa liczbe.
-
-    TYLKO ROLA "Pole". Lista i przycisk nie maja w srodku wiersza tekstu ustawianego od
-    gornej krawedzi, wiec nie ma tam czego wyrownywac.
-#>
+# Wyrownuje wnetrze pol po zmianie grubosci ramki: w dol o roznice, nizej o jej dwukrotnosc.
+# Licznik nalozonego wciecia - przelaczanie motywu wraca na miejsce, a nie sumuje poprawki.
 function Set-JezykWyrownaniePol {
     $delta = $Script:WciecieNalozone - $Script:Config.WciecieRamkiPola
     if ($delta -eq 0) { return }
@@ -2211,10 +1991,7 @@ function Set-JezykWyrownaniePol {
         if ($Script:KontrolkiMotywu[$kontrolka] -ne 'Pole') { continue }
         if (-not $kontrolka) { continue }
 
-        # AutoSize WYMUSZA PreferredHeight przy kazdym odtworzeniu uchwytu, a zmiana
-        # BorderStyle uchwyt odtwarza - bez tego nasza wysokosc przepadlaby przy nastepnym
-        # przelaczeniu motywu i poprawka dzialalaby raz.
-        # Wysokosc PRZED zdjeciem AutoSize - powod w opisie funkcji.
+        # Uwaga: wysokosc czytana PRZED zdjeciem AutoSize - zdjecie cofa ja do tej z konstruktora.
         $wysokosc = $kontrolka.Height
         $kontrolka.AutoSize = $false
 
@@ -2225,20 +2002,7 @@ function Set-JezykWyrownaniePol {
     $Script:WciecieNalozone = $Script:Config.WciecieRamkiPola
 }
 
-<#
-.SYNOPSIS
-    Przelicza oprawe trzech list rozwijanych: obciecie ramki i kwadrat ze strzalka.
-
-.DESCRIPTION
-    OBIE RZECZY BIORA SIE Z ROZMIARU LISTY, wiec licza sie razem i w jednym miejscu.
-
-    WYMIARY LISTY SA PRAWDZIWE DOPIERO PO POKAZANIU OKNA. ComboBox wylicza swoja wysokosc
-    z ItemHeight, a ten przed powstaniem uchwytu jest wartoscia zastepcza - kwadrat
-    ustawiony w New-JezykForm potrafil przez to nie siegnac dolnej krawedzi i zostawal pod
-    nim pasek systemowego przycisku. Widac to bylo na liscie wynikow, bo ta jako jedyna
-    z trzech powstaje NIEWIDOCZNA. To ta sama przyczyna, dla ktorej z Add_Shown wola sie
-    Focus() i sciezke systemowa motywu.
-#>
+# Oprawa trzech list rozwijanych (obciecie ramki, kwadrat ze strzalka) - wolana tez po pokazaniu okna.
 function Update-JezykOprawaList {
     $k = $Script:Kontrolki
     if (-not $k) { return }
@@ -2253,35 +2017,21 @@ function Update-JezykOprawaList {
     }
 }
 
-# Ciemny pasek tytulu i ciemne paski przewijania - dwie rzeczy, ktorych WinForms nie umie,
-# bo rysuje je system, a nie kontrolka. Osobna funkcja, zeby Set-JezykMotyw dalo sie
-# przeczytac: tamta mowi, CO sie zmienia, ta - czego nie da sie zmienic zwyklym kolorem.
+# Ciemny pasek tytulu i paski przewijania - to rysuje system, nie WinForms.
 function Set-JezykMotywSystemowy {
     $ciemny = ($Script:Motyw -eq 'Ciemny')
     $k      = $Script:Kontrolki
 
     Set-JezykCiemnyPasekTytulu (Get-JezykUchwyt $k.Okno) -Ciemny:$ciemny
 
-    # Tylko kontrolki, ktore naprawde maja pasek przewijania. Pola "Status:" sa
-    # wielolinijkowe, ale bez paska - dopisanie ich tutaj niczego by nie zmienilo.
+    # Tylko kontrolki z paskiem przewijania.
     foreach ($kontrolka in @($k.ListaKont, $k.Domena, $k.Tryb)) {
         Set-JezykCiemnyPasekPrzewijania (Get-JezykUchwyt $kontrolka) -Ciemny:$ciemny
     }
 }
 
-# Klikniecie ikonki. Przelacza na drugi motyw - innych stanow nie ma, wiec nie ma tu czego
-# wybierac ani o co pytac.
-#
-# FOKUS ODDAJEMY POLU WYSZUKIWANIA, I TO NIE JEST UPRZEJMOSC. Przycisk motywu jest poza
-# kolejnoscia tabulacji (TabStop = $false), ale MYSZ nadaje fokus mimo to, a WinForms rysuje
-# wtedy w srodku przycisku prostokat fokusu. Ikonke malujemy sami i CELOWO BEZ TLA - tlo
-# zabraloby przyciskowi systemowe podswietlenie pod kursorem, ta sama zasada, co przy
-# napisach pozostalych przyciskow - wiec prostokat zostaje pod spodem i widac go w wycieciu
-# sierpa jako szary kwadracik. Gasl dopiero wtedy, gdy fokus przejmowalo cokolwiek innego.
-#
-# Pole wyszukiwania jest miejscem, w ktorym fokus w tym oknie spoczywa - tam stawia go tez
-# Add_Shown przy starcie - wiec nie jest to przypadkowy wybor kontrolki. Po Set-JezykMotyw,
-# a nie przed: zmiana BorderStyle odtwarza uchwyty pol i fokus nadany wczesniej by przepadl.
+# Klikniecie ikonki motywu: przelacza motyw i oddaje fokus polu wyszukiwania
+# (bez tego w wycieciu sierpa widac prostokat fokusu).
 function Invoke-JezykPrzelaczenieMotywu {
     if ($Script:Motyw -eq 'Ciemny') { Set-JezykMotyw 'Jasny' }
     else                            { Set-JezykMotyw 'Ciemny' }
@@ -2290,58 +2040,40 @@ function Invoke-JezykPrzelaczenieMotywu {
     if ($pole) { [void]$pole.Focus() }
 }
 
-# Przepisuje wynik zapytania do SCCM do pola "Ostatnio uzywany komputer". Pelna diagnostyka
-# idzie pod przycisk "!" WYLACZNIE PRZY BLEDZIE: w polu jest na nia za malo miejsca, a bez
-# niej nazwa przyczyny mowi, CO sie stalo, ale nie mowi, co z tym zrobic. Na sukcesie
-# przycisk zostaje ukryty, mimo ze Szczegoly niosa przy okazji zrodlo/protokol/serwer -
-# to nie usterka, wiec nie ma czego sygnalizowac wykrzyknikiem.
+# Wynik SCCM do pola "Ostatnio uzywany komputer"; "!" tylko przy bledzie.
+# Funkcja kontrolna - zostaje ostatnia w pliku.
 function Update-JezykKomputerWTle {
     param($Komputer)
 
-    # Odpowiedz przyszla - notka przestaje byc prawdziwa, i to ZANIM cokolwiek wpiszemy.
-    # Gasimy WYLACZNIE swoja: zadanie daty logowania biegnie niezaleznie i moze jeszcze trwac.
+    # Gasimy tylko notke SCCM - zadanie daty moze jeszcze trwac.
     Set-JezykNotkeSprawdzania -Notka 'Sccm' -Wylacz
 
     $k = $Script:Kontrolki
 
     if ($Komputer.Nazwa) {
-        $k.TxtKomputerUzytkownika.Text = if ($null -ne $Komputer.Data) {
-            '{0} ({1:yyyy-MM-dd HH:mm})' -f $Komputer.Nazwa, $Komputer.Data
-        } else {
-            $Komputer.Nazwa
-        }
+        $k.TxtKomputerUzytkownika.Text = Get-JezykTekstSesji -Nazwa ([string]$Komputer.Nazwa) `
+                                             -Data $Komputer.Data -Teraz ([bool]$Komputer.ZalogowanyTeraz)
     }
     else {
         $k.TxtKomputerUzytkownika.Text = if ($Komputer.Blad) { $Komputer.Blad } else { 'brak danych' }
     }
 
-    # NAZWA MASZYNY ODKLADANA OSOBNO. Przycisk "Pinguj" potrzebuje jej samej, a w polu
-    # tekstowym siedzi razem z data - ta sama zasada, co przy $Script:LogowaniePrzyblizone
-    # i przy loginie do odblokowania: kontrolka sluzy do pokazywania, nie do przenoszenia
-    # stanu. Przycisk jest czynny dokladnie wtedy, gdy jest co pingowac.
+    # Nazwa maszyny odkladana osobno - kontrolka sluzy do pokazywania, nie do przenoszenia stanu.
     $Script:OstatniKomputer = [string]$Komputer.Nazwa
     if ($k.PrzyciskPinguj) { $k.PrzyciskPinguj.Enabled = [bool]$Script:OstatniKomputer }
     Set-JezykPrzyciskiZdalne $Script:OstatniKomputer
 
-    # Wynik sondy przyszedl razem z nazwa - zapytanie do SCCM i ping poszly jednym zadaniem
-    # w tle, wiec kolor i adres sa gotowe od razu, bez drugiej podrozy po sieci.
+    # Sonda przyszla w tym samym zadaniu - kolor i adres od razu.
     Set-JezykDostepnoscKomputera -Odpowiada $Komputer.Odpowiada -Adres ([string]$Komputer.Adres)
 
-    # MAC dopasowany do TEGO adresu - i tylko do niego. Adres odkladamy osobno, zeby
-    # ponowny ping mial z czym porownac swoj wynik (patrz Update-JezykPingWTle).
+    # MAC dopasowany do tego adresu; adres odkladamy dla ponownego pingu.
     Set-JezykAdresMac -Mac ([string]$Komputer.Mac) -Szczegoly (Get-JezykTrescMac -Wynik $Komputer) `
                       -Podstawa ([string]$Komputer.MacPodstawa)
     $Script:MacDlaAdresu = if ($Komputer.Mac) { [string]$Komputer.Adres } else { '' }
 
     Set-JezykInfo 'Komputer' $(if ($Komputer.Blad) { [string]$Komputer.Szczegoly } else { '' })
 
-    # Niebieski "!" - nie usterka, wiec klucz jest osobny od czerwonego. Gaszony na kazdej
-    # innej sciezce, inaczej zostalby stan po POPRZEDNIM, wspoldzielonym komputerze.
-    #
-    # NIGDY RAZEM Z CZERWONYM: oba stoja w oknie w TYM SAMYM MIEJSCU, na koncu pola nazwy
-    # maszyny. Logika i tak konczy zapytanie na bledzie, zanim ustali wspoldzielenie - ale
-    # to jest fakt o tamtej funkcji, a warunek tutaj pilnuje tego w miejscu, w ktorym
-    # decyduje sie, co widac.
+    # Niebieski "!" (wspoldzielenie) nigdy razem z czerwonym - stoja w tym samym miejscu.
     Set-JezykInfo 'KomputerWspoldzielony' $(if ($Komputer.Wspoldzielony -and -not $Komputer.Blad) { [string]$Komputer.SzczegolyWspoldzielenia } else { '' })
 }
 

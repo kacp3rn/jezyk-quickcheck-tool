@@ -1,44 +1,17 @@
-﻿# Jezyk - narzedzie do sprawdzania stanu kont w Active Directory.
-# TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM. Kopiowanie pliku dokłada czasem drugi
-# znacznik BOM; pierwszy PowerShell zdejmuje, drugi psuje pierwsza instrukcje. Gdy jest
-# nia komentarz, uszkodzenie nie ma czego zepsuc. Blok <# #> tej ochrony NIE daje.
+﻿# Jezyk - plik wejsciowy: dolacza cztery czesci programu i uruchamia okno (README: Kod > Kod-Jezyk.ps1).
+# Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
+# - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
+# - Uwzględnienia mnie (X) jako głównego autora skryptu.
 
-<#
-.SYNOPSIS
-    Plik wejsciowy: dolacza cztery pozostale czesci programu i uruchamia okno.
+# Uwaga: bez "#Requires" i "param" - obie wymagaja nietknietej pierwszej instrukcji.
 
-.DESCRIPTION
-    Kolejnosc dolaczania wynika z zaleznosci:
-      Jezyk-1-Srodowisko  WinForms i $Script:Config - potrzebne wszystkim pozostalym
-      Jezyk-2-Logika      odpytanie AD i SCCM
-      Jezyk-3-Widok       wypelnianie kontrolek; wola funkcje logiki
-      Jezyk-4-Okno        budowa okna; wola funkcje widoku
-
-    Czesci sa dolaczane KROPKA, nie uruchamiane - dzieki temu ich funkcje i zmienne
-    skryptowe zyja we wspolnym zakresie.
-
-    Awaria przed zbudowaniem okna trafia do %TEMP%\Jezyk-blad.txt.
-#>
-
-# Bez "#Requires" i bez "param" - obie konstrukcje wymagaja, zeby pierwsza instrukcja
-# stala na swoim miejscu, wiec zdublowany znacznik BOM je psuje. Wersji PowerShella
-# pilnuje launcher, wskazujac powershell.exe.
-
-# Po zwolnieniu konsoli (nizej) kazda proba pisania do hosta konczy sie bledem 0x6.
-# Te dwie preferencje jako jedyne stoja domyslnie na "Continue", czyli tylko one moga
-# cos napisac same z siebie - pasek postepu polecen AD wlacznie.
+# Po zwolnieniu konsoli pisanie do hosta konczy sie bledem - Warning i Progress wyciszone tutaj,
+# bledy (tez domyslnie "Continue") zbiera blok okna na dole pliku.
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference  = 'SilentlyContinue'
 
-# Siatka bezpieczenstwa na caly plik: konsola jest w trakcie startu ukrywana, wiec bez
-# tego awaria nie mialaby gdzie sie pokazac.
-#
-# "continue", nie "break" - trap ma zapisac slad i oddac sterowanie dalej. Konczenie
-# skryptu zamienialoby uszkodzenie jednej linii w awarie calego uruchomienia.
-# Zapisujemy tylko PIERWSZY blad; kolejne bywaja jego nastepstwem.
-#
-# Trap jest samowystarczalny - nie wola zadnej funkcji z tego pliku, bo w chwili, gdy
-# blad moze wystapic, zadna nie jest jeszcze zdefiniowana.
+# Siatka bezpieczenstwa na caly plik: zapisuje PIERWSZY blad i wznawia prace ("continue").
+# Nie wola zadnej funkcji - w chwili bledu zadna nie musi jeszcze istniec.
 $Script:PierwszyBladZapisany = $false
 $Script:PierwszyBladTresc    = ''
 
@@ -78,21 +51,11 @@ if (-not $Script:KatalogSkryptu) { $Script:KatalogSkryptu = (Get-Location).Path 
 
 $Script:CzesciProgramu = 'Jezyk-1-Srodowisko', 'Jezyk-2-Logika', 'Jezyk-3-Widok', 'Jezyk-4-Okno'
 
-# Czesci, ktorych nie znaleziono. Brak pliku nie przerywa petli - zbieramy CALA liste,
-# zeby pokazac ja w jednym komunikacie.
+# Brakujace czesci - cala lista trafia do jednego komunikatu.
 $Script:BrakujaceCzesci = @()
 
 
-<#
-.SYNOPSIS
-    Zapisuje pierwszy blad, ktory padl w dolaczanej czesci programu.
-
-.DESCRIPTION
-    Tresc zapisujemy NAJPIERW, najprostszym wyrazeniem. Ta funkcja jest obsluga bledu
-    i nie ma prawa sama sie wywrocic - gdy to zrobi, ginie informacja, po ktora sie do
-    niej siega. Nazwa pliku jest dodatkiem pod wlasnym try: dla czesci wczytanej ze
-    scriptbloku ScriptName jest pusty, a Split-Path rzuca wtedy wyjatkiem.
-#>
+# Zapisuje pierwszy blad dolaczanej czesci: tresc najpierw, nazwa pliku pod wlasnym try.
 function Register-JezykBladCzesci {
     param($Blad)
 
@@ -128,24 +91,10 @@ $($Blad.ScriptStackTrace)
 }
 
 
-# Pliki o nietypowej liczbie znacznikow BOM - zero albo dwa i wiecej. Obie skrajnosci
-# traktujemy tak samo, bo obie naprawia ta sama sciezka awaryjna przy dolaczaniu.
-# Sprawdzamy KOMPLET plikow, nie tylko ten: kazdy kopiuje sie osobno, wiec kazdy jest
-# osobna okazja do pomylki.
+# Czesci o nietypowej liczbie znacznikow BOM (0 albo 2+) - dolaczane sciezka awaryjna.
 $Script:PlikiNietypowe = @()
 
-<#
-.SYNOPSIS
-    Liczy znaczniki BOM na poczatku pliku. Zwraca -1, gdy pliku nie da sie przeczytac.
-
-.DESCRIPTION
-    Liczymy, bo bledne sa OBIE skrajnosci i objawiaja sie inaczej:
-      0        Windows PowerShell 5.1 czyta plik jako Windows-1250 - polskie znaki
-               zamieniaja sie w krzaki, a napis w apostrofach potrafi rozsypac skladnie
-      1        stan poprawny
-      2 i wiecej  pierwszy znacznik PowerShell zdejmuje, kolejne zostaja jako niewidoczne
-               znaki przed pierwsza instrukcja i ja psuja
-#>
+# Liczy znaczniki BOM na poczatku pliku; -1, gdy pliku nie da sie przeczytac.
 function Get-JezykLiczbaBom {
     param([string]$Sciezka)
 
@@ -164,15 +113,7 @@ function Get-JezykLiczbaBom {
     catch { return -1 }
 }
 
-<#
-.SYNOPSIS
-    Zwraca tresc pliku z pominieciem wszystkich znacznikow BOM, dekodujac ja jako UTF-8.
-
-.DESCRIPTION
-    Dekodowanie JAWNE ratuje polskie znaki w pliku bez znacznika; petla zamiast jednego
-    odjecia trzech bajtow, bo znacznikow bywa wiecej niz dwa. Plik na dysku zostaje
-    nietkniety.
-#>
+# Tresc pliku bez wszystkich znacznikow BOM, dekodowana jawnie jako UTF-8.
 function Get-JezykTrescBezBom {
     param([string]$Sciezka)
 
@@ -185,9 +126,7 @@ function Get-JezykTrescBezBom {
     [System.Text.Encoding]::UTF8.GetString($bajty, $od, $bajty.Length - $od)
 }
 
-# Skan calego kompletu. Wynik sluzy WYLACZNIE do wyboru drogi dolaczania nizej - stan
-# znacznika nie jest nigdzie pokazywany, bo program radzi sobie z kazdym i nie ma o czym
-# informowac. Liczbe znacznikow w kopii sprawdza sie skryptem z README.
+# Skan kompletu: wynik wybiera tylko droge dolaczania i nie jest nigdzie pokazywany.
 try {
     $doSprawdzenia = @($PSCommandPath)
     foreach ($czesc in $Script:CzesciProgramu) {
@@ -202,8 +141,7 @@ try {
 catch { }
 
 
-# Dolaczenie czesci. KAZDA WE WLASNYM try/catch: bez tego blad skladni w jednej konczyl
-# ladowanie calej reszty, bo trap wznawia prace w swoim zakresie, czyli ZA petla.
+# Dolaczenie czesci - kazda we wlasnym try/catch, bo trap wznowilby prace dopiero za petla.
 foreach ($czesc in $Script:CzesciProgramu) {
     $nazwaPliku    = $czesc + '.ps1'
     $sciezkaCzesci = Join-Path $Script:KatalogSkryptu $nazwaPliku
@@ -214,11 +152,7 @@ foreach ($czesc in $Script:CzesciProgramu) {
     }
 
     if ($Script:PlikiNietypowe -contains $nazwaPliku) {
-        # Sciezka awaryjna dla kopii o zlym znaczniku - w obie strony. Czytamy bajty sami
-        # i dekodujemy jawnie jako UTF-8, zamiast pozwolic PowerShellowi zgadywac.
-        # Cena: bledy z takiej czesci nie niosa nazwy pliku, bo PowerShell zna ja tylko
-        # dla kodu wczytanego z dysku. Dlatego to droga wylacznie dla plikow juz
-        # rozpoznanych jako nietypowe.
+        # Sciezka awaryjna: bajty dekodowane jawnie jako UTF-8; bledy z niej nie niosa nazwy pliku.
         try   { . ([scriptblock]::Create((Get-JezykTrescBezBom $sciezkaCzesci))) }
         catch { Register-JezykBladCzesci $_ }
         continue
@@ -228,10 +162,7 @@ foreach ($czesc in $Script:CzesciProgramu) {
     catch { Register-JezykBladCzesci $_ }
 }
 
-# Sam fakt, ze plik istnieje, niczego nie dowodzi: pusty plik dolacza sie bez bledu,
-# a urwana kopia jest przechwytywana przez trap, ktory wznawia prace. Sprawdzamy wiec,
-# czy kazda czesc naprawde dostarczyla swoje funkcje - kontrolna wybrana z KONCA kazdego
-# pliku, bo urwana kopia traci wlasnie koniec.
+# Kontrola kompletnosci: funkcja z KONCA kazdej czesci, bo urwana kopia traci wlasnie koniec.
 $Script:CzesciNiekompletne = @()
 foreach ($para in @(
         @{ Czesc = 'Jezyk-1-Srodowisko'; Funkcja = 'Get-JezykOpisKonfiguracji' },
@@ -248,15 +179,7 @@ foreach ($para in @(
 
 #region START
 
-<#
-.SYNOPSIS
-    Pokazuje szczegoly bledu, ktory uniemozliwil start, i zapisuje je do pliku.
-
-.DESCRIPTION
-    Dwie drogi celowo: okno dociera od razu, a plik zostaje wtedy, gdy okna pokazac sie
-    nie da - na przyklad przy awarii ladowania WinForms. Plik trafia do katalogu
-    tymczasowego, bo katalog skryptu bywa udostepniony tylko do odczytu.
-#>
+# Pokazuje blad startu w oknie i zapisuje go do %TEMP%\Jezyk-blad.txt.
 function Show-JezykBladStartu {
     param($Blad)
 
@@ -290,21 +213,12 @@ $($Blad.ScriptStackTrace)
             [System.Windows.Forms.MessageBoxIcon]::Error)
     }
     catch {
-        # Write-Error pod wlasnym try: po zwolnieniu konsoli pisanie do hosta rzuca bledem,
-        # a droga "wszystko inne zawiodlo" nie moze wybuchac sama z siebie.
+        # Po zwolnieniu konsoli Write-Error tez rzuca - wlasny try.
         try { Write-Error $opis } catch { }
     }
 }
 
-<#
-.SYNOPSIS
-    Kasuje slad po poprzedniej awarii - wywolywane, gdy start sie powiodl.
-
-.DESCRIPTION
-    Obecnosc pliku ma byc informacja, wiec po udanym starcie nie ma go byc. Kasujemy
-    wylacznie wtedy, gdy przy tym uruchomieniu nic nie padlo - inaczej plik zostaje,
-    bo to jedyna kopia opisu.
-#>
+# Kasuje %TEMP%\Jezyk-blad.txt po udanym starcie - chyba ze przy tym uruchomieniu cos padlo.
 function Remove-JezykSladBledu {
     try {
         if ($Script:PierwszyBladZapisany -or -not $env:TEMP) { return }
@@ -317,10 +231,7 @@ function Remove-JezykSladBledu {
 }
 
 try {
-    # Komplet plikow sprawdzamy PRZED wszystkim innym: bez ktorejs czesci nie ma ani
-    # funkcji sprawdzajacych, ani okna, a kazdy pozniejszy komunikat mowilby o nieznanym
-    # poleceniu zamiast o brakujacym pliku. MessageBox pod try, bo WinForms laduje czesc
-    # pierwsza - gdy to ona jest brakujaca, zostaje sam plik w katalogu tymczasowym.
+    # Najpierw komplet plikow; MessageBox pod try, bo WinForms laduje dopiero czesc 1.
     if ($Script:BrakujaceCzesci.Count -gt 0 -or $Script:CzesciNiekompletne.Count -gt 0) {
         $powody = @()
         if ($Script:BrakujaceCzesci.Count -gt 0) {
@@ -348,11 +259,7 @@ try {
         exit 1
     }
 
-    # Konfiguracja wyznacza ADRESY polaczen - domene do parametru -Server, serwer lokacji
-    # SCCM i kontrolery do sciezki LDAP. Wartosc o zlym ksztalcie albo wskazujaca poza
-    # skonfigurowane domeny ma zatrzymac start, a nie skierowac uwierzytelnione polaczenie
-    # operatora gdzie indziej. Sprawdzenie stoi tutaj, bo funkcje sprawdzajace mieszkaja
-    # w czesci drugiej. @() wokol wywolania: jedno zastrzezenie wrocitoby jako napis.
+    # Bledna konfiguracja zatrzymuje start. @() - pojedyncze zastrzezenie wrociloby jako napis.
     $bledyUstawien = @(Confirm-JezykUstawienia)
     if ($bledyUstawien.Count -gt 0) {
         Invoke-JezykZwolnienieKonsoli
@@ -366,10 +273,7 @@ try {
         exit 1
     }
 
-    # Modul AD sprawdzamy, ale go NIE instalujemy. Obecnosc i ladowanie to dwa osobne
-    # pytania i dwie rozne sytuacje po stronie uzytkownika: wczesniej jeden catch zamienial
-    # dowolny wyjatek w "nie ma RSAT" i uzytkownik z dzialajacym RSAT dostawal komunikat,
-    # ze go nie ma.
+    # Modul AD: sprawdzamy, nie instalujemy; brak i nieudane ladowanie to dwa rozne komunikaty.
     $modulAD = Get-Module -ListAvailable -Name ActiveDirectory -ErrorAction SilentlyContinue
 
     if (-not $modulAD) {
@@ -404,37 +308,33 @@ Szczegóły techniczne: $($_.Exception.Message)
         exit 1
     }
 
-    # DOPIERO TERAZ znika konsola. Modul jest juz zaladowany, wiec nie ma komu pisac do
-    # hosta, ktorego zaraz zabraknie. Kolejnosc tych dwoch krokow jest czescia dzialania.
+    # Konsola znika dopiero teraz - pasek postepu modulu AD mial jeszcze gdzie pisac.
     Invoke-JezykZwolnienieKonsoli
 
-    $form = New-JezykForm
+    # Uwaga: bez konsoli rzuca KAZDY zapis do hosta, takze blad nieterminujacy procedury zdarzenia -
+    # wszystkie strumienie okna ida do Add-JezykBladOkna (README: Pulapki).
+    & {
+        $form = New-JezykForm
 
-    # Stan poczatkowy idzie ta sama droga co kazdy pozniejszy wynik, wiec startowy wyglad
-    # nie moze rozjechac sie z tym, co robi renderer.
-    Set-JezykWidok
-    $powitanie = 'Wybierz tryb, wpisz szukaną wartość i kliknij "Szukaj".'
+        # Stan poczatkowy idzie ta sama droga co kazdy wynik.
+        Set-JezykWidok
+        $powitanie = 'Wybierz tryb, wpisz szukaną wartość i kliknij "Szukaj".'
 
-    # O stanie znacznika BOM NIE INFORMUJEMY. Program radzi sobie z kazdym - zero, jeden
-    # albo wiecej - wiec komunikat opisywalby stan, ktory nie ma zadnego skutku, i tylko
-    # wypieralby powitanie z pola Status. Liczbe znacznikow sprawdza sie skryptem z README.
-    #
-    # Zostaje wylacznie zgloszenie bledu, ktory NAPRAWDE padl przy ladowaniu: sprawne
-    # uruchomienie nie zapisuje zadnego, wiec kazdy zapis tutaj znaczy uszkodzona kopie.
-    if ($Script:PierwszyBladZapisany) {
-        $powitanie = 'Błąd przy ładowaniu programu: {0}' -f $Script:PierwszyBladTresc
-    }
+        # Stanu BOM nie zglaszamy - powitanie zastepuje wylacznie blad, ktory naprawde padl.
+        if ($Script:PierwszyBladZapisany) {
+            $powitanie = 'Błąd przy ładowaniu programu: {0}' -f $Script:PierwszyBladTresc
+        }
 
-    Set-JezykResult -Result (New-JezykResult -Login '' -Status 'Empty' -Message $powitanie)
+        Set-JezykResult -Result (New-JezykResult -Login '' -Status 'Empty' -Message $powitanie)
 
-    # Okno stoi, nic nie padlo - stary opis awarii jest juz tylko mylaca pamiatka.
-    Remove-JezykSladBledu
+        # Okno stoi, nic nie padlo - stary opis awarii jest juz tylko mylaca pamiatka.
+        Remove-JezykSladBledu
 
-    # ShowDialog zatrzymuje skrypt do czasu zamkniecia okna; od tej chwili wszystko dzieje
-    # sie w procedurach obslugi zdarzen.
-    [void]$form.ShowDialog()
+        # ShowDialog wstrzymuje skrypt do zamkniecia okna; dalej dzialaja procedury zdarzen.
+        [void]$form.ShowDialog()
 
-    $form.Dispose()
+        $form.Dispose()
+    } *>&1 | ForEach-Object { Add-JezykBladOkna $_ }
 }
 catch {
     Show-JezykBladStartu -Blad $_

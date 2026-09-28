@@ -3,4 +3,7 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
+# Instrukcja dla operatora otwierana w Notatniku - takze CRLF.
+*.txt text eol=crlf
+
 *.md  text eol=lf

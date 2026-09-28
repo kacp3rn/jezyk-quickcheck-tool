@@ -1,46 +1,27 @@
-﻿# Jezyk-1-Srodowisko - konsola, biblioteki interfejsu, konfiguracja narzedzia.
-# TA LINIA MUSI POZOSTAC ZWYKLYM KOMENTARZEM - oslania pierwsza instrukcje przed
-# zdublowanym znacznikiem BOM. Powod opisany w Kod-Jezyk.ps1.
+﻿# Jezyk-1-Srodowisko - konsola, biblioteki interfejsu, konfiguracja, paleta motywu i rejestry.
+# Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
+# - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
+# - Uwzględnienia mnie (X) jako głównego autora skryptu.
 
-# WLASNY TRAP W KAZDEJ CZESCI. Trap wznawia wykonanie w zakresie, w ktorym zostal
-# ZDEFINIOWANY - gdyby ta czesc polegala na trapie z Kod-Jezyk.ps1, blad w jej linii 1
-# wznowilby prace w pliku wolajacym, czyli porzucil cala reszte tego pliku.
+# Wlasny trap kazdej czesci - trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
 
 
 #region SEKCJA 1 - SRODOWISKO I KONFIGURACJA
 
 # --- KONSOLA -------------------------------------------------------------------------
-# powershell.exe jest aplikacja konsolowa, wiec Windows zawsze przydziela mu konsole.
-# Pozbywamy sie jej w dwoch fazach:
-#   1. ukrycie okna (tutaj, na dole sekcji) - usuwa przycisk z paska zadan, ale NIE
-#      niszczy konsoli, wiec pasek postepu z Import-Module ma gdzie pisac,
-#   2. FreeConsole (w Kod-Jezyk.ps1, po zaladowaniu modulu AD) - po nim proces nie ma
-#      konsoli i kazda proba pisania do hosta konczy sie bledem 0x6.
-#
-# Obie fazy chroni ten sam warunek: dzialamy tylko wtedy, gdy jestesmy na konsoli
-# JEDYNYM procesem. Uruchomienie z otwartego okna PowerShella nie moze zabrac
-# uzytkownikowi okna, w ktorym pracuje.
-#
-# SetCurrentProcessExplicitAppUserModelID odlacza okno od powershell.exe, dzieki czemu
-# pasek zadan uzywa ikony Jezyka, a nie ikony PowerShella. Musi paść przed pierwszym oknem.
-#
-# Calosc pod try, bo konsola i pasek tytulu to wylacznie kosmetyka: gdyby kompilacja C#
-# byla na stacji zablokowana, narzedzie ma dalej dzialac - z widoczna konsola, ale sprawne.
-# JEDEN CZLONEK TEGO TYPU KOSMETYKA NIE JEST - PolaczUdzial zestawia sesje SMB pod
-# przyciskiem "Dyski". Jego brak nie moze przejsc bez slowa, wiec pyta o typ osobno
-# i oddaje wtedy wlasny kod - patrz Invoke-JezykPolaczenieUdzialu.
+# Konsola znika w dwoch fazach: ukrycie okna tutaj, FreeConsole po zaladowaniu modulu AD -
+# obie tylko wtedy, gdy jestesmy na niej jedynym procesem (README: Kod > Jezyk-1-Srodowisko).
 
-# Opis awarii trafia do %TEMP%\Jezyk-konsola.txt WYLACZNIE gdy cos poszlo nie tak;
-# przy poprawnym uruchomieniu plik jest kasowany. Jego obecnosc jest wiec informacja.
+# Opis awarii konsoli trafia do %TEMP%\Jezyk-konsola.txt wylacznie przy niepowodzeniu.
 $Script:BladKonsoli   = $null
 $Script:UchwytKonsoli = [IntPtr]::Zero
 $Script:OknoUkryte    = $false
 $Script:KonsolaZwolniona = $false
 
 try {
-    # Warunek chroni przed bledem "typ juz istnieje" przy ponownym uruchomieniu skryptu
-    # w tej samej sesji PowerShella.
+    # Pod try: nieudana kompilacja zostawia widoczna konsole, ale nie zatrzymuje programu.
+    # Warunek chroni przed bledem "typ juz istnieje" przy ponownym uruchomieniu w tej sesji.
     if (-not ('Jezyk.Native' -as [type])) {
         Add-Type -Namespace 'Jezyk' -Name 'Native' -MemberDefinition @'
 [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
@@ -77,14 +58,8 @@ public static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, strin
 public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndAfter, int x, int y,
                                        int cx, int cy, uint flags);
 
-// --- POLACZENIE Z UDZIALEM SIECIOWYM -------------------------------------------------
-// WNetAddConnection3 to ta sama droga, ktora chodzi "net use" i Eksplorator plikow:
-// zestawia sesje SMB do udzialu, a z flagami interaktywnymi POKAZUJE SYSTEMOWE OKNO
-// POSWIADCZEN - z oknem podanym w hwndOwner w roli rodzica. Jedyne wywolanie natywne
-// w tym pliku, ktore NIE JEST kosmetyka: jego niepowodzenie operator ma zobaczyc.
-//
-// STRUKTURA ZOSTAJE PO STRONIE C#. Wypelnia ja metoda ponizej, wiec z PowerShella idzie
-// wylacznie sciezka i flagi - nie ma tu miejsca, w ktorym dalo by sie pomylic pole.
+// --- POLACZENIE Z UDZIALEM SIECIOWYM (WNetAddConnection3, ta sama droga co "net use") ---
+// Strukture wypelnia metoda ponizej - z PowerShella ida tylko sciezka i flagi.
 [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
 private struct NETRESOURCE
 {
@@ -109,6 +84,57 @@ public static int PolaczUdzial(IntPtr hwndOwner, string sciezka, int flagi)
     zasob.lpRemoteName = sciezka;            // lpLocalName zostaje null: polaczenie BEZ litery
     return WNetAddConnection3(hwndOwner, ref zasob, null, null, flagi);
 }
+
+// --- ZAPIS AWARII: wyjatek, ktorego nikt nie zlapal (dowolny watek), zostawia wpis w pliku ---
+// W C#, bo kod skryptu nie wykona sie na obcym watku; naglowek taki sam jak w Add-JezykWpisAwarii.
+private static string sciezkaAwarii;
+private static string wersjaAwarii;
+
+public static void PodepnijZapisAwarii(string sciezka, string wersja)
+{
+    sciezkaAwarii = sciezka;
+    wersjaAwarii  = wersja;
+    AppDomain.CurrentDomain.UnhandledException += ZapiszNieobsluzony;
+}
+
+private static void ZapiszNieobsluzony(object nadawca, UnhandledExceptionEventArgs e)
+{
+    ZapiszAwarie(sciezkaAwarii, wersjaAwarii, e.ExceptionObject);
+}
+
+// Dopisuje wpis; nie rzuca - proces i tak konczy prace, a obsluga nie moze dolozyc drugiej awarii.
+public static bool ZapiszAwarie(string sciezka, string wersja, object wyjatek)
+{
+    try
+    {
+        if (String.IsNullOrEmpty(sciezka)) { return false; }
+
+        int    pid     = 0;
+        string start   = "n/d";
+        string pamiec  = "n/d";
+        string uchwyty = "n/d";
+        try
+        {
+            System.Diagnostics.Process proces = System.Diagnostics.Process.GetCurrentProcess();
+            pid = proces.Id;
+            try { start   = proces.StartTime.ToString("yyyy-MM-dd HH:mm:ss"); } catch { }
+            try { pamiec  = (proces.PrivateMemorySize64 / 1048576).ToString() + " MB"; } catch { }
+            try { uchwyty = proces.HandleCount.ToString(); } catch { }
+        }
+        catch { }
+
+        string nl   = "\r\n";
+        string wpis = "=== " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " | PID " + pid +
+                      " | Nieobsłużony wyjątek procesu - Jeżyk kończy pracę ===" + nl +
+                      Convert.ToString(wyjatek) + nl +
+                      "Wersja: " + wersja + "; działa od: " + start + "; pamięć prywatna: " + pamiec +
+                      "; uchwyty: " + uchwyty + nl + nl;
+
+        System.IO.File.AppendAllText(sciezka, wpis, new System.Text.UTF8Encoding(true));
+        return true;
+    }
+    catch { return false; }
+}
 '@
     }
 
@@ -118,15 +144,7 @@ catch {
     $Script:BladKonsoli = "Przygotowanie funkcji systemowych: $($_.Exception.Message)"
 }
 
-<#
-.SYNOPSIS
-    Czy konsola nalezy wylacznie do nas? Rozstrzyga liczba przypietych do niej procesow.
-
-.DESCRIPTION
-    1 = konsola jest nasza, wolno przy niej dzialac. Wiecej = siedzi na niej ktos jeszcze.
-    Odpowiedz "nie wiem" brzmi $false, bo nieruszanie cudzej konsoli jest bezpiecznym
-    zachowaniem domyslnym.
-#>
+# Czy konsola nalezy wylacznie do nas (jeden przypiety proces)? "Nie wiem" = $false.
 function Test-JezykKonsolaNasza {
     if (-not ('Jezyk.Native' -as [type])) { return $false }
 
@@ -149,12 +167,10 @@ function Hide-JezykOknoKonsoli {
         $Script:UchwytKonsoli = [Jezyk.Native]::GetConsoleWindow()
         if ($Script:UchwytKonsoli -eq [IntPtr]::Zero) { return }
 
-        # 0 = SW_HIDE. Najpierw chowamy, potem zmieniamy styl - na oknie juz ukrytym
-        # zmiana dziala pewniej.
+        # 0 = SW_HIDE; styl zmieniamy na oknie juz ukrytym - dziala pewniej.
         [void][Jezyk.Native]::ShowWindow($Script:UchwytKonsoli, 0)
 
-        # GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80. Suma bitowa, zeby nie skasowac
-        # pozostalych stylow. Okno narzedziowe nigdy nie dostaje przycisku na pasku zadan.
+        # GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80 (suma bitowa) - okno bez przycisku na pasku zadan.
         $styl = [Jezyk.Native]::GetWindowLong($Script:UchwytKonsoli, -20)
         [void][Jezyk.Native]::SetWindowLong($Script:UchwytKonsoli, -20, ($styl -bor 0x80))
         [void][Jezyk.Native]::ShowWindow($Script:UchwytKonsoli, 0)
@@ -166,26 +182,8 @@ function Hide-JezykOknoKonsoli {
     }
 }
 
-<#
-.SYNOPSIS
-    Przelacza pasek tytulu okna na ciemny albo jasny.
-
-.DESCRIPTION
-    JEDYNA CZESC MOTYWU, KTOREJ WINFORMS NIE UMIE. Pasek tytulu lezy poza obszarem klienta
-    i rysuje go menedzer okien, wiec nie ma kontrolki, ktorej mozna by ustawic BackColor -
-    bez tego wywolania nad ciemnym oknem zostaje biala belka.
-
-    ATRYBUT MA DWA NUMERY. W Windows 11 i w nowszych kompilacjach Windows 10 to 20
-    (DWMWA_USE_IMMERSIVE_DARK_MODE); w kompilacjach 1809-1909 ten sam atrybut mial numer 19
-    i pod dwudziestka nie dziala. Probujemy obu - DWM nie zna atrybutu po cichu, oddajac
-    niezerowy HRESULT, a nie rzucajac wyjatkiem.
-
-    NIEPOWODZENIE JEST DOPUSZCZALNE: zostaje jasny pasek nad ciemnym oknem. To brzydkie,
-    ale dziala, wiec funkcja nie ma prawa zatrzymac programu. Blok catch lapie w praktyce
-    jeden przypadek - zablokowana na stacji kompilacje C#, przez ktora nie powstal caly typ
-    Jezyk.Native. Ten sam powod jest juz zapisany do $Script:BladKonsoli przy Add-Type
-    i stamtad trafia do pliku diagnostycznego, wiec nie zakladamy tu drugiego kanalu.
-#>
+# Przelacza pasek tytulu okna na ciemny albo jasny (atrybut DWM 20, w starszych kompilacjach 19).
+# Niepowodzenie zostawia jasny pasek - kosmetyka, nie zatrzymuje programu.
 function Set-JezykCiemnyPasekTytulu {
     param([IntPtr]$Uchwyt, [switch]$Ciemny)
 
@@ -201,10 +199,8 @@ function Set-JezykCiemnyPasekTytulu {
         }
         if ($wynik -ne 0) { return }
 
-        # Belka tytulu nie nalezy do obszaru klienta, wiec Invalidate jej nie dotyczy.
-        # Bez ponizszego okno przemalowuje ja dopiero przy pierwszym przesunieciu - czyli
-        # klikniecie ikonki wygladaloby na wykonane do polowy.
-        # SWP_NOSIZE 0x1 | SWP_NOMOVE 0x2 | SWP_NOZORDER 0x4 | SWP_FRAMECHANGED 0x20
+        # Belka jest poza obszarem klienta - bez tego przemaluje sie dopiero po ruchu okna.
+        # 0x27 = SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED
         [void][Jezyk.Native]::SetWindowPos($Uchwyt, [IntPtr]::Zero, 0, 0, 0, 0, 0x27)
     }
     catch {
@@ -212,19 +208,8 @@ function Set-JezykCiemnyPasekTytulu {
     }
 }
 
-<#
-.SYNOPSIS
-    Przelacza paski przewijania kontrolki na ciemne albo jasne.
-
-.DESCRIPTION
-    Paski przewijania rysuje motyw systemu, nie WinForms - lista grup w ciemnym oknie
-    zostalaby z jasnym paskiem po prawej. SetWindowTheme nadaje kontrolce klase wygladu:
-    "DarkMode_Explorer" istnieje w Windows 10 od kompilacji 1809 i w Windows 11, a na
-    starszych po prostu nie zostaje rozpoznana - i wtedy pasek zostaje jasny.
-
-    Powrot to "Explorer", a nie pusta nazwa: pusta zdejmuje klase razem z wygladem
-    systemowym i kontrolka przestaje wygladac jak reszta okna.
-#>
+# Przelacza paski przewijania kontrolki na ciemne ("DarkMode_Explorer") albo jasne.
+# Powrot to "Explorer", nie pusta nazwa - ta zdejmuje caly wyglad systemowy.
 function Set-JezykCiemnyPasekPrzewijania {
     param([IntPtr]$Uchwyt, [switch]$Ciemny)
 
@@ -233,8 +218,7 @@ function Set-JezykCiemnyPasekPrzewijania {
 
     try {
         $klasa = if ($Ciemny) { 'DarkMode_Explorer' } else { 'Explorer' }
-        # [NullString]::Value, a nie $null: pusty napis znaczylby "pusta lista
-        # identyfikatorow", a chodzi o "uzyj domyslnych".
+        # [NullString]::Value = "uzyj domyslnych"; pusty napis znaczylby pusta liste identyfikatorow.
         [void][Jezyk.Native]::SetWindowTheme($Uchwyt, $klasa, [NullString]::Value)
     }
     catch {
@@ -242,23 +226,8 @@ function Set-JezykCiemnyPasekPrzewijania {
     }
 }
 
-<#
-.SYNOPSIS
-    Prosi system o polaczenie z udzialem sieciowym. Oddaje KOD systemowy, nic wiecej.
-
-.DESCRIPTION
-    CIENKA WARSTWA NAD JEDNYM WYWOLANIEM - to jest styk z systemem i jedyne miejsce,
-    ktore zestaw weryfikacyjny podmienia atrapa (tak samo jak przy ciemnym pasku tytulu).
-    Co dany kod znaczy, rozstrzyga Get-JezykStanPolaczeniaUdzialu w Jezyk-2-Logika.ps1.
-
-    FLAGI DECYDUJA O OKNIE POSWIADCZEN. Zero to proba cicha, ktora wolno wykonac w tle;
-    CONNECT_INTERACTIVE | CONNECT_PROMPT (0x18) kaze systemowi zapytac operatora o konto,
-    a wtedy wywolanie MUSI isc z watku interfejsu - rysuje okno i potrzebuje rodzica.
-
-    KOD -1 NIE POCHODZI OD SYSTEMU: znaczy "nie ma czym zapytac", czyli typ z funkcjami
-    natywnymi nie powstal albo samo wywolanie sie wywrocilo. Kody systemowe sa nieujemne,
-    wiec te dwie rzeczy nie maja jak sie pomylic.
-#>
+# Styk z systemem: laczy z udzialem (WNetAddConnection3). Kod systemowy albo -1 = brak funkcji natywnych.
+# Flagi: 0 - proba cicha (wolno w tle); 0x18 - okno poswiadczen, wylacznie z watku interfejsu.
 function Invoke-JezykPolaczenieUdzialu {
     param([string]$Sciezka, [IntPtr]$Uchwyt = [IntPtr]::Zero, [int]$Flagi = 0)
 
@@ -266,21 +235,13 @@ function Invoke-JezykPolaczenieUdzialu {
 
     try { return [Jezyk.Native]::PolaczUdzial($Uchwyt, $Sciezka, $Flagi) }
     catch {
-        # Wyjatek z samego wywolania to awaria TEJ DROGI, a nie odpowiedz serwera - oddajemy
-        # go jako brak narzedzia, zeby okno nie nazwalo go odmowa dostepu.
+        # Wyjatek to awaria tej drogi, nie odpowiedz serwera - oddajemy -1, a nie "odmowa dostepu".
         $Script:BladKonsoli = "Polaczenie z udzialem: $($_.Exception.Message)"
         return -1
     }
 }
 
-<#
-.SYNOPSIS
-    Zwalnia konsole. Wywolywane POZNO - dopiero po zaladowaniu modulu AD.
-
-.DESCRIPTION
-    Kolejnosc jest czescia dzialania: Import-Module ActiveDirectory rysuje pasek postepu,
-    czyli pisze do hosta, a po FreeConsole taki zapis konczy sie bledem 0x6.
-#>
+# Zwalnia konsole - dopiero po zaladowaniu modulu AD (jego pasek postepu pisze do hosta).
 function Invoke-JezykZwolnienieKonsoli {
 
     if ($Script:KonsolaZwolniona) { return }
@@ -318,113 +279,70 @@ Data: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     catch { }
 }
 
-# Ukrycie okna TERAZ - najwczesniej jak sie da, zeby ikona zniknela z paska zadan
-# w ulamku sekundy. Konsola nadal istnieje; zwolnimy ja po zaladowaniu modulu AD.
+# Ukrycie okna konsoli jak najwczesniej - ikona znika z paska zadan od razu.
 Hide-JezykOknoKonsoli
 
-# WinForms i System.Drawing nie sa ladowane automatycznie. Musi to nastapic, zanim padnie
-# pierwsze odwolanie do typu z tych bibliotek - czyli zanim zbudujemy $Script:Config.
+# WinForms i System.Drawing przed pierwszym uzyciem ich typow, czyli przed zbudowaniem Config.
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Wlacza style wizualne systemu. Musi paść PRZED pierwszym oknem - takze przed oknem
-# bledu; wywolane pozniej nie zadziala wstecz.
+# Style wizualne - przed pierwszym oknem (takze oknem bledu); pozniej nie dzialaja wstecz.
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 
 # --- KONFIGURACJA --------------------------------------------------------------------
-# JEDYNE MIEJSCE, KTORE SIE WYPELNIA. Wartosci siedza w kodzie, a nie w osobnym pliku,
-# bo wyznaczaja ADRESY polaczen: domene do parametru -Server, serwer lokacji SCCM i
-# kontrolery do sciezki LDAP. W osobnym pliku obok skryptu byly chronione slabiej niz
-# kod i nikt ich nie ogladal przy przegladzie.
-#
-# Zadnego zgadywania: nie ma tu zmiennych srodowiskowych, odczytow rejestru ani wartosci
-# zapasowych. Czego nie ma na liscie ponizej, o to Jezyk nie pyta.
-# Poprawnosc sprawdza Confirm-JezykUstawienia przy starcie.
+# JEDYNE MIEJSCE DO WYPELNIENIA przy wdrozeniu. Zadnego wykrywania ani wartosci zapasowych;
+# poprawnosc sprawdza Confirm-JezykUstawienia przy starcie (README: Konfiguracja).
 $Script:Ustawienia = @{
 
-    # Domeny w liscie rozwijanej. PIERWSZA jest wybrana po starcie; pusta lista = Jezyk
-    # nie wystartuje.
+    # Domeny w liscie rozwijanej; pierwsza wybrana po starcie. Pusta lista = Jezyk nie wystartuje.
     Domeny = @(
         'jezyk.pl'
         'zolw.pl'
         'wydra.pl'
     )
 
-    # Domeny, w ktorych przycisk "Odblokuj konto" ma byc czynny - jedna z DWOCH operacji
-    # ZAPISU w calym narzedziu. Pusta lista = nieczynny wszedzie i to jest wartosc domyslna.
+    # Domeny z czynnym "Odblokuj konto" (zapis do AD). Pusta lista = nigdzie.
     DomenyZOdblokowaniem = @(
         'zolw.pl'
     )
 
-    # Domeny, w ktorych wolno DOPISAC KONTO DO GRUPY z okna "Grupy AD" - druga operacja
-    # ZAPISU. Pusta lista = wiersza dodawania nie ma w zadnej domenie i to jest wartosc
-    # domyslna.
-    #
-    # OSOBNA LISTA, A NIE PONOWNE UZYCIE DomenyZOdblokowaniem. W AD odblokowanie konta
-    # i zarzadzanie czlonkostwem grupy to dwie niezalezne delegacje, nadawane osobno
-    # i czesto komu innemu. Jedna lista dla obu znaczylaby, ze wlaczenie jednej operacji
-    # po cichu wlacza druga - a przycisk obiecywalby prawo, ktorego konto operatora
-    # w tej domenie nie ma.
-    DomenyZDodawaniemDoGrup = @()
+    # Domeny, w ktorych okno "Grupy AD" dopisuje i usuwa czlonkostwo (zapis do AD). Pusta = nigdzie.
+    # Jedna lista na oba kierunki, osobna od DomenyZOdblokowaniem - to dwie niezalezne delegacje.
+    DomenyZZarzadzaniemGrupami = @(
+        'jezyk.pl'
+    )
 
-    # Ogranicza obejscie kontrolerow do wypisanych maszyn. Pusta lista = Jezyk pyta o nie
-    # samo AD. Kazda nazwa musi nalezec do jednej z domen wyzej.
+    # Ogranicza obejscie kontrolerow do wypisanych maszyn. Pusta lista = lista z AD.
     Kontrolery = @()
 
-    # PODDRZEWO, OD KTOREGO ZACZYNA SIE PRZESZUKANIE PO NUMERZE TELEFONU (-SearchBase).
-    # PUSTE = od korzenia domeny, czyli tak, jak dziala Jezyk bez tego ustawienia.
-    #
-    # Po co: telephoneNumber i mobile NIE SA w AD indeksowane, a filtr numeru ma gwiazdke
-    # na poczatku wartosci, wiec kontroler przeglada konto po koncie. Wskazanie poddrzewa
-    # skraca to przegladanie proporcjonalnie do tego, ile obiektow z niego wypada - i jest
-    # JEDYNYM sposobem na skrocenie samego zapytania. (Drugi srodek, czyli przeniesienie go
-    # w tlo, zapytania nie skraca - sprawia tylko, ze okno na nie nie czeka.)
-    #
-    # CENA: konto SPOZA tego poddrzewa przestaje byc znajdowane po numerze i NIKT SIE O TYM
-    # NIE DOWIE - ani operator, ani Jezyk. Wpisuj tu wylacznie kontener obejmujacy WSZYSTKIE
-    # konta ludzi; przy kontach rozsianych po wielu galeziach zostaw pusto.
-    #
-    # KLUCZ TO DOMENA, bo nazwa wyrozniajaca konczy sie skladnikami DC tej jednej domeny -
-    # jedna wartosc dla wszystkich trzech domen bylaby poprawna najwyzej dla jednej,
-    # a w pozostalych wywracalaby wyszukiwanie. Domena bez wpisu = przeszukanie od korzenia.
+    # Poddrzewo (-SearchBase) przeszukania po numerze telefonu, per domena. Puste = od korzenia.
+    # Uwaga: konto spoza poddrzewa przestaje byc znajdowane po numerze - bez ostrzezenia.
     # Przyklad: @{ 'jezyk.pl' = 'OU=Ludzie,DC=jezyk,DC=pl' }
     SzukajOd = @{}
 
-    # SccmSerwer to SERWER LOKACJI (rola SMS Provider), nie punkt zarzadzania: przestrzen
-    # root\sms\site_XXX mieszka wylacznie na nim. Puste = pole "Ostatnio uzywany komputer"
-    # mowi o braku konfiguracji i z niczym sie nie laczy.
+    # Serwer lokacji SCCM (SMS Provider, nie punkt zarzadzania), kod lokacji i protokol Dcom/Wsman.
+    # Pusty serwer = pola SCCM mowia o braku konfiguracji i z niczym sie nie lacza.
     SccmSerwer     = ''
     SccmKodLokacji = ''
     SccmProtokol   = 'Dcom'
 
-    # Gdy polaczenie protokolem wyzej nie dochodzi do skutku (zamkniety port, milczacy
-    # serwer), sprobowac TEGO DRUGIEGO: Dcom <-> Wsman. Oba prowadza do tego samego
-    # serwera z konfiguracji - zapasowy jest protokol, nie adres. Sensowne, bo prawo
-    # wstepu bywa nadane tylko jednej z dwoch drog: rola w ConfigMgr daje zdalna
-    # aktywacje DCOM, a wejscie przez WinRM wymaga osobnego czlonkostwa na serwerze.
-    # $false = probujemy wylacznie protokolu z SccmProtokol.
+    # $true = gdy protokol wyzej nie laczy, probujemy drugiego (Dcom <-> Wsman) do tego samego serwera.
     SccmProtokolZapasowy = $true
 
-    # PELNA sciezka do CmRcViewer.exe - zdalnej konsoli z ConfigMgr. Uruchamia ja przycisk
-    # "Polacz", ktory pojawia sie nad "Pinguj" wtedy i tylko wtedy, gdy SCCM podal nazwe
-    # maszyny, A TA SCIEZKA JEST WYPELNIONA. PUSTE = przycisku nie ma i to jest wartosc
-    # domyslna - dokladnie ta sama zasada, co przy pustym SccmSerwer.
-    #
-    # SCIEZKA MUSI BYC PELNA, od litery dysku albo \\serwera. Sama nazwa pliku bylaby
-    # szukana po PATH, czyli na maszynie operatora - a Jezyk niczego tam nie wykrywa
-    # (twarda zasada nr 1). Z tego samego powodu nie ma tu wartosci zapasowej: katalog
-    # konsoli bywa inny w kazdym wdrozeniu i zgadywanie go konczyloby sie uruchomieniem
-    # nie tego programu, co trzeba.
-    #
-    # Przyklad: 'C:\Program Files (x86)\Microsoft Endpoint Manager\AdminConsole\bin\i386\CmRcViewer.exe'
+    # Domeny znane serwerowi SCCM. Poza nimi okno chowa pola SCCM, adresy IP i MAC oraz przyciski
+    # "Pinguj", "Polacz" i "Dyski". Pusta lista = pol SCCM nie ma nigdzie.
+    DomenyZSccm = @(
+        'jezyk.pl'
+    )
+
+    # PELNA sciezka do CmRcViewer.exe dla przycisku "Polacz" (od litery dysku albo \\serwera).
+    # Puste = przycisku nie ma. Przyklad:
+    # 'C:\Program Files (x86)\Microsoft Endpoint Manager\AdminConsole\bin\i386\CmRcViewer.exe'
     SciezkaRemoteControl = ''
 }
 
-# Normalizacja wszystkich trzech list: male litery i bez spacji na brzegach. Od tego zalezy
-# porownanie w Test-JezykWolnoOdblokowac i w Test-JezykWolnoDodacDoGrupy - bez niej wpis
-# "ZOLW.PL" nie zgadzalby sie z domena wybrana w oknie i przycisk po cichu przestalby
-# dzialac.
+# Listy domen znormalizowane (male litery, bez spacji) - porownuje sie je z domena wybrana w oknie.
 $Script:Domeny = @($Script:Ustawienia.Domeny |
                    ForEach-Object { ([string]$_).Trim().ToLower() } |
                    Where-Object { $_ })
@@ -433,17 +351,18 @@ $Script:DomenyZOdblokowaniem = @($Script:Ustawienia.DomenyZOdblokowaniem |
                                  ForEach-Object { ([string]$_).Trim().ToLower() } |
                                  Where-Object { $_ })
 
-$Script:DomenyZDodawaniemDoGrup = @($Script:Ustawienia.DomenyZDodawaniemDoGrup |
-                                    ForEach-Object { ([string]$_).Trim().ToLower() } |
-                                    Where-Object { $_ })
+$Script:DomenyZZarzadzaniemGrupami = @($Script:Ustawienia.DomenyZZarzadzaniemGrupami |
+                                       ForEach-Object { ([string]$_).Trim().ToLower() } |
+                                       Where-Object { $_ })
+
+$Script:DomenyZSccm = @($Script:Ustawienia.DomenyZSccm |
+                        ForEach-Object { ([string]$_).Trim().ToLower() } |
+                        Where-Object { $_ })
 
 # Zadnej wartosci zapasowej: brak listy jest brakiem listy i konczy sie komunikatem.
 $Script:DomenaAD = if ($Script:Domeny.Count) { $Script:Domeny[0] } else { '' }
 
-# Klucze na male litery i bez spacji, tak samo jak obie listy domen wyzej - bez tego wpis
-# "JEZYK.PL" nie zgadzalby sie z domena wybrana w oknie i poddrzewo po cichu przestaloby
-# obowiazywac. Cicha utrata poddrzewa jest lagodniejsza niz cicha jego zamiana, ale nadal
-# znaczylaby, ze ustawienie robi co innego, niz mowi.
+# Klucze SzukajOd znormalizowane tak samo jak listy domen.
 $Script:SzukajOd = @{}
 if ($Script:Ustawienia.SzukajOd -is [hashtable]) {
     foreach ($klucz in $Script:Ustawienia.SzukajOd.Keys) {
@@ -453,142 +372,78 @@ if ($Script:Ustawienia.SzukajOd -is [hashtable]) {
     }
 }
 
-# Ustawienia wygladu i stale programu. Etykiety trybow sluza jednoczesnie za pozycje listy
-# rozwijanej i za identyfikatory trybu w kodzie - jedno miejsce, zeby nazwy sie nie rozjechaly.
+# Wyglad i stale programu. Etykiety trybow sa zarazem pozycjami listy i identyfikatorami trybu.
 $Script:Config = @{
     Domena        = $Script:DomenaAD
     TytulOkna     = 'Jeżyk - Twój mały pomocnik'
 
-    # Ile trafien pokazujemy przy wyszukiwaniu czesciowym. Powyzej tej liczby okno prosi
-    # o doprecyzowanie, zamiast po cichu uciac wynik.
+    # Ile trafien pokazuje lista wyboru; powyzej okno prosi o doprecyzowanie.
     LimitWynikow  = 50
 
-    # ILE TRAFIEN PO NUMERZE TELEFONU MA JESZCZE SENS. Numer nalezy niemal zawsze do jednej
-    # osoby; kilkadziesiat kont z tym samym numerem to numer infolinii albo wspolny numer
-    # dzialu i lista takich osob nie odpowiada na zadne pytanie - okno prosi wtedy o inna
-    # wartosc, tak samo jak przy niepelnym nazwisku.
-    #
-    # TA LICZBA IDZIE TEZ NA ROZMIAR STRONY (-ResultPageSize), i to ona konczy prace
-    # KONTROLERA, a nie tylko ucina odpowiedz. Filtr numeru ma gwiazdke NA POCZATKU wartosci,
-    # wiec nie korzysta z indeksow; przy domyslnej stronie 256 wierszy numer uzywany przez
-    # kilkadziesiat osob nigdy jej nie zapelnia i kontroler przegladal cala domene - stad
-    # zatrzymania okna. Przy stronie rownej limitowi konczy szukanie po jedenastym trafieniu.
-    #
-    # Osobne od LimitWynikow, bo tamten dotyczy zapytan po nazwie, ktore indeksy
-    # wykorzystuja i moga oddac wiecej bez tego kosztu.
+    # Ile trafien po numerze telefonu ma sens; powyzej okno prosi o inna wartosc.
+    # Idzie tez na -ResultPageSize - konczy prace kontrolera (README: Wyszukiwanie po numerze telefonu).
     LimitNumeru   = 10
 
-    # ILE NAZW GRUP ODDAJE "Sprawdz nazwy" W OKNIE GRUP AD. Powyzej tej liczby okno prosi
-    # o doprecyzowanie zamiast stawiac liste, z ktorej i tak nikt nie wybiera. Ta liczba
-    # idzie rowniez na -ResultPageSize, czyli konczy prace KONTROLERA - ma to znaczenie
-    # przy drugim przebiegu wyszukiwania, ktory dopasowuje fragment w srodku nazwy i przez
-    # to nie korzysta z indeksu (patrz Find-JezykGrupyPoNazwie).
+    # Ile nazw grup oddaje "Sprawdz nazwy"; tez rozmiar strony zapytania (konczy prace kontrolera).
     LimitPodpowiedziGrup = 20
 
     TrybNazwa     = 'dane AD użytkownika'
     TrybKomputer  = 'nazwę komputera'
 
     # --- PALETA ----------------------------------------------------------------------
-    # WSZYSTKIE KLUCZE Kolor* PONIZEJ SA ZMIENNE, nie stale: przelaczenie motywu
-    # przepisuje je z $Script:MotywJasny albo $Script:MotywCiemny (zaraz pod tym blokiem).
-    # Dzieki temu kazde miejsce czytajace $Script:Config.Kolor* dostaje wlasciwy odcien
-    # samo z siebie i dolozenie pola nie wymaga drugiej listy do poprawienia.
-    #
-    # WARTOSCI TUTAJ TO MOTYW JASNY. SystemColors zostaja tam, gdzie byly od poczatku:
-    # jasny motyw ma isc za ustawieniami Windows, a nie za liczbami wpisanymi w kodzie.
+    # Klucze Kolor* to biezaca paleta (przepisuje ja Set-JezykMotyw); wartosci tutaj = motyw jasny.
     KolorOkna     = [System.Drawing.SystemColors]::Control
     KolorTla      = [System.Drawing.SystemColors]::Window
     KolorTekstu   = [System.Drawing.SystemColors]::WindowText
 
-    # NIE KOLOR, ale zmienia sie razem z motywem, wiec nalezy do palety. Ramki pola
-    # tekstowego nie da sie pomalowac: Fixed3D rysuje motyw systemu i w ciemnym oknie
-    # wypada jasna obwodka. FixedSingle to ramka jednopikselowa, ciemniejsza od pola,
-    # i zostawia tekstowi wciecie od krawedzi - inaczej niz calkowity brak ramki.
+    # Styl ramki pol - zmienia sie z motywem (ramki nie da sie pomalowac, tylko wybrac styl).
     RamkaPola     = [System.Windows.Forms.BorderStyle]::Fixed3D
 
-    # GRUBOSC TEJ RAMKI, wyrazona liczba. To nie jest drugi zapis tego samego, tylko jedyna
-    # postac, w ktorej da sie ja policzyc: Fixed3D to WS_EX_CLIENTEDGE, czyli 2 px z kazdej
-    # strony (SystemInformation.Border3DSize), a FixedSingle to WS_BORDER, czyli 1 px
-    # (SystemInformation.BorderSize). Wysokosc kontrolki jest przy tym w obu stylach TA SAMA
-    # (TextBoxBase.PreferredHeight nie rozroznia ich wcale), wiec cienzsza ramka daje o 2 px
-    # wyzszy obszar klienta - a pole tekstowe rysuje wiersz przy jego GORNEJ krawedzi
-    # i tekst wychodzi o piksel wyzej. Wyrownuje to Set-JezykWyrownaniePol.
+    # Grubosc tej ramki w px (Fixed3D = 2, FixedSingle = 1) - dla Set-JezykWyrownaniePol.
     WciecieRamkiPola = 2
 
 
     KolorProblem  = [System.Drawing.Color]::Red
-    KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na bialym tle
+    # Kolor NAPISU werdyktu "Konto aktywne" (werdykt niesie znaczenie literami, pola - tlem).
+    KolorOk       = [System.Drawing.Color]::Green      # 0,128,0 - czytelny na jasnym tle okna
     KolorNieznany = [System.Drawing.Color]::DimGray
 
-    # Napis WYLACZONEGO przycisku. WinForms nie pozwala go ustawic: przy FlatStyle = Flat
-    # maluje go kolorem ControlPaint.Dark(BackColor), czyli odcieniem o trzecia ciemniejszym
-    # od tla samego przycisku. Na jasnym tle wychodzi z tego czytelna szarosc, na ciemnym -
-    # niemal czern, i przycisk wyglada jak pusty prostokat: nie wiadomo, czy jest wylaczony,
-    # czy zepsuty. Dlatego napis wylaczonego przycisku domalowujemy sami, tym kolorem.
+    # Tla pol niosacych znaczenie: nasycone, z kontrastem czarnego napisu >= 4,5:1 (README: Ciemny motyw).
+    KolorPolaOk      = [System.Drawing.Color]::FromArgb(74, 222, 128)
+    KolorPolaProblem = [System.Drawing.Color]::FromArgb(248, 113, 113)
+
+    # Napis wylaczonego przycisku - domalowywany samodzielnie (WinForms nie pozwala go ustawic).
     KolorNieczynny = [System.Drawing.SystemColors]::GrayText
 
     # Odcien ciemniejszy od domyslnego tla okna (SystemColors.Control to okolo 240,240,240).
     KolorKontrolki = [System.Drawing.Color]::FromArgb(224, 224, 224)
     KolorObramowki = [System.Drawing.Color]::FromArgb(180, 180, 180)
 
-    # Kwadrat ze strzalka po prawej stronie listy rozwijanej. WinForms maluje go na sztywno
-    # kolorem SystemColors.Control i nie ma wlasciwosci, ktora by to zmienila - w ciemnym
-    # oknie zostawal jasny prostokat przy ciemnej liscie. Domalowujemy go wiec sami i kolor
-    # nalezy do palety. W jasnym motywie zostaje dokladnie ten systemowy, zeby lista
-    # wygladala tak, jak wygladala.
+    # Kwadrat ze strzalka listy rozwijanej - domalowywany samodzielnie; w jasnym motywie systemowy.
     KolorPrzyciskuListy = [System.Drawing.SystemColors]::Control
 
-    # ILE PIKSELI ZDJAC Z KRAWEDZI LISTY ROZWIJANEJ. Jej ramke WinForms maluje na sztywno
-    # kolorem SystemColors.Window, czyli bialym: w jasnym oknie to w porzadku, w ciemnym
-    # wyglada jak obwodka doklejona do kontrolki. Ramki nie da sie pomalowac, ale da sie ja
-    # OBCIAC - kontrolka o zwezonym obszarze tych pikseli po prostu nie rysuje i widac pod
-    # nimi tlo okna. NIE KOLOR, a zmienia sie razem z motywem, wiec tak samo jak RamkaPola
-    # nalezy do palety.
+    # Ile pikseli obciac z krawedzi listy rozwijanej (jej bialej ramki nie da sie pomalowac).
     ObciecieListy = 0
 
-    # Tlo przycisku "!" - jasny czerwony odcien, zeby wykrzyknik nie zlewal sie z reszta
-    # szarego interfejsu. Sam wykrzyknik pokazuje sie wylacznie przy realnej usterce,
-    # wiec ma sygnalizowac problem tak samo stanowczo jak KolorProblem na werdykcie.
+    # Tlo czerwonego "!" (usterka).
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(255, 232, 232)
 
-    # Drugi, NIEBIESKI wariant przycisku "!" - nie usterka, tylko realna niejednoznacznosc
-    # danych (komputer wspoldzielony przez kilku uzytkownikow). Czerwony i zielony sa juz
-    # zajete w tym samym wierszu (blad/ok przy dostepnosci maszyny), wiec kolejny stan
-    # dostaje wlasny, dotad nieuzywany odcien.
+    # Niebieski "!" - nie usterka, tylko niejednoznacznosc danych (komputer wspoldzielony).
     KolorInfo     = [System.Drawing.Color]::FromArgb(0, 90, 200)
     KolorInfoTlo  = [System.Drawing.Color]::FromArgb(224, 236, 255)
 
     Autor         = 'XYZ'
 
-    # Numer wersji pokazywany w prawym dolnym rogu okna. PODBIJANY RECZNIE - Jezyk niczego
-    # nie wykrywa sam na maszynie operatora, a gita tam nie ma. Nie jest to $Script:Ustawienia:
-    # to napis w oknie, nie adres polaczenia, wiec Confirm-JezykUstawienia nie ma go czego
-    # sprawdzac. Zaslepka do wpisania przed wdrozeniem, tak samo jak Autor wyzej.
+    # Numer wersji w prawym dolnym rogu okna - podbijany recznie przed wdrozeniem.
     Wersja        = 'X'
 
-    # OD KTOREGO MOTYWU ZACZYNA OKNO. Podbijane recznie, tak samo jak Wersja i Autor:
-    # Jezyk niczego nie wykrywa sam na maszynie operatora, wiec ani nie zaglada do
-    # rejestru Windows po ustawienie motywu systemu, ani nie zapisuje wyboru operatora
-    # nigdzie poza pamiecia procesu. Klikniecie ksiezyca dziala do zamkniecia okna.
+    # Motyw na starcie ('Jasny' albo 'Ciemny'); wybor operatora nie jest nigdzie zapisywany.
     MotywStartowy = 'Jasny'
 }
 
 # --- MOTYWY ---------------------------------------------------------------------------
-# DWA KOMPLETY TYCH SAMYCH KLUCZY. Set-JezykMotyw przepisuje jeden z nich do
-# $Script:Config, a reszta programu czyta juz tylko $Script:Config.
-#
-# CIEMNA STOI PIERWSZA, bo to ONA wyznacza komplet kluczy motywu - jasna powstaje nizej
-# jako zdjecie tych samych kluczy ze startowego $Script:Config. Dzieki temu nie da sie
-# dolozyc wartosci ciemnej bez jasnego odpowiednika, a jedenastu wartosci nie ma
-# przepisanych dwa razy: druga kopia rozjechalaby sie przy pierwszej zmianie odcienia,
-# a rozjazd widac dopiero po powrocie z ciemnego motywu do jasnego.
-#
-# Odcienie z palety Fluent, ktora Windows 11 sam naklada na okna w motywie ciemnym:
-# tlo okna #202020, tlo kontrolek #2D2D2D, tekst bialy.
-#
-# KOLORY ZNACZACE MAJA WLASNE ODCIENIE, a nie te same, co w jasnym. Zielen 0,128,0 jest
-# dobrana pod biale tlo i na #202020 przestaje byc czytelna - a to ona niesie werdykt
-# "konto sprawne". Tak samo DimGray (105,105,105) na ciemnym tle prawie znika.
+# Ciemna paleta wyznacza komplet kluczy motywu; jasna to zdjecie tych kluczy ze startowego Config.
+# Odcienie Fluent (tlo #202020, kontrolki #2D2D2D); kolory znaczace maja wlasne odcienie.
 $Script:MotywCiemny = @{
     KolorOkna       = [System.Drawing.Color]::FromArgb(32, 32, 32)
     KolorTla        = [System.Drawing.Color]::FromArgb(45, 45, 45)
@@ -597,18 +452,20 @@ $Script:MotywCiemny = @{
     KolorProblem    = [System.Drawing.Color]::FromArgb(255, 120, 120)
     KolorOk         = [System.Drawing.Color]::FromArgb(108, 203, 95)
     KolorNieznany   = [System.Drawing.Color]::FromArgb(160, 160, 160)
+
+    # Tla pol ciemne, bo napis jest bialy (kontrast 5:1 i 6,5:1).
+    KolorPolaOk      = [System.Drawing.Color]::FromArgb(21, 128, 61)
+    KolorPolaProblem = [System.Drawing.Color]::FromArgb(185, 28, 28)
     KolorNieczynny  = [System.Drawing.Color]::FromArgb(130, 130, 130)
 
     KolorKontrolki  = [System.Drawing.Color]::FromArgb(45, 45, 45)
     KolorObramowki  = [System.Drawing.Color]::FromArgb(72, 72, 72)
 
-    # Kwadrat ze strzalka ma sie ODCINAC OD POLA, tak samo jak w motywie jasnym, gdzie pole
-    # jest biale, a przycisk szary. Odcien rowny KolorKontrolki (45,45,45) sprawial, ze pole
-    # i jego przycisk byly jednym prostokatem i po strzalce nie bylo widac, gdzie kliknac.
+    # Kwadrat ze strzalka jasniejszy od pola - inaczej nie widac, gdzie kliknac.
     KolorPrzyciskuListy = [System.Drawing.Color]::FromArgb(58, 58, 58)
     ObciecieListy       = 1
 
-    # FixedSingle - 1 px z kazdej strony. Patrz komentarz przy tym kluczu w palecie jasnej.
+    # FixedSingle - 1 px z kazdej strony.
     WciecieRamkiPola    = 1
 
     KolorProblemTlo = [System.Drawing.Color]::FromArgb(62, 32, 32)
@@ -626,74 +483,52 @@ foreach ($klucz in @($Script:MotywCiemny.Keys)) {
 # Motyw pokazywany w tej chwili. Zmienia go wylacznie Set-JezykMotyw.
 $Script:Motyw = $Script:Config.MotywStartowy
 
-# WCIECIE RAMKI, KTORE STOI TERAZ NA POLACH. Nie to samo, co Config.WciecieRamkiPola:
-# tamto mowi, ile ma byc, to - ile juz jest. Roznica tych dwoch liczb jest poprawka, ktora
-# Set-JezykWyrownaniePol naklada na wspolrzedne pol. Licznik jest konieczny, bo inaczej
-# przelaczanie motywu tam i z powrotem SUMOWALOBY poprawke zamiast do niej wracac.
+# Wciecie ramki nalozone TERAZ na pola - licznik, bez ktorego przelaczanie motywu sumowaloby poprawke.
 $Script:WciecieNalozone = $Script:Config.WciecieRamkiPola
 
-# Rejestr kontrolek GUI: wypelniany w SEKCJI 4, odczytywany w SEKCJI 3.
-# To warunek dzialania, nie porzadek. Procedury obslugi zdarzen uruchamiaja sie dlugo po
-# tym, jak funkcja budujaca okno sie zakonczyla, a scriptblocki w PowerShellu nie sa
-# domknieciami - szukaja zmiennych dopiero przy wywolaniu. Kontrolki musza wiec trafic
-# do zmiennej o zasiegu skryptu i tylko stamtad sa odczytywane.
+# Rejestr kontrolek (zaklada New-JezykForm, czyta widok) - procedury zdarzen nie sa domknieciami.
 $Script:Kontrolki = @{}
 
-# Role WYGLADU kontrolek: klucz to sama kontrolka, wartosc - nazwa roli ("Okno", "Pole",
-# "Przycisk"...). Zaklada je Set-JezykWyglad -Rejestruj przy budowie okna, czyta
-# Set-JezykMotyw przy przelaczaniu palety. Tablica, a nie lista na role: rejestracja tej
-# samej kontrolki drugi raz ma ZASTAPIC role, a nie dopisac ja obok. Cztery przyciski "!"
-# rodza sie czerwone i zaraz potem staja sie niebieskie - w liscie zostalyby w obu.
+# Role wygladu kontrolek (kontrolka -> rola); ponowna rejestracja ZASTEPUJE role.
 $Script:KontrolkiMotywu = @{}
 
-# Role kolorow pol: klucz to sama kontrolka, wartosc - CO jej kolor znaczy ("Ok",
-# "Problem", "Nieznany", "Tekstu"). Zaklada je Set-JezykKolorPola, czyta Set-JezykMotyw
-# przy przelaczaniu palety. Bez tego rejestru przelaczenie motywu musialoby albo zostawic
-# na polu odcien z poprzedniej palety, albo pomalowac wszystko neutralnie - czyli zdjac
-# czerwien z werdyktu i sklamac o stanie konta.
+# Role kolorow niosacych znaczenie (kontrolka -> "Ok", "Problem"...) - przezywaja zmiane motywu.
 $Script:RoleKolorow = @{}
 
-# Tresci pod przyciskami "!" - klucz pola, wartosc do pokazania. Trzymane OSOBNO od
-# kontrolek, bo przycisk niesie tylko widocznosc; caly tekst siedzi tutaj i przezywa
-# kazde przerysowanie okna.
+# Tresci pod przyciskami "!" (klucz pola -> tekst), trzymane osobno od kontrolek.
 $Script:Informacje = @{}
 
-# Tytuly okien informacyjnych. Jedno miejsce, zeby przycisk i okno mowily o tym samym polu.
-# Kazdy klucz tutaj pokazuje sie WYLACZNIE warunkowo - nigdy jako stale, zawsze widoczne
-# wyjasnienie. Odpadly kolejno: Domena i Ostatnie logowanie (stale wyjasnienia bez zwiazku
-# z awaria) oraz Odblokuj (powody wylaczenia przycisku sa normalnymi stanami, nie bledami).
-# Wiekszosc kluczy oznacza realna usterke (czerwony przycisk) - KomputerWspoldzielony jest
-# drugi, niebieski rodzaj: nie usterka, tylko realna niejednoznacznosc konkretnego wyniku
-# (komputer, z ktorego korzysta wiecej niz jedna osoba wedlug SCCM). Warunkowosc jest tu
-# tym, co odroznia go od trzech usunietych - pokazuje sie tylko wtedy, gdy dane wyszukanie
-# to faktycznie wykryje, a nie zawsze.
+# Tytuly okien "!" - kazdy klucz pokazuje sie wylacznie warunkowo (README: Przycisk "!").
 $Script:TytulyInformacji = @{
     Status                = 'Status'
+    Logowanie             = 'Ostatnie logowanie'
+    # Niebieski "!" przy tej samej dacie (pokrycie niepelne) - tytul nazywa pole, jak wyzej.
+    LogowanieNiepelne     = 'Ostatnie logowanie'
     Komputer              = 'Ostatnio używany komputer'
     Uzytkownik            = 'Ostatnio zalogowany użytkownik'
     KomputerWspoldzielony = 'Komputer współdzielony'
     Tworca                = 'Dodany do AD przez'
     Mac                   = 'Adres MAC'
-    # Widok komputera ma wlasne kontrolki, wiec i wlasne klucze - przycisk "!" to JEDNA
-    # kontrolka, a dwa panele istnieja naraz (widoczny jest zawsze tylko jeden). Tytuly
-    # celowo brzmia tak samo, jak po stronie konta: okno ma nazywac pole, nie panel.
+    # Widok komputera ma wlasne klucze (osobne kontrolki); tytuly celowo te same - nazywaja pole.
     MacMaszyny            = 'Adres MAC'
     StatusMaszyny         = 'Status'
 }
 
-<#
-.SYNOPSIS
-    Opisuje slowami konfiguracje, ktora jest faktycznie w mocy. Trafia pod przycisk "!"
-    przy liscie domen.
+# Plik bledow krytycznych w %TEMP% - dopisuja do niego Add-JezykWpisAwarii i obsluga awarii ponizej.
+$Script:PlikAwarii = 'Jezyk-awaria.txt'
 
-.DESCRIPTION
-    Narzedzie laczy sie z kontrolerem domeny, serwerem lokacji SCCM i kontrolerami z listy,
-    a w wybranych domenach wolno mu ZAPISAC do katalogu. Bez tego opisu zadnego z tych
-    faktow nie dalo sie zobaczyc z okna.
+# Wyjatek, ktorego nikt nie zlapal (dowolny watek), zostawia wpis w pliku awarii (README: Kod > Jezyk-1-Srodowisko).
+# Straz na metodzie: typ z wczesniejszego uruchomienia w tej samej sesji moze jej nie miec.
+try {
+    if ($env:TEMP -and ('Jezyk.Native' -as [type]) -and [Jezyk.Native].GetMethod('PodepnijZapisAwarii')) {
+        [Jezyk.Native]::PodepnijZapisAwarii((Join-Path $env:TEMP $Script:PlikAwarii), [string]$Script:Config.Wersja)
+    }
+}
+catch {
+    $Script:BladKonsoli = "Zapis awarii: $($_.Exception.Message)"
+}
 
-    Stoi na koncu pliku celowo: Kod-Jezyk.ps1 po tej funkcji poznaje, ze czesc wczytala sie
-    w calosci, bo urwana kopia traci wlasnie koniec.
-#>
+# Opis konfiguracji w mocy (dzis nic jej nie wola). Funkcja kontrolna - zostaje ostatnia w pliku.
 function Get-JezykOpisKonfiguracji {
     param([string]$DomenaBiezaca = '')
 
@@ -708,10 +543,10 @@ function Get-JezykOpisKonfiguracji {
         'Odblokowanie konta: wyłączone we wszystkich domenach'
     }
 
-    $wiersze += if (@($Script:DomenyZDodawaniemDoGrup).Count) {
-        'Dodawanie do grup AD dozwolone w: {0}' -f (@($Script:DomenyZDodawaniemDoGrup) -join ', ')
+    $wiersze += if (@($Script:DomenyZZarzadzaniemGrupami).Count) {
+        'Zarządzanie grupami AD dozwolone w: {0}' -f (@($Script:DomenyZZarzadzaniemGrupami) -join ', ')
     } else {
-        'Dodawanie do grup AD: wyłączone we wszystkich domenach'
+        'Zarządzanie grupami AD: wyłączone we wszystkich domenach'
     }
 
     $wiersze += if (@($Script:Ustawienia.Kontrolery).Count) {
@@ -734,6 +569,12 @@ function Get-JezykOpisKonfiguracji {
             $(if ($Script:Ustawienia.SccmProtokolZapasowy) { ' (przy braku połączenia próbuje drugiego protokołu)' } else { '' })
     } else {
         'SCCM: nieskonfigurowany - pole "Ostatnio używany komputer" pozostaje puste'
+    }
+
+    $wiersze += if (@($Script:DomenyZSccm).Count) {
+        'Pola SCCM i adresy maszyny widoczne w: {0}' -f (@($Script:DomenyZSccm) -join ', ')
+    } else {
+        'Pola SCCM i adresy maszyny: ukryte we wszystkich domenach'
     }
 
     $wiersze += if ($Script:Ustawienia.SciezkaRemoteControl) {
