@@ -1317,6 +1317,12 @@ function Add-JezykBladOkna {
     }
 }
 
+# Zbieracz strumieni okna: kazdy obiekt z potoku, na biezaco, do Add-JezykBladOkna (bez -Krytyczny).
+# Uwaga: blok z pliku wejsciowego kompilowalby sie przy pierwszym bledzie z udzialu (README: Pulapki).
+function Add-JezykBladOknaZPotoku {
+    process { Add-JezykBladOkna $_ }
+}
+
 # Zamkniecie okna nie przez operatora (powod z FormClosing jako napis) - wpis do pliku awarii.
 function Write-JezykZamkniecie {
     param([string]$Powod)

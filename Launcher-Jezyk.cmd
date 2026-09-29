@@ -1,8 +1,8 @@
 @echo off
 REM Jezyk - launcher: sprawdza komplet plikow i uruchamia Kod-Jezyk.ps1 (README: Kod > Launcher-Jezyk.cmd).
 REM Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
-REM - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
-REM - Uwzględnienia mnie (X) jako głównego autora skryptu.
+REM - Wczesniejszego pozwolenia na modyfikacje kodu przez osobe trzecia.
+REM - Uwzglednienia mnie (X) jako glownego autora skryptu.
 
 REM Rozwijanie opoznione: bez niego !JEZYK_BRAKI! w petli "for" jest zwyklym tekstem.
 setlocal EnableDelayedExpansion
