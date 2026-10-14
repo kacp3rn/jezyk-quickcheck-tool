@@ -635,7 +635,17 @@ function Set-JezykPrzyciskOdblokuj {
     )
 }
 
-# Obsluga "Odblokuj konto": okno logowania = potwierdzenie; poswiadczenia gina z wywolaniem.
+# Uchwyt okna glownego - wlasciciel okien systemu (poswiadczenia); zero, gdy okno go nie ma.
+function Get-JezykUchwytOkna {
+    $okno = $Script:Kontrolki.Okno
+    if ($okno -and $okno.PSObject.Properties['Handle'] -and $null -ne $okno.Handle) {
+        return [IntPtr]$okno.Handle
+    }
+    return [IntPtr]::Zero
+}
+
+# Obsluga "Odblokuj konto": okno poswiadczen Windows = potwierdzenie; haslo ginie z kazda proba.
+# Odmowa logowania kontem z okna wraca do okna z bledem Windows (README: Odblokowanie konta).
 function Invoke-JezykOdblokowanie {
     $k      = $Script:Kontrolki
     $domena = $Script:Config.Domena
@@ -645,77 +655,111 @@ function Invoke-JezykOdblokowanie {
     $login = [string]$Script:OstatnieKonto.Login
     if (-not $login) { return }
 
-    $poswiadczenia = $null
-    try {
+    $tytulOkna = 'Jeżyk - odblokowanie konta'
+    $trescOkna = 'Konto z prawem odblokowywania w domenie {0}. Zostanie odblokowane konto {1}. Login bez domeny oznacza konto w domenie {0}.' -f
+                 $domena, $login
+    $uchwyt    = Get-JezykUchwytOkna
+
+    # Kod poprzedniej odmowy i podany wtedy login - okno pokazuje oba przy kolejnym pytaniu.
+    $kodBledu   = 0
+    $podpowiedz = ''
+
+    while ($true) {
+        $odpowiedz = Invoke-JezykOknoPoswiadczen -Uchwyt $uchwyt -Tytul $tytulOkna -Tresc $trescOkna `
+                                                 -KodBledu $kodBledu -Login $podpowiedz
+
+        # Anuluj: zadnego zapisu, zadnego bledu; komunikat poprzedniej odmowy zostaje w Status.
+        if ($odpowiedz.Kod -eq 1223) { return }
+
+        if ($odpowiedz.Kod -ne 0) {
+            $k.TxtStatus.Text = 'Nie udało się otworzyć okna logowania Windows - konto nie zostało odblokowane.'
+            $powod = 'Okno poświadczeń zakończyło się kodem systemowym {0}.' -f $odpowiedz.Kod
+            if ($odpowiedz.Kod -eq -1) { $powod = 'Okno poświadczeń nie powstało: {0}.' -f $odpowiedz.Blad }
+            Set-JezykInfo 'Status' $powod
+            return
+        }
+
+        $konto = ConvertTo-JezykLoginZDomena -Login $odpowiedz.Login -Domena $domena
+        $wynik = $null
         try {
-            $poswiadczenia = Get-Credential -Message (
-                'Konto z prawem odblokowywania w domenie {0}. Zostanie odblokowane konto {1}.' -f $domena, $login)
+            # Pusty login nie idzie do kontrolera - okno zapyta od nowa.
+            if ($konto -and $odpowiedz.Haslo) {
+                $poswiadczenia = New-Object System.Management.Automation.PSCredential($konto, $odpowiedz.Haslo)
+                $wynik = Unlock-JezykKonto -Login $login -Domena $domena -Poswiadczenia $poswiadczenia
+            }
         }
-        catch {
-            $opis = Get-JezykOpisBledu $_ 'Okno logowania'
-            $k.TxtStatus.Text = $opis.Krotki
-            Set-JezykInfo 'Status' $opis.Szczegoly
-            return
+        finally {
+            # Haslo niszczone (Dispose) po kazdej probie, a nie tylko zapominane - okno bywa otwarte godzinami.
+            if ($odpowiedz.Haslo) {
+                try { $odpowiedz.Haslo.Dispose() } catch { }
+            }
+            $poswiadczenia = $null
         }
 
-        # Anulowanie okna logowania: zadnego zapisu, zadnego bledu.
-        if (-not $poswiadczenia) { return }
+        if (-not $wynik) {
+            $k.TxtStatus.Text = 'Nie podano loginu albo hasła - konto "{0}" nie zostało odblokowane.' -f $login
+            Set-JezykInfo 'Status' ''
+            $kodBledu = 1326
+            continue
+        }
 
-        $wynik = Unlock-JezykKonto -Login $login -Domena $domena -Poswiadczenia $poswiadczenia
-
-        # Niepowodzenie: powod odmowy zostaje na ekranie.
-        if (-not $wynik.Udane) {
-            $k.TxtStatus.Text = $wynik.Komunikat
+        # Odmowa logowania kontem z okna: powod w Status i pod "!", okno wraca z bledem i loginem.
+        if ($wynik.KodLogowania) {
+            $k.TxtStatus.Text = [string]$wynik.Komunikat
             Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
-            return
+            $kodBledu   = [int]$wynik.KodLogowania
+            $podpowiedz = $konto
+            continue
         }
 
-        # Odswiezenie przed komunikatem (Clear-JezykKonto czysci Status), z kontrolera, ktory przyjal zapis.
-        $poZapisie = Get-JezykUserStatus -Login $login -Serwer ([string]$wynik.Serwer)
-        Set-JezykResult -Result $poZapisie
-
-        $status     = [string]$wynik.Komunikat
-        $tresc      = @([string]$wynik.Komunikat)
-        $ikona      = [System.Windows.Forms.MessageBoxIcon]::Information
-        # Domyslnie puste - "!" tylko w dwoch galeziach ponizej, gdy cos nie poszlo jak trzeba.
-        $infoStatus = ''
-
-        if ($poZapisie.Status -ne 'Ok') {
-            # Zapis sie udal, odczyt nie - powod odczytu nie moze zginac.
-            $status = '{0} Ponowny odczyt konta: {1}' -f $status, $poZapisie.Message
-            $tresc += @('', ('Zapis się powiódł, ale ponowny odczyt konta zawiódł: {0}' -f $poZapisie.Message))
-            $ikona  = [System.Windows.Forms.MessageBoxIcon]::Warning
-            $infoStatus = [string]$wynik.Szczegoly
-        }
-        elseif ($poZapisie.LockedOut) {
-            # Kontroler, ktory przyjal zapis, znow widzi blokade - blokada od nowa, nie replikacja.
-            $status = '{0} UWAGA: konto jest zablokowane PONOWNIE - coś loguje się na nieaktualne hasło.' -f $status
-            $tresc += @('', 'UWAGA: konto jest już zablokowane PONOWNIE.',
-                        'Kontroler, który przyjął zapis, nadal widzi blokadę - to nie jest opóźnienie replikacji. Zwykle znaczy to, że jakaś usługa, zadanie albo urządzenie loguje się na nieaktualne hasło.')
-            $ikona  = [System.Windows.Forms.MessageBoxIcon]::Warning
-            $infoStatus = [string]$wynik.Szczegoly
-        }
-        else {
-            $tresc += @('', ('Widok odświeżony odczytem z kontrolera {0}.' -f $wynik.Serwer))
-        }
-
-        $k.TxtStatus.Text = $status
-        Set-JezykInfo 'Status' $infoStatus
-
-        # Komunikat na koncu - po jego zamknieciu widac stan PO operacji.
-        [void][System.Windows.Forms.MessageBox]::Show(
-            ($tresc -join [Environment]::NewLine),
-            $Script:Config.TytulOkna,
-            [System.Windows.Forms.MessageBoxButtons]::OK,
-            $ikona)
+        break
     }
-    finally {
-        # Haslo niszczone (Dispose), a nie tylko zapominane - okno bywa otwarte godzinami.
-        if ($poswiadczenia) {
-            try { $poswiadczenia.Password.Dispose() } catch { }
-        }
-        $poswiadczenia = $null
+
+    # Niepowodzenie: powod odmowy zostaje na ekranie.
+    if (-not $wynik.Udane) {
+        $k.TxtStatus.Text = $wynik.Komunikat
+        Set-JezykInfo 'Status' ([string]$wynik.Szczegoly)
+        return
     }
+
+    # Odswiezenie przed komunikatem (Clear-JezykKonto czysci Status), z kontrolera, ktory przyjal zapis.
+    $poZapisie = Get-JezykUserStatus -Login $login -Serwer ([string]$wynik.Serwer)
+    Set-JezykResult -Result $poZapisie
+
+    $status     = [string]$wynik.Komunikat
+    $tresc      = @([string]$wynik.Komunikat)
+    $ikona      = [System.Windows.Forms.MessageBoxIcon]::Information
+    # Domyslnie puste - "!" tylko w dwoch galeziach ponizej, gdy cos nie poszlo jak trzeba.
+    $infoStatus = ''
+
+    if ($poZapisie.Status -ne 'Ok') {
+        # Zapis sie udal, odczyt nie - powod odczytu nie moze zginac.
+        $status = '{0} Ponowny odczyt konta: {1}' -f $status, $poZapisie.Message
+        $tresc += @('', ('Zapis się powiódł, ale ponowny odczyt konta zawiódł: {0}' -f $poZapisie.Message))
+        $ikona  = [System.Windows.Forms.MessageBoxIcon]::Warning
+        $infoStatus = [string]$wynik.Szczegoly
+    }
+    elseif ($poZapisie.LockedOut) {
+        # Kontroler, ktory przyjal zapis, znow widzi blokade - blokada od nowa, nie replikacja.
+        $status = '{0} UWAGA: konto jest zablokowane PONOWNIE - coś loguje się na nieaktualne hasło.' -f $status
+        $tresc += @('', 'UWAGA: konto jest już zablokowane PONOWNIE.',
+                    'Kontroler, który przyjął zapis, nadal widzi blokadę - to nie jest opóźnienie replikacji. Zwykle znaczy to, że jakaś usługa, zadanie albo urządzenie loguje się na nieaktualne hasło.')
+        $ikona  = [System.Windows.Forms.MessageBoxIcon]::Warning
+        $infoStatus = [string]$wynik.Szczegoly
+    }
+    else {
+        $tresc += @('', ('Widok odświeżony odczytem z kontrolera {0}.' -f $wynik.Serwer))
+    }
+
+    $k.TxtStatus.Text = $status
+    Set-JezykInfo 'Status' $infoStatus
+
+    # Komunikat na koncu - po jego zamknieciu widac stan PO operacji.
+    [void][System.Windows.Forms.MessageBox]::Show(
+        ($tresc -join [Environment]::NewLine),
+        $Script:Config.TytulOkna,
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        $ikona)
 }
 
 # Zamyka pole daty bez wyniku uscislenia: data przyblizona zostaje, znika "precyzowanie...".
@@ -1595,14 +1639,8 @@ function Update-JezykDyskWTle {
     $k = $Script:Kontrolki
 
     if ($Wynik.Stan -eq 'Poswiadczenia') {
-        $uchwyt = [IntPtr]::Zero
-        $okno   = $k.Okno
-        if ($okno -and $okno.PSObject.Properties['Handle'] -and $null -ne $okno.Handle) {
-            $uchwyt = [IntPtr]$okno.Handle
-        }
-
         $Wynik = Connect-JezykUdzialDysku -Netbios $Wynik.Netbios -Litera $Wynik.Litera `
-                                          -Uchwyt $uchwyt -Interaktywnie
+                                          -Uchwyt (Get-JezykUchwytOkna) -Interaktywnie
     }
 
     Set-JezykNotkeLaczenia -Wylacz

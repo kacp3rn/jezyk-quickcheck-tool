@@ -1695,14 +1695,147 @@ function Get-JezykUzytkownikKomputera {
     }
 }
 
+# Login z okna logowania z jawna domena: bez domeny - domena odblokowania (inaczej wybiera ja Windows).
+# DOMENA\login i login@domena bez zmian; pusty albo niepelny - pusty napis.
+function ConvertTo-JezykLoginZDomena {
+    param([string]$Login, [string]$Domena)
+
+    # Wiodacy ukosnik w zapisie DOMENA\login znaczy "bez domeny".
+    $tekst = ([string]$Login).Trim().TrimStart('\').Trim()
+    if (-not $tekst) { return '' }
+    if ($tekst -match '[\x00-\x1F]') { return '' }
+
+    if ($tekst -match '^[^\\@]+$') {
+        if (-not $Domena) { return $tekst }
+        return ('{0}\{1}' -f $Domena, $tekst)
+    }
+    if ($tekst -match '^[^\\@]+\\[^\\@]+$' -or $tekst -match '^[^\\@]+@[^\\@]+$') { return $tekst }
+    return ''
+}
+
+# Kod Windows odmowy logowania kontem z okna (1326 zle haslo, 1909 blokada...) albo 0 - to inna awaria.
+# Po typie i kodzie w calym lancuchu wyjatkow, nie po tresci - tresc zalezy od jezyka systemu.
+function Get-JezykKodOdmowyLogowania {
+    param($Wyjatek)
+
+    # Win32, NTSTATUS i SEC_E_LOGON_DENIED sprowadzone do kodu, ktory okno logowania umie opisac.
+    $odmowy = @{
+        1326 = 1326; 1317 = 1326; 1909 = 1909; 1331 = 1331; 1330 = 1330; 1907 = 1907
+        1793 = 1793; 1327 = 1327; 1328 = 1328; 1329 = 1329
+        0x8009030C = 1326; 0xC000006D = 1326; 0xC000006A = 1326; 0xC0000064 = 1326
+        0xC0000234 = 1909; 0xC0000072 = 1331; 0xC0000071 = 1330; 0xC0000224 = 1907
+        0xC0000193 = 1793; 0xC000006E = 1327; 0xC000006F = 1328; 0xC0000070 = 1329
+    }
+
+    $biezacy   = if ($Wyjatek -and $Wyjatek.PSObject.Properties['Exception']) { $Wyjatek.Exception } else { $Wyjatek }
+    $odmowa    = $false
+    $glebokosc = 0
+    while ($biezacy -is [System.Exception] -and $glebokosc -lt 16) {
+        if ($biezacy.GetType().Name -in 'AuthenticationException', 'InvalidCredentialException') { $odmowa = $true }
+
+        # Pola przez PSObject.Properties - typy wyjatkow modulu AD nie istnieja bez RSAT.
+        foreach ($pole in 'NativeErrorCode', 'ErrorCode', 'HResult') {
+            $wlasciwosc = $biezacy.PSObject.Properties[$pole]
+            if (-not $wlasciwosc) { continue }
+            $wartosc = $wlasciwosc.Value -as [int64]
+            if ($null -eq $wartosc) { continue }
+            # Kod 32-bitowy zapisany bez znaku - na int, tak jak trzyma go HResult.
+            if ($wartosc -gt [int]::MaxValue) { $wartosc -= 4294967296 }
+            if ($wartosc -lt [int]::MinValue) { continue }
+            $kod = [int]$wartosc
+            # HRESULT bledu Win32 (0x8007xxxx) niesie sam kod Win32.
+            if (($kod -band 0xFFFF0000) -eq 0x80070000) { $kod = $kod -band 0xFFFF }
+            if ($odmowy.ContainsKey($kod)) { return $odmowy[$kod] }
+        }
+
+        $biezacy = $biezacy.InnerException
+        $glebokosc++
+    }
+
+    if ($odmowa) { return 1326 }
+    return 0
+}
+
+# Stan konta z okna logowania po odmowie - odczyt kontem operatora, wiec bez kolejnej proby hasla.
+# Tylko DOMENA\login z domeny odblokowania; inaczej Stan pusty i zostaje kod z wyjatku.
+function Get-JezykStanKontaZOkna {
+    param([string]$Login, [string]$Domena, [string]$Serwer)
+
+    $wynik = [pscustomobject]@{ Domena = ''; Stan = ''; Opis = '' }
+
+    $tekst = ([string]$Login).Trim()
+    $nazwa = ''
+    if ($tekst -match '^([^\\@]+)\\([^\\@]+)$')  { $wynik.Domena = $Matches[1]; $nazwa = $Matches[2] }
+    elseif ($tekst -match '^[^\\@]+@([^\\@]+)$') { $wynik.Domena = $Matches[1] }
+
+    # UPN, inna domena albo nazwa spoza bialej listy - tego konta nie ma u tego kontrolera pod ta nazwa.
+    if (-not $nazwa -or $wynik.Domena -ne $Domena -or -not (Test-JezykNazwaKonta $nazwa)) { return $wynik }
+    if (-not (Test-JezykNazwaHosta $Serwer)) { return $wynik }
+
+    try {
+        $konto = Get-ADUser -Identity $nazwa -Server $Serwer -Properties LockedOut, Enabled, badPwdCount `
+                            -ErrorAction Stop
+
+        if ($konto.LockedOut)              { $wynik.Stan = 'Zablokowane' }
+        elseif ($konto.Enabled -eq $false) { $wynik.Stan = 'Wylaczone' }
+        else                               { $wynik.Stan = 'Aktywne' }
+
+        $proby  = if ($null -ne $konto.badPwdCount) { [string]$konto.badPwdCount } else { 'nieznana' }
+        $blokada = if ($konto.LockedOut) { 'tak' } else { 'nie' }
+        $wynik.Opis = 'Stan tego konta wg kontrolera {0} (odczyt kontem, na którym działa Jeżyk): nieudanych prób z rzędu: {1}; zablokowane: {2}.' -f
+                      $Serwer, $proby, $blokada
+    }
+    catch {
+        # Uwaga: typ wyjatku po nazwie, nie "catch [Typ]" - bez RSAT plik nie przeszedlby parsowania.
+        if ($_.Exception.GetType().Name -eq 'ADIdentityNotFoundException') {
+            $wynik.Stan = 'BrakKonta'
+            $wynik.Opis = 'W domenie {0} nie ma konta o nazwie podanej w oknie logowania.' -f $Domena
+        }
+        else {
+            $pierwsza = [string]$_.Exception.Message -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1
+            $wynik.Opis = 'Stanu tego konta nie udało się odczytać: {0}' -f $pierwsza
+        }
+    }
+
+    return $wynik
+}
+
+# Jedno zdanie do Status o odmowie logowania kontem z okna - z domena tego konta, bez loginu (README: Bezpieczenstwo).
+function Get-JezykOpisOdmowyLogowania {
+    param([int]$Kod, [string]$Stan = '', [string]$Domena = '', [string]$Konto = '')
+
+    $skutek = 'konto "{0}" nie zostało odblokowane.' -f $Konto
+    $ktore  = if ($Domena) { 'Konto z okna logowania (domena {0})' -f $Domena } else { 'Konto z okna logowania' }
+
+    if ($Stan -eq 'BrakKonta') {
+        return ('W domenie {0} nie ma konta o nazwie podanej w oknie logowania - {1}' -f $Domena, $skutek)
+    }
+
+    switch ($Kod) {
+        1909 { return ('{0} jest zablokowane - {1}' -f $ktore, $skutek) }
+        1331 { return ('{0} jest wyłączone - {1}' -f $ktore, $skutek) }
+        1330 { return ('{0} ma wygasłe hasło - {1}' -f $ktore, $skutek) }
+        1907 { return ('{0} musi najpierw zmienić hasło - {1}' -f $ktore, $skutek) }
+        1793 { return ('{0} wygasło - {1}' -f $ktore, $skutek) }
+        { $_ -in 1327, 1328, 1329 } {
+            return ('{0} nie może się teraz zalogować (ograniczenie godzin, stacji albo zasad konta) - {1}' -f $ktore, $skutek)
+        }
+    }
+
+    $gdzie = if ($Domena) { ' (domena {0})' -f $Domena } else { '' }
+    return ('Nieprawidłowa nazwa użytkownika lub hasło w oknie logowania{0} - {1}' -f $gdzie, $skutek)
+}
+
 # Odblokowuje konto w AD - jedna z dwoch drog zapisu; uprawnienie sprawdzane takze tutaj.
 # Nie rzuca: odmowa uprawnien to zwykla odpowiedz AD (README: Odblokowanie konta).
+# Haslo z okna idzie do JEDNEGO uwierzytelnienia; odmowa logowania to KodLogowania, nigdy powtorka.
 function Unlock-JezykKonto {
     param([string]$Login, [string]$Domena,
           [System.Management.Automation.PSCredential]$Poswiadczenia)
 
     # Serwer = kontroler, ktory przyjal zapis - wolajacy czyta z niego konto od nowa.
-    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = '' }
+    # KodLogowania - kod Windows odmowy logowania kontem z okna (0 - nie dotyczy); okno pyta wtedy od nowa.
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = ''; KodLogowania = 0 }
 
     # Najpierw ksztalt danych, potem uprawnienie.
     if (-not (Test-JezykNazwaKonta $Login)) {
@@ -1720,9 +1853,18 @@ function Unlock-JezykKonto {
         return $wynik
     }
 
+    # Puste haslo nie idzie do kontrolera - nieudana proba liczylaby sie do blokady konta z okna.
+    if ($Poswiadczenia -and $Poswiadczenia.Password.Length -eq 0) {
+        $wynik.KodLogowania = 1326
+        $wynik.Komunikat    = 'Nie podano hasła - konto "{0}" nie zostało odblokowane.' -f $Login
+        return $wynik
+    }
+
     $parametry = $null
+    $serwer    = $Domena
     try {
-        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena -Poswiadczenia $Poswiadczenia
+        # Emulator ustalany kontem operatora - haslo z okna nie idzie do zadnego innego wywolania.
+        $serwer = Get-JezykSerwerDoZapisu -Domena $Domena
 
         # Poswiadczenia warunkowo - bez nich zapis idzie kontem, na ktorym dziala Jezyk.
         $parametry = @{ Identity = $Login; Server = $serwer; Confirm = $false; ErrorAction = 'Stop' }
@@ -1738,9 +1880,27 @@ function Unlock-JezykKonto {
     }
     catch {
         # Odmowa to spodziewana odpowiedz (prawo odblokowania jest osobne) - trafia do pola Status.
-        $opis = Get-JezykOpisBledu $_ ('Odblokowanie konta {0}' -f $Login)
+        $blad = $_
+        $opis = Get-JezykOpisBledu $blad ('Odblokowanie konta {0}' -f $Login)
         $wynik.Komunikat = $opis.Krotki
         $wynik.Szczegoly = $opis.Szczegoly
+
+        # Odmowa logowania kontem z okna: powod z wyjatku, uscislony stanem tego konta.
+        $kod = if ($Poswiadczenia) { Get-JezykKodOdmowyLogowania $blad } else { 0 }
+        if ($kod) {
+            $stan = Get-JezykStanKontaZOkna -Login $Poswiadczenia.UserName -Domena $Domena -Serwer $serwer
+            if ($stan.Stan -eq 'Zablokowane')   { $kod = 1909 }
+            elseif ($stan.Stan -eq 'Wylaczone') { $kod = 1331 }
+
+            $wynik.KodLogowania = $kod
+            $wynik.Komunikat    = Get-JezykOpisOdmowyLogowania -Kod $kod -Stan $stan.Stan -Domena $stan.Domena -Konto $Login
+
+            $linie = @('Kontroler odrzucił logowanie kontem podanym w oknie - nic nie zostało zapisane.',
+                       'Każda nieudana próba liczy się do blokady tego konta w jego domenie.')
+            if ($stan.Opis) { $linie += $stan.Opis }
+            $linie += @('', $opis.Szczegoly)
+            $wynik.Szczegoly = $linie -join [Environment]::NewLine
+        }
     }
     finally {
         if ($parametry) { $parametry.Clear() }
@@ -1774,13 +1934,11 @@ function Test-JezykDomenaZSccm {
 }
 
 # Kontroler dla zapisu (obu drog): emulator PDC - autorytet blokad i nigdy kontroler tylko do odczytu.
-# Rozpoznanie opcjonalne: przy niepowodzeniu nazwa domeny (catch z nazwana wartoscia zapasowa).
+# Zawsze kontem operatora. Rozpoznanie opcjonalne: przy niepowodzeniu nazwa domeny (catch z nazwana wartoscia zapasowa).
 function Get-JezykSerwerDoZapisu {
-    param([string]$Domena,
-          [System.Management.Automation.PSCredential]$Poswiadczenia)
+    param([string]$Domena)
 
     $odczyt = @{ Identity = $Domena; Server = $Domena; ErrorAction = 'Stop' }
-    if ($Poswiadczenia) { $odczyt['Credential'] = $Poswiadczenia }
     try {
         $emulator = (Get-ADDomain @odczyt).PDCEmulator
         if ($emulator -and (Test-JezykNazwaHosta $emulator)) { return $emulator }
@@ -1871,7 +2029,8 @@ function Set-JezykCzlonkostwoGrupy {
           [ValidateSet('Dodaj', 'Usun')][string]$Akcja = 'Dodaj')
 
     # Ten sam ksztalt, co Unlock-JezykKonto - okno renderuje oba wyniki jedna droga.
-    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = '' }
+    # KodLogowania zawsze 0: zapis idzie kontem operatora, bez okna logowania.
+    $wynik = [pscustomobject]@{ Udane = $false; Komunikat = ''; Szczegoly = ''; Serwer = ''; KodLogowania = 0 }
 
     # Nazwa czynnosci skladana RAZ, zeby kazda galaz mowila o tej samej rzeczy.
     $czynnosc = if ($Akcja -eq 'Usun') { 'usunięcie z grupy' } else { 'dodanie do grupy' }

@@ -85,6 +85,147 @@ public static int PolaczUdzial(IntPtr hwndOwner, string sciezka, int flagi)
     return WNetAddConnection3(hwndOwner, ref zasob, null, null, flagi);
 }
 
+// --- OKNO POSWIADCZEN (CredUIPromptForWindowsCredentials - to samo okno, co w Outlooku) ---
+// Haslo idzie z bufora systemu znak po znaku do SecureString; kazdy bufor zerowany przed zwolnieniem.
+[StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+private struct CREDUI_INFO
+{
+    public int cbSize;
+    public IntPtr hwndParent;
+    public string pszMessageText;
+    public string pszCaptionText;
+    public IntPtr hbmBanner;
+}
+
+[DllImport("credui.dll", CharSet = CharSet.Unicode)]
+private static extern int CredUIPromptForWindowsCredentials(ref CREDUI_INFO pUiInfo, int dwAuthError,
+    ref uint pulAuthPackage, IntPtr pvInAuthBuffer, uint ulInAuthBufferSize,
+    out IntPtr ppvOutAuthBuffer, out uint pulOutAuthBufferSize,
+    [MarshalAs(UnmanagedType.Bool)] ref bool pfSave, int dwFlags);
+
+[DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+[return: MarshalAs(UnmanagedType.Bool)]
+private static extern bool CredPackAuthenticationBuffer(int dwFlags, string pszUserName, string pszPassword,
+    IntPtr pPackedCredentials, ref int pcbPackedCredentials);
+
+[DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+[return: MarshalAs(UnmanagedType.Bool)]
+private static extern bool CredUnPackAuthenticationBuffer(int dwFlags, IntPtr pAuthBuffer, uint cbAuthBuffer,
+    IntPtr pszUserName, ref int pcchMaxUserName, IntPtr pszDomainName, ref int pcchMaxDomainName,
+    IntPtr pszPassword, ref int pcchMaxPassword);
+
+private static void Zeruj(IntPtr bufor, int bajty)
+{
+    if (bufor != IntPtr.Zero && bajty > 0) { Marshal.Copy(new byte[bajty], 0, bufor, bajty); }
+}
+
+private static void ZerujIZwolnij(IntPtr bufor, int bajty)
+{
+    if (bufor == IntPtr.Zero) { return; }
+    Zeruj(bufor, bajty);
+    Marshal.FreeCoTaskMem(bufor);
+}
+
+// Kod Windows: 0 - podano, 1223 - Anuluj, inny - blad. Okno samo opisuje kodBledu (poprzednia proba).
+public static int PytajOPoswiadczenia(IntPtr hwndOwner, string tytul, string tresc, int kodBledu,
+                                      string podpowiedz, out string login,
+                                      out System.Security.SecureString haslo)
+{
+    login = null;
+    haslo = null;
+
+    CREDUI_INFO info = new CREDUI_INFO();
+    info.cbSize         = Marshal.SizeOf(typeof(CREDUI_INFO));
+    info.hwndParent     = hwndOwner;
+    info.pszCaptionText = tytul;
+    info.pszMessageText = tresc;
+
+    // Login z poprzedniej proby - operator wpisuje juz tylko haslo.
+    IntPtr wejscie = IntPtr.Zero;
+    int rozmiarWejscia = 0;
+    if (!String.IsNullOrEmpty(podpowiedz))
+    {
+        CredPackAuthenticationBuffer(0, podpowiedz, "", IntPtr.Zero, ref rozmiarWejscia);
+        if (rozmiarWejscia > 0)
+        {
+            wejscie = Marshal.AllocCoTaskMem(rozmiarWejscia);
+            if (!CredPackAuthenticationBuffer(0, podpowiedz, "", wejscie, ref rozmiarWejscia))
+            {
+                Marshal.FreeCoTaskMem(wejscie);
+                wejscie = IntPtr.Zero;
+                rozmiarWejscia = 0;
+            }
+        }
+    }
+
+    IntPtr wyjscie = IntPtr.Zero;
+    uint rozmiarWyjscia = 0;
+    uint pakiet = 0;
+    bool zapisz = false;
+    int kod;
+    try
+    {
+        // 0x1 CREDUIWIN_GENERIC - login i haslo; bez kart, Windows Hello i pola "Zapamietaj".
+        kod = CredUIPromptForWindowsCredentials(ref info, kodBledu, ref pakiet, wejscie, (uint)rozmiarWejscia,
+                                                out wyjscie, out rozmiarWyjscia, ref zapisz, 0x1);
+    }
+    finally
+    {
+        ZerujIZwolnij(wejscie, rozmiarWejscia);
+    }
+    if (kod != 0)
+    {
+        ZerujIZwolnij(wyjscie, (int)rozmiarWyjscia);
+        return kod;
+    }
+
+    // Znak wiecej niz podany systemowi - zero na koncu zawsze konczy napis.
+    const int znaki = 1024;
+    const int bajty = (znaki + 1) * 2;
+    IntPtr bLogin  = Marshal.AllocCoTaskMem(bajty);
+    IntPtr bDomena = Marshal.AllocCoTaskMem(bajty);
+    IntPtr bHaslo  = Marshal.AllocCoTaskMem(bajty);
+    try
+    {
+        Zeruj(bLogin, bajty);
+        Zeruj(bDomena, bajty);
+        Zeruj(bHaslo, bajty);
+
+        int dlLogin  = znaki;
+        int dlDomena = znaki;
+        int dlHaslo  = znaki;
+        if (!CredUnPackAuthenticationBuffer(0, wyjscie, rozmiarWyjscia, bLogin, ref dlLogin,
+                                            bDomena, ref dlDomena, bHaslo, ref dlHaslo))
+        {
+            return Marshal.GetLastWin32Error();
+        }
+
+        login = Marshal.PtrToStringUni(bLogin);
+        string domena = Marshal.PtrToStringUni(bDomena);
+        if (!String.IsNullOrEmpty(domena) && login.IndexOf('\\') < 0 && login.IndexOf('@') < 0)
+        {
+            login = domena + "\\" + login;
+        }
+
+        haslo = new System.Security.SecureString();
+        for (int i = 0; i < znaki; i++)
+        {
+            char znak = (char)Marshal.ReadInt16(bHaslo, i * 2);
+            if (znak == '\0') { break; }
+            haslo.AppendChar(znak);
+        }
+        haslo.MakeReadOnly();
+        return 0;
+    }
+    finally
+    {
+        ZerujIZwolnij(bHaslo, bajty);
+        ZerujIZwolnij(bLogin, bajty);
+        ZerujIZwolnij(bDomena, bajty);
+        ZerujIZwolnij(wyjscie, (int)rozmiarWyjscia);
+    }
+}
+
 // --- ZAPIS AWARII: wyjatek, ktorego nikt nie zlapal (dowolny watek), zostawia wpis w pliku ---
 // W C#, bo kod skryptu nie wykona sie na obcym watku; naglowek taki sam jak w Add-JezykWpisAwarii.
 private static string sciezkaAwarii;
@@ -239,6 +380,37 @@ function Invoke-JezykPolaczenieUdzialu {
         $Script:BladKonsoli = "Polaczenie z udzialem: $($_.Exception.Message)"
         return -1
     }
+}
+
+# Styk z systemem: okno poswiadczen Windows - wylacznie z watku interfejsu, z uchwytem okna glownego.
+# Kod: 0 - podano, 1223 - Anuluj, -1 - brak funkcji natywnych albo wyjatek; haslo tylko jako SecureString.
+function Invoke-JezykOknoPoswiadczen {
+    param([IntPtr]$Uchwyt = [IntPtr]::Zero, [string]$Tytul = '', [string]$Tresc = '',
+          [int]$KodBledu = 0, [string]$Login = '')
+
+    $wynik = [pscustomobject]@{ Kod = -1; Login = ''; Haslo = $null; Blad = '' }
+
+    # Typ bez tej metody to awaria kompilacji, a nie odpowiedz operatora.
+    if (-not ('Jezyk.Native' -as [type]) -or -not [Jezyk.Native].GetMethod('PytajOPoswiadczenia')) {
+        $wynik.Blad = 'nie powstały funkcje systemowe Jeżyka - opis przyczyny trafia do pliku %TEMP%\Jezyk-konsola.txt'
+        return $wynik
+    }
+
+    $podany = $null
+    $haslo  = $null
+    try {
+        $wynik.Kod = [Jezyk.Native]::PytajOPoswiadczenia($Uchwyt, $Tytul, $Tresc, $KodBledu, $Login,
+                                                         [ref]$podany, [ref]$haslo)
+    }
+    catch {
+        $wynik.Kod  = -1
+        $wynik.Blad = [string]$_.Exception.Message
+        return $wynik
+    }
+
+    $wynik.Login = [string]$podany
+    $wynik.Haslo = $haslo
+    return $wynik
 }
 
 # Zwalnia konsole - dopiero po zaladowaniu modulu AD (jego pasek postepu pisze do hosta).
