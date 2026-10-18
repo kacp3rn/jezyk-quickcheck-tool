@@ -604,10 +604,10 @@ $Script:Config = @{
     KolorInfo     = [System.Drawing.Color]::FromArgb(0, 90, 200)
     KolorInfoTlo  = [System.Drawing.Color]::FromArgb(224, 236, 255)
 
-    Autor         = 'kacp3rn'
+    Autor         = ' kacp3rn'
 
     # Numer wersji w prawym dolnym rogu okna - podbijany recznie przed wdrozeniem.
-    Wersja        = 'v0.5'
+    Wersja        = ' v0.5'
 
     # Motyw na starcie ('Jasny' albo 'Ciemny'); wybor operatora nie jest nigdzie zapisywany.
     MotywStartowy = 'Jasny'
