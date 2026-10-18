@@ -1,7 +1,7 @@
 ﻿# Jezyk - plik wejsciowy: dolacza cztery czesci programu i uruchamia okno (README: Kod > Kod-Jezyk.ps1).
 # Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
 # - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
-# - Uwzględnienia mnie (X) jako głównego autora skryptu.
+# - Uwzględnienia mnie (kacp3rn) jako głównego autora skryptu.
 
 # Uwaga: bez "#Requires" i "param" - obie wymagaja nietknietej pierwszej instrukcji.
 

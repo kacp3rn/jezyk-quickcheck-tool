@@ -1,7 +1,7 @@
 ﻿# Jezyk-2-Logika - odpytanie AD i SCCM, sprawdzanie wartosci, zapis do AD. Zero kodu interfejsu.
 # Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
 # - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
-# - Uwzględnienia mnie (X) jako głównego autora skryptu.
+# - Uwzględnienia mnie (kacp3rn) jako głównego autora skryptu.
 
 # Wlasny trap kazdej czesci - trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }

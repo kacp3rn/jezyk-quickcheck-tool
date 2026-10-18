@@ -1,7 +1,7 @@
 ﻿# Jezyk-1-Srodowisko - konsola, biblioteki interfejsu, konfiguracja, paleta motywu i rejestry.
 # Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
 # - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
-# - Uwzględnienia mnie (X) jako głównego autora skryptu.
+# - Uwzględnienia mnie (kacp3rn) jako głównego autora skryptu.
 
 # Wlasny trap kazdej czesci - trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }
@@ -604,10 +604,10 @@ $Script:Config = @{
     KolorInfo     = [System.Drawing.Color]::FromArgb(0, 90, 200)
     KolorInfoTlo  = [System.Drawing.Color]::FromArgb(224, 236, 255)
 
-    Autor         = 'XYZ'
+    Autor         = 'kacp3rn'
 
     # Numer wersji w prawym dolnym rogu okna - podbijany recznie przed wdrozeniem.
-    Wersja        = 'X'
+    Wersja        = 'v0.5'
 
     # Motyw na starcie ('Jasny' albo 'Ciemny'); wybor operatora nie jest nigdzie zapisywany.
     MotywStartowy = 'Jasny'

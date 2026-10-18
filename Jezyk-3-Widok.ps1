@@ -1,7 +1,7 @@
 ﻿# Jezyk-3-Widok - przelozenie wyniku na kontrolki okna i obsluga zdarzen. Zero zapytan do sieci.
 # Zabraniam modyfikacji i dalszego rozwoju skryptu bez:
 # - Wcześniejszego pozwolenia na modyfikację kodu przez osobę trzecią.
-# - Uwzględnienia mnie (X) jako głównego autora skryptu.
+# - Uwzględnienia mnie (kacp3rn) jako głównego autora skryptu.
 
 # Wlasny trap w kazdej czesci: trap wznawia prace w zakresie, w ktorym go zdefiniowano.
 trap { Register-JezykBladCzesci $_; continue }

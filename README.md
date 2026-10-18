@@ -3,11 +3,12 @@
 Okienkowe narzędzie dla helpdesku i administratorów Windows. Wpisujesz login, imię
 i nazwisko, e-mail, numer telefonu albo nazwę komputera i w jednym oknie widzisz, czy
 konto jest zablokowane, kiedy wygasa hasło, kiedy ktoś się ostatnio logował, z jakiego
-komputera korzysta i czy ta maszyna w ogóle odpowiada. Bez przeklikiwania się przez konsolę
+komputera korzysta i czy maszyna w ogóle odpowiada. Bez przeklikiwania się przez konsolę
 AD i konsolę SCCM, kolor werdyktu od razu mówi, czy wszystko jest w porządku.
 
-<img width="415" height="476" alt="Zdjecie1" src="https://github.com/user-attachments/assets/8cbf9ff7-defb-4277-bde2-aed28e2a9f22" /> <img width="415" height="476" alt="Zdjecie4" src="https://github.com/user-attachments/assets/eeba52f9-a274-4d3b-881e-6fa8adc2334d" />
-
+<p align="center">
+<img width="415" height="476" alt="Okno konta – jasny motyw" src="docs/zrzuty/konto-jasny.png" align="middle" /> <img width="415" height="476" alt="Okno konta – ciemny motyw" src="docs/zrzuty/konto-ciemny.png" align="middle" />
+</p>
 
 ## Co potrafi narzędzie?
 
@@ -22,22 +23,16 @@ AD i konsolę SCCM, kolor werdyktu od razu mówi, czy wszystko jest w porządku.
   czy jego konto w domenie jest włączone, oraz szybkie otwarcie udziałów `C$` i `D$`.
 - **Grupy AD** konta z wyszukiwarką, a w domenach, w których to włączono: dopisanie do
   grupy, usunięcie z niej i odblokowanie konta — zawsze po potwierdzeniu.
-- **Jasny i ciemny motyw** oraz przycisk „!” przy każdym polu, które może zawieść, z opisem
-  przyczyny.
+- **Jasny i ciemny motyw** oraz przycisk „!” przy każdym polu, opisujący aktualny błąd.
 
-<!-- ![Widok komputera](docs/zrzuty/komputer.png) -->
-> 🖼️ **Tutaj zdjęcie** — widok komputera: AD, SCCM, IP i MAC, przyciski „Pinguj”, „Połącz” i „Dyski” (`docs/zrzuty/komputer.png`)
-
-<!-- ![Okno Grupy AD](docs/zrzuty/grupy.png) -->
-> 🖼️ **Tutaj zdjęcie** — okno „Grupy AD” z filtrem i zarządzaniem członkostwem (`docs/zrzuty/grupy.png`)
-
-<!-- ![Ciemny motyw](docs/zrzuty/ciemny-motyw.png) -->
-> 🖼️ **Tutaj zdjęcie** — to samo okno w ciemnym motywie (`docs/zrzuty/ciemny-motyw.png`)
+<p align="center">
+<img width="496" height="352" alt="Widok komputera" src="docs/zrzuty/komputer.png" align="middle" /> <img width="333" height="415" alt="Okno grup AD" src="docs/zrzuty/grupy.png" align="middle" />
+</p>
 
 ## W jaki sposób działa?
 
 - **Windows PowerShell 5.1 i WinForms, bez instalacji.** Potrzebny jest tylko moduł
-  `ActiveDirectory` z RSAT; SCCM czyta się przez CIM/WMI, a kilka funkcji systemu (ciemny
+  `ActiveDirectory` z RSAT. SCCM czyta się przez CIM/WMI, a kilka funkcji systemu (ciemny
   pasek tytułu, systemowe okno poświadczeń, łączenie z udziałem) przez krótki blok C#.
 - **Warstwy z twardymi granicami.** Logika (AD, SCCM, walidacja) nie ma ani linijki kodu
   okna, a widok nie wysyła ani jednego zapytania do sieci. Logika oddaje jeden kształt wyniku
@@ -66,18 +61,24 @@ AD i konsolę SCCM, kolor werdyktu od razu mówi, czy wszystko jest w porządku.
 
 ## Uruchomienie
 
-1. Windows 10 lub 11, Windows PowerShell 5.1 i moduł `ActiveDirectory` (RSAT); SCCM jest
+1. Windows 10 lub 11, Windows PowerShell 5.1 i moduł `ActiveDirectory` (RSAT). SCCM jest
    opcjonalny, ale zalecany.
 2. Domeny, kontrolery i serwer SCCM wpisz w bloku `$Script:Ustawienia`
    w `Jezyk-1-Srodowisko.ps1` (w repozytorium stoją atrapy: `jezyk.pl`, `zolw.pl`,
    `wydra.pl`).
-3. Uruchom dwuklikiem `Launcher-Jezyk.cmd`.
+3. Uruchom dwuklikiem `Launcher-Jezyk.cmd` (wymagane uprawnienia administratora).
 
 ## Autor
 
 [kacp3rn](https://github.com/kacp3rn)
 
+Wszelkie prawa zastrzeżone, szczegóły w pliku [LICENSE](LICENSE).
+
 ---
+
+
+
+
 
 ## Wyjaśnienia do kodu
 
