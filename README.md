@@ -76,10 +76,6 @@ Wszelkie prawa zastrzeżone, szczegóły w pliku [LICENSE](LICENSE).
 
 ---
 
-
-
-
-
 ## Wyjaśnienia do kodu
 
 Komentarze w kodzie odsyłają tutaj dopiskiem `(README: …)`. Tekst po dwukropku to początek
@@ -140,13 +136,13 @@ po kontrolerze trafia pod „!”.
 
 #### Wyszukiwanie po numerze telefonu
 
-Numery mogą być zapisywane w AD "jak kto lubi": (`+48123456789`, `123 456 789`…), a 
+Numery bywają zapisane w AD w dowolnej postaci (`+48123456789`, `123 456 789`…), a
 `telephoneNumber` i `mobile` nie są indeksowane, więc kontroler przegląda konto po koncie.
-Dlatego numer idzie osobnym zadaniem w tle, z `-ResultPageSize` równym limitowi trafień 
-(pracę kontrolera kończy rozmiar strony, a nie licznik wyników) i opcjonalnym zawężeniem 
-`SzukajOd`. Trafienia doklejają się na koniec listy, bez ruszania zaznaczenia. Gdy po nazwie 
-nic się nie znalazło, a zadanie numeru ruszyło, `Status:` mówi, że szukanie trwa. Samo 
-„nie znaleziono” byłoby wtedy nieprawdą; każda odpowiedź (trafienia, brak, zbyt wiele, 
+Dlatego numer idzie osobnym zadaniem w tle, z `-ResultPageSize` równym limitowi trafień
+(pracę kontrolera kończy rozmiar strony, a nie licznik wyników) i opcjonalnym zawężeniem
+`SzukajOd`. Trafienia doklejają się na koniec listy, bez ruszania zaznaczenia. Gdy po nazwie
+nic się nie znalazło, a zadanie numeru ruszyło, `Status:` mówi, że szukanie trwa. Samo
+„nie znaleziono” byłoby wtedy nieprawdą; każda odpowiedź (trafienia, brak, zbyt wiele,
 przerwane) zastępuje tę notkę.
 
 ##### Rdzeń numeru i jego świadoma cena
@@ -162,7 +158,7 @@ AD nie wie, gdzie ktoś się logował — `lastLogon` mówi kiedy, nigdy gdzie. 
 inwentaryzacja SCCM, więc pole nazywa się „ostatnio **używany**”, a w nawiasie pokazuje stan
 sesji („zalogowany teraz”) albo samą datę: `LastActiveTime` to aktywność klienta SCCM, a nie
 logowanie, więc godzina sugerowałaby dokładność, której nie ma. Główne zapytanie stoi na
-`SELECT *`, ponieważ jedna kolumna nieznana danej wersji SCCM wywróciłaby całe szukanie. 
+`SELECT *`, ponieważ jedna kolumna nieznana danej wersji SCCM wywróciłaby całe szukanie.
 Adres IP daje sonda ICMP, a MAC dobiera się do tego adresu z kart zapisanych w inwentaryzacji,
 dokładnie albo po podsieci.
 
@@ -177,7 +173,7 @@ dokładne porównanie w kodzie. Przy kilku maszynach wygrywa ta, przy której kt
 ##### Dwa stosy WMI, nie jeden
 
 Po **odmowie dostępu** z `Get-CimInstance` (stos MI) to samo zapytanie idzie jeszcze raz
-przez `Get-WmiObject` (klasyczny COM/DCOM, jak konsola ConfigMgr).  Autoryzacja jest w obu
+przez `Get-WmiObject` (klasyczny COM/DCOM, jak konsola ConfigMgr). Autoryzacja jest w obu
 inna, więc jeden potrafi przejść tam, gdzie drugi się odbija. Każdy inny błąd powtórzyłby się
 identycznie, więc druga próba pada tylko po odmowie. Który stos oddał wynik, widać pod „!”.
 
@@ -217,19 +213,19 @@ jej wynik w `@()`.
 „Usuń z grupy” działa na zaznaczonym wierszu, a wiersze listy to tylko napisy. Lista jedzie
 więc przez okno jako **pary** „nazwa + nazwa wyróżniająca”, filtr oddaje pary, a numeruje je
 jedna funkcja (`Get-JezykWierszeGrup`) z tej samej tablicy, z której bierze się zaznaczenie.
-Inaczej po zawężeniu filtra konto zostałoby usunięte z innej grupy niż zaznaczona  (bez 
+Inaczej po zawężeniu filtra konto zostałoby usunięte z innej grupy niż zaznaczona (bez
 żadnego komunikatu).
 
 #### Przycisk „!”
 
-„!” stoi przy polu wtedy i tylko wtedy, gdy dane wyszukanie ma coś do zgłoszenia. Czerwony: 
+„!” stoi przy polu wtedy i tylko wtedy, gdy dane wyszukanie ma coś do zgłoszenia. Czerwony:
 funkcja naprawdę zawiodła, niebieski: wynik jest niejednoznaczny. Treść ustawia się
 wyłącznie na ścieżce błędu, a ścieżka sukcesu jawnie ją gasi. Stały, zawsze widoczny „!”
 przestałby cokolwiek sygnalizować.
 
 #### Praca w tle
 
-Siedem zadań: logowanie, dwa zadania SCCM, ping, numer telefonu, łączenie z udziałem i 
+Siedem zadań: logowanie, dwa zadania SCCM, ping, numer telefonu, łączenie z udziałem i
 wyszukiwanie grup. Przebiegają w osobnych przestrzeniach uruchomieniowych, każde z własnym
 licznikiem pokoleń, więc pole wypełnia się, gdy dojdzie **jego** wynik. Odpowiedzi odbiera
 zegar WinForms na wątku okna. Przestrzeń wolno zwolnić dopiero po zakończeniu: `Dispose` na
@@ -253,7 +249,7 @@ Każda z nich raz wystąpiła i żadna nie dała komunikatu:
   kompiluje funkcję przy pierwszym wykonaniu i sprawdza przy tym plik źródłowy po pełnej
   ścieżce. Przy wyłączonym komputerze z udziałem każda pierwsza czynność czekała do limitu
   czasu sieci. Części wczytuje się więc z pamięci, z samą nazwą pliku.
-- **Po zwolnieniu konsoli do hosta, skrypt wysyłał do niej strumień błędów.** Zapis rzucał
+- **Po zwolnieniu konsoli strumień błędów nadal trafiał do hosta.** Zapis rzucał
   wyjątkiem i urywał procedurę zdarzenia w połowie. Wszystkie strumienie okna trafiają dziś do
   `Add-JezykBladOkna` i pod „!”.
 - **Obsługa błędu nie może rzucić wyjątkiem.** Wyjątek wychodzi z `ShowDialog` i zamyka
@@ -262,7 +258,7 @@ Każda z nich raz wystąpiła i żadna nie dała komunikatu:
   idzie sonda portu z krótkim terminem dla wszystkich kontrolerów naraz, a nie po kolei.
 - **Niepełna lista funkcji wstrzykiwanych do zadania w tle.** Przestrzeń startuje pusta, więc
   pominięta funkcja to wyjątek wewnątrz zadania, a w oknie tylko brak wyniku.
-- **`@($null)` ma jeden element, a `return ,$x` i `@()` się wykluczają,** "Nic" przechodziło
+- **`@($null)` ma jeden element, a `return ,$x` i `@()` się wykluczają,** „nic” przechodziło
   przez warunki jak „jedno”, a lista docierała jako jeden obiekt.
 - **`'{0} {1}' -f $a, $b` w argumencie metody .NET dostaje tylko `$a`,** przecinki należą
   do listy argumentów metody.
@@ -311,8 +307,8 @@ listy oddają je bez przecinka przy `return`, a wołający owija wynik w `@()`.
 
 Przełożenie wyniku na kontrolki i obsługa zdarzeń, bez zapytań do sieci. Kilka zachowań jest
 celowych: przy podwójnym kliknięciu natywne zaznaczenie Windows jest tylko kotwicą,
-a zaznaczenia przeciągniętego przez kilka słów nie ruszamy. Przyciski „Połącz” i „Dyski” 
-znikają przy stanie przejściowym, bo drogą powrotu jest „Pinguj”. Wybór grupy zapamiętuje się 
+a zaznaczenia przeciągniętego przez kilka słów nie ruszamy. Przyciski „Połącz” i „Dyski”
+znikają przy stanie przejściowym, bo drogą powrotu jest „Pinguj”. Wybór grupy zapamiętuje się
 dopiero **po** przepisaniu pola nazwą z AD, bo `TextChanged` zeruje go przy każdej zmianie tekstu.
 
 #### Jezyk-4-Okno.ps1
@@ -321,7 +317,7 @@ Stałe siatki, rysunek i ruch jeża, budowa okna i zadania w tle.
 
 ##### Zadania w tle — mechanika
 
-Przestrzeń uruchomieniowa startuje pusta, więc `New-JezykSkryptTla` wstrzykuje tekst funkcji, 
+Przestrzeń uruchomieniowa startuje pusta, więc `New-JezykSkryptTla` wstrzykuje tekst funkcji,
 całe domknięcie zależności, nie tylko pierwszy poziom. Wynik odbiera zegar
 `$Script:ZegarTla` na wątku okna. Odbiór zdejmuje zadanie z rejestru **zanim** cokolwiek
 narysuje: okna modalne (wybór grupy, poświadczenia) pompują takty zegara, więc drugi takt
@@ -330,7 +326,7 @@ dwuetapowe i są zwalniane dopiero po faktycznym zakończeniu.
 
 ### Budowa i rozbudowa
 
-Kształt wyniku definiuje jedno miejsce: `New-JezykResult` w `Jezyk-2-Logika.ps1`,  więc nowe
+Kształt wyniku definiuje jedno miejsce: `New-JezykResult` w `Jezyk-2-Logika.ps1`, więc nowe
 pole to cztery kroki: kontrolka w `New-JezykForm`, odczyt w widoku przez `$Script:Kontrolki`,
 czyszczenie w `Clear-JezykKonto` albo `Clear-JezykKomputer` i, przy polu kolorowanym,
 zerowanie koloru. Nowe zadanie w tle trzeba dopisać do listy funkcji wstrzykiwanych
