@@ -61,23 +61,43 @@ if not exist "%JEZYK_CSC%" (
     goto :blad
 )
 
+REM Wersja z Jezyk-1-Srodowisko.ps1 do wlasciwosci exe; kotwica na poczatku linii jak w WartoscUstawienia z Jezyk-Exe.cs.
+set "JEZYK_WERSJA_TEKST="
+for /f "tokens=2 delims='" %%W in ('findstr /r /c:"^ *Wersja *=" Jezyk-1-Srodowisko.ps1') do set "JEZYK_WERSJA_TEKST=%%W"
+
+REM Sprawdzenie przed podmianami - podmiana na niezdefiniowanej zmiennej daje smieci.
+if not defined JEZYK_WERSJA_TEKST (
+    echo.
+    echo   BLAD: w Jezyk-1-Srodowisko.ps1 nie ma linii Wersja = 'v...' - wartosc w apostrofach.
+    echo.
+    goto :blad
+)
+set "JEZYK_WERSJA_TEKST=!JEZYK_WERSJA_TEKST: =!"
+set "JEZYK_WERSJA=!JEZYK_WERSJA_TEKST:v=!"
+
+REM Atrybuty wersji w osobnym pliku obok kompilatora - nie w %TEMP%, bo "!" w sciezce profilu by zniknal.
+> "Jezyk-Wersja.cs" echo [assembly: System.Reflection.AssemblyFileVersion("!JEZYK_WERSJA!")]
+>> "Jezyk-Wersja.cs" echo [assembly: System.Reflection.AssemblyInformationalVersion("!JEZYK_WERSJA_TEKST!")]
+
 REM Kazdy plik jako zasob o nazwie pliku.
 set "JEZYK_ZASOBY="
 for %%P in (%JEZYK_PLIKI%) do set "JEZYK_ZASOBY=!JEZYK_ZASOBY! /resource:%%P,%%P"
 
 REM winexe - bez okna konsoli; anycpu - proces 64-bitowy w systemie 64-bitowym; 65001 - plik .cs w UTF-8.
 echo.
-echo   Kompilowanie Jezyk.exe...
+echo   Kompilowanie Jezyk.exe !JEZYK_WERSJA_TEKST!...
 echo.
-"%JEZYK_CSC%" /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 /win32icon:Ikona-Jezyk.ico /out:Jezyk.exe!JEZYK_ZASOBY! Jezyk-Exe.cs
+"%JEZYK_CSC%" /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 /win32icon:Ikona-Jezyk.ico /out:Jezyk.exe!JEZYK_ZASOBY! Jezyk-Exe.cs Jezyk-Wersja.cs
 
 if errorlevel 1 (
+    del "Jezyk-Wersja.cs" 2>nul
     echo.
     echo   BLAD: kompilacja sie nie udala - opis powyzej.
     echo   Gdy csc nie moze zapisac Jezyk.exe, ten plik wlasnie startuje - sprobuj ponownie za chwile.
     echo.
     goto :blad
 )
+del "Jezyk-Wersja.cs" 2>nul
 
 echo   Gotowe: %~dp0Jezyk.exe
 echo.

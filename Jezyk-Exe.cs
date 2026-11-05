@@ -15,6 +15,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 
+// Wersje pliku i produktu dopisuje kompilator (Jezyk-Wersja.cs z Jezyk-1-Srodowisko.ps1) - drugi taki atrybut tutaj to blad kompilacji.
 [assembly: AssemblyTitle("Jeżyk")]
 [assembly: AssemblyProduct("Jeżyk")]
 [assembly: AssemblyCopyright("kacp3rn")]
@@ -191,32 +192,47 @@ public static class JezykExe
         return WartoscUstawienia(Encoding.UTF8.GetString(File.ReadAllBytes(sciezka)), "Wersja");
     }
 
-    // Czy wersja zdalna jest nowsza: liczby porownywane po kolei (v0.10 po v0.9, v0.5.0 to v0.5).
+    // Czy wersja zdalna jest nowsza: liczba po pierwszej kropce to ulamek dziesietny (v0.49 < v0.5 < v0.51 < v0.6),
+    // dalsze liczby to kolejne czlony (v0.5 < v0.5.1, v0.5.0 to v0.5).
     public static bool CzyNowsza(string lokalna, string zdalna)
     {
-        int[] a = LiczbyWersji(lokalna);
-        int[] b = LiczbyWersji(zdalna);
+        string[] a = LiczbyWersji(lokalna);
+        string[] b = LiczbyWersji(zdalna);
         if (a == null || b == null) return false;
 
         for (int i = 0; i < Math.Max(a.Length, b.Length); i++)
         {
-            int x = i < a.Length ? a[i] : 0;
-            int y = i < b.Length ? b[i] : 0;
-            if (x != y) return y > x;
+            string x = i < a.Length ? a[i] : "0";
+            string y = i < b.Length ? b[i] : "0";
+            int roznica;
+            if (i == 1)
+            {
+                // Ulamek: cyfry dopelnione zerami z prawej do rownej dlugosci (5 to 50, 05 zostaje 05).
+                int dlugosc = Math.Max(x.Length, y.Length);
+                roznica = string.CompareOrdinal(x.PadRight(dlugosc, '0'), y.PadRight(dlugosc, '0'));
+            }
+            else
+            {
+                roznica = int.Parse(x, CultureInfo.InvariantCulture).CompareTo(int.Parse(y, CultureInfo.InvariantCulture));
+            }
+            if (roznica != 0) return roznica < 0;
         }
         return false;
     }
 
-    // Liczby z napisu wersji albo null, gdy nie ma zadnej albo ktoras sie nie miesci.
-    private static int[] LiczbyWersji(string wersja)
+    // Liczby z napisu wersji (cyfry jak w napisie - w ulamku licza sie zera wiodace) albo null,
+    // gdy nie ma zadnej albo ktoras sie nie miesci.
+    private static string[] LiczbyWersji(string wersja)
     {
         MatchCollection liczby = Regex.Matches(wersja ?? "", "[0-9]+");
         if (liczby.Count == 0) return null;
 
-        int[] wynik = new int[liczby.Count];
+        string[] wynik = new string[liczby.Count];
         for (int i = 0; i < liczby.Count; i++)
         {
-            if (!int.TryParse(liczby[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out wynik[i])) return null;
+            int liczba;
+            if (!int.TryParse(liczby[i].Value, NumberStyles.None, CultureInfo.InvariantCulture, out liczba)) return null;
+            wynik[i] = liczby[i].Value;
         }
         return wynik;
     }

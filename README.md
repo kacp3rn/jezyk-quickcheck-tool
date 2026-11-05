@@ -303,7 +303,10 @@ jest w każdym Windows 10 i 11, więc niczego nie trzeba instalować. Sprawdza k
 (i pokazuje **całą** listę braków), wchodzi do swojego katalogu przez `pushd` (przyjmuje też
 ścieżkę udziału) i na końcu wypisuje skrót SHA-256 gotowego exe, przydatny przy wyjątku
 w antywirusie. Konfiguracja jest wkompilowana razem z kodem: każda zmiana w plikach `.ps1`
-wymaga ponownej kompilacji.
+wymaga ponownej kompilacji. `Wersja` z `Jezyk-1-Srodowisko.ps1` trafia też do właściwości
+pliku (wersja pliku `0.5.0.0`, wersja produktu `v0.5`) — kompilator zapisuje ją w tymczasowym
+`Jezyk-Wersja.cs`, kompilowanym razem z `Jezyk-Exe.cs`, więc wartość musi stać w apostrofach,
+a bez litery `v` składać się z samych liczb.
 
 #### Jezyk-Exe.cs
 
@@ -328,7 +331,9 @@ wersji. Folder i własną `Wersja` czyta z wkompilowanej kopii `Jezyk-1-Srodowis
 a wersję `Jezyk.exe` z folderu — z bajtów pliku, bo części `.ps1` leżą w exe tekstem.
 Z udziału nic się nie uruchamia, zanim operator zdecyduje. Wyrażenie jest zakotwiczone
 na początku linii, bo przeszukuje cały plik, więc każdy z obu kluczy stoi w pięciu częściach
-raz. Na udział exe czeka najwyżej 3 s: niedostępny folder, brak pliku albo wersja nie nowsza
+raz. Numer po pierwszej kropce porównuje się jak ułamek dziesiętny
+(`v0.49 < v0.5 < v0.51 < v0.6`), dalsze człony — jako kolejne liczby (`v0.5 < v0.5.1`).
+Na udział exe czeka najwyżej 3 s: niedostępny folder, brak pliku albo wersja nie nowsza
 kończą się startem bez komunikatu. Po „Tak” nowy plik trafia obok jako `.nowy` i dopiero gdy
 ma zaproponowaną wersję (urwana kopia jej nie ma), działający exe dostaje nazwę `.stary` —
 Windows nie pozwala nadpisać uruchomionego pliku, ale pozwala zmienić mu nazwę — a nowy
