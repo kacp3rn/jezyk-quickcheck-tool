@@ -66,7 +66,21 @@ AD i konsolę SCCM, kolor werdyktu od razu mówi, czy wszystko jest w porządku.
 2. Domeny, kontrolery i serwer SCCM wpisz w bloku `$Script:Ustawienia`
    w `Jezyk-1-Srodowisko.ps1` (w repozytorium stoją atrapy: `jezyk.pl`, `zolw.pl`,
    `wydra.pl`).
-3. Uruchom dwuklikiem `Launcher-Jezyk.cmd` (wymagane uprawnienia administratora).
+3. Uruchom dwuklikiem `Jezyk-Kompilator.cmd` — obok powstanie `Jezyk.exe`, jedyny plik
+   potrzebny do pracy. Ten plik uruchamiasz i rozdajesz (wymagane uprawnienia
+   administratora). Exe niesie kopię plików `.ps1`, więc po każdej ich zmianie uruchom
+   kompilator ponownie.
+4. Nową wersję wypuszczasz, podnosząc `Wersja` w `Jezyk-1-Srodowisko.ps1`, kompilując
+   i kopiując `Jezyk.exe` do folderu z ustawienia `FolderAktualizacji`. Przy starcie exe
+   porówna numery i zapyta, czy się zaktualizować; gdy folder jest niedostępny, uruchomi
+   się bez pytania.
+5. Uprawnienia. Do folderu `FolderAktualizacji` zapisuje wyłącznie wdrażający: kto podmieni
+   tam `Jezyk.exe`, uruchomi swój kod u każdego operatora, który kliknie „Tak”. Udział
+   administracyjny (`\\KOMP01\d$\Jezyk`) tego nie zapewnia — czyta z niego tylko
+   administrator tego komputera, a ten może też pisać. Bezpieczniej użyć zwykłego udziału
+   z odczytem dla operatorów i zapisem tylko dla wdrażającego. U operatora trzymaj
+   `Jezyk.exe` w folderze, do którego zapisuje tylko on (np. na pulpicie), a nie w nowym
+   folderze w `C:\`, który dziedziczy prawo zapisu dla wszystkich użytkowników komputera.
 
 ## Autor
 
@@ -88,7 +102,8 @@ Wszystko, co się ustawia, stoi w bloku `$Script:Ustawienia` na początku
 `Jezyk-1-Srodowisko.ps1`: lista domen, domeny z odblokowaniem i domeny z zarządzaniem
 grupami (osobno, bo w AD to dwie niezależne delegacje), opcjonalna lista kontrolerów,
 poddrzewo przeszukania po numerze (`SzukajOd`), serwer, kod lokacji i protokół SCCM, domeny
-znane SCCM i ścieżka do konsoli zdalnej. Osobnego pliku konfiguracyjnego nie ma, a Jeżyk
+znane SCCM, ścieżka do konsoli zdalnej i folder sieciowy z najnowszym `Jezyk.exe`
+(`FolderAktualizacji`). Osobnego pliku konfiguracyjnego nie ma, a Jeżyk
 niczego nie odczytuje sam ani z rejestru, ani od klienta SCCM.
 
 #### Sprawdzenie przy starcie
@@ -96,7 +111,8 @@ niczego nie odczytuje sam ani z rejestru, ani od klienta SCCM.
 `Confirm-JezykUstawienia` sprawdza konfigurację raz, po wczytaniu wszystkich części,
 i pokazuje **wszystkie** zastrzeżenia naraz, zanim wstanie okno: kształt nazw domen,
 obecność domen z zapisem na liście domen, przynależność serwera SCCM i kontrolerów do
-skonfigurowanych domen, trzyznakowy kod lokacji, pełną ścieżkę do konsoli. Przynależność
+skonfigurowanych domen, trzyznakowy kod lokacji, pełną ścieżkę do konsoli i do folderu
+aktualizacji. Przynależność
 hosta do domeny liczy się z **kropką przed sufiksem** (`dc1.jezyk.pl` należy do `jezyk.pl`,
 `zlyjezyk.pl` — nie) i porównaniem `Ordinal`: porównanie według kultury pomija niektóre
 znaki jako nieistotne, więc nazwa spreparowana z takim znakiem mogłaby przejść.
@@ -280,13 +296,45 @@ cztery części **z pamięci** (bajty bez znacznika BOM, parser z samą nazwą p
 powiązania z katalogiem wdrożenia), sprawdza ich kompletność i uruchamia okno w bloku, który
 zbiera wszystkie strumienie do obsługi błędów okna.
 
-#### Launcher-Jezyk.cmd
+#### Jezyk-Kompilator.cmd
 
-WinForms wymaga trybu STA, którego nie da się włączyć z wnętrza działającego skryptu, więc
-program startuje przez launcher. Ten sprawdza komplet plików (i pokazuje **całą** listę
-braków), woła `powershell.exe` pełną ścieżką i przed startem przechodzi do `%SystemRoot%`,
-żeby uruchomiony proces nie dziedziczył uchwytu katalogu wdrożenia, inaczej folderu nie
-dałoby się usunąć ani przemianować, dopóki okno jest otwarte.
+Składa pięć części i ikonę w jeden `Jezyk.exe` kompilatorem C# z .NET Framework 4.x, który
+jest w każdym Windows 10 i 11, więc niczego nie trzeba instalować. Sprawdza komplet plików
+(i pokazuje **całą** listę braków), wchodzi do swojego katalogu przez `pushd` (przyjmuje też
+ścieżkę udziału) i na końcu wypisuje skrót SHA-256 gotowego exe, przydatny przy wyjątku
+w antywirusie. Konfiguracja jest wkompilowana razem z kodem: każda zmiana w plikach `.ps1`
+wymaga ponownej kompilacji.
+
+#### Jezyk-Exe.cs
+
+Kod `Jezyk.exe` (C# 5, bo tyle zna wbudowany kompilator). Exe rozpakowuje wkompilowane pliki
+do świeżego folderu `%TEMP%\Jezyk-exe\<data>-<PID>`, uruchamia z niego `Kod-Jezyk.ps1` przez
+`powershell.exe` i kończy się po około sekundzie. WinForms wymaga trybu STA, którego nie da
+się włączyć z wnętrza działającego skryptu, więc PowerShell startuje z `-STA`, bez okna
+konsoli, z pełnej ścieżki (proces 32-bitowy dostaje `Sysnative`, żeby nie trafić na
+32-bitowego PowerShella) i z katalogiem bieżącym `%SystemRoot%`. Exe przechodzi tam też samo,
+zanim uruchomi PowerShella: uchwyt katalogu bieżącego jest dziedziczony przez proces potomny,
+więc sam katalog startowy PowerShella nie zabrałby mu kopii uchwytu folderu, z którego
+uruchomiono exe, i folderu nie dałoby się usunąć ani przemianować, dopóki okno jest otwarte.
+Exe nie trzyma też samego siebie: po starcie da się je nadpisać na udziale, a wyłączenie
+komputera z udziałem nie dotyka otwartych okien.
+
+Kopia w `%TEMP%` (~430 KB) i — wyłącznie po „Tak” — podmiana samego exe to jedyne zapisy
+lokalne poza plikami diagnostycznymi. Kopie starsze niż godzina usuwa następne
+uruchomienie; młodszych nie rusza, bo mogą należeć do okna, które właśnie wczytuje pliki.
+
+Przed rozpakowaniem exe sprawdza, czy w folderze `FolderAktualizacji` nie ma nowszej
+wersji. Folder i własną `Wersja` czyta z wkompilowanej kopii `Jezyk-1-Srodowisko.ps1`,
+a wersję `Jezyk.exe` z folderu — z bajtów pliku, bo części `.ps1` leżą w exe tekstem.
+Z udziału nic się nie uruchamia, zanim operator zdecyduje. Wyrażenie jest zakotwiczone
+na początku linii, bo przeszukuje cały plik, więc każdy z obu kluczy stoi w pięciu częściach
+raz. Na udział exe czeka najwyżej 3 s: niedostępny folder, brak pliku albo wersja nie nowsza
+kończą się startem bez komunikatu. Po „Tak” nowy plik trafia obok jako `.nowy` i dopiero gdy
+ma zaproponowaną wersję (urwana kopia jej nie ma), działający exe dostaje nazwę `.stary` —
+Windows nie pozwala nadpisać uruchomionego pliku, ale pozwala zmienić mu nazwę — a nowy
+wchodzi na jego miejsce i startuje. `.stary` usuwa następne uruchomienie. Nieudana podmiana
+kończy się komunikatem i startem dotychczasowej wersji. Weryfikator ma sens przy kopii exe
+na komputerze operatora: exe uruchomiony z samego folderu aktualizacji niczego nie sprawdza.
 
 #### Jezyk-1-Srodowisko.ps1
 

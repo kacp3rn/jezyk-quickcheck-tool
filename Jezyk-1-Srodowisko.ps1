@@ -512,6 +512,10 @@ $Script:Ustawienia = @{
     # Puste = przycisku nie ma. Przyklad:
     # 'C:\Program Files (x86)\Microsoft Endpoint Manager\AdminConsole\bin\i386\CmRcViewer.exe'
     SciezkaRemoteControl = ''
+
+    # Folder sieciowy z najnowszym Jezyk.exe; przed startem exe pyta o aktualizacje. Puste = bez sprawdzania.
+    # Przyklad: '\\serwer\Narzedzia\Jezyk'
+    FolderAktualizacji = ''
 }
 
 # Listy domen znormalizowane (male litery, bez spacji) - porownuje sie je z domena wybrana w oknie.
@@ -753,6 +757,12 @@ function Get-JezykOpisKonfiguracji {
         'Zdalna konsola: {0}' -f $Script:Ustawienia.SciezkaRemoteControl
     } else {
         'Zdalna konsola: nieskonfigurowana - przycisk "Połącz" się nie pojawia'
+    }
+
+    $wiersze += if ($Script:Ustawienia.FolderAktualizacji) {
+        'Aktualizacje: sprawdzane w {0}' -f $Script:Ustawienia.FolderAktualizacji
+    } else {
+        'Aktualizacje: wyłączone'
     }
 
     $wiersze -join [Environment]::NewLine

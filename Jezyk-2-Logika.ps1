@@ -56,6 +56,17 @@ function Test-JezykSciezkaProgramu {
     return ($Sciezka -match '^(?:[A-Za-z]:\\|\\\\[^\\])')
 }
 
+# Czy sciezka folderu aktualizacji to pelna sciezka windowsowa: litera dysku albo \\serwer\udzial.
+function Test-JezykSciezkaFolderu {
+    param([string]$Sciezka)
+
+    if ([string]::IsNullOrWhiteSpace($Sciezka)) { return $false }
+    if ($Sciezka.Length -gt 248) { return $false }
+    if ($Sciezka -match '["\x00-\x1F]') { return $false }
+
+    return ($Sciezka -match '^(?:[A-Za-z]:\\|\\\\[^\\]+\\[^\\]+)')
+}
+
 # Poddrzewo przeszukania po numerze dla wybranej domeny (liczone przy kazdym wywolaniu) albo puste.
 function Get-JezykSzukajOd {
     param([string]$Domena)
@@ -207,6 +218,12 @@ function Confirm-JezykUstawienia {
     $sciezkaRc = ([string]$Script:Ustawienia.SciezkaRemoteControl).Trim()
     if ($sciezkaRc -and -not (Test-JezykSciezkaProgramu $sciezkaRc)) {
         $bledy += 'SciezkaRemoteControl: "{0}" nie jest pełną ścieżką do pliku .exe (wymagana litera dysku albo \\serwer).' -f $sciezkaRc
+    }
+
+    # Folder aktualizacji opcjonalny; zly ksztalt dawalby weryfikator, ktory nigdy niczego nie znajduje.
+    $folderAktualizacji = ([string]$Script:Ustawienia.FolderAktualizacji).Trim()
+    if ($folderAktualizacji -and -not (Test-JezykSciezkaFolderu $folderAktualizacji)) {
+        $bledy += 'FolderAktualizacji: "{0}" nie jest pełną ścieżką folderu (wymagana litera dysku albo \\serwer\udział).' -f $folderAktualizacji
     }
 
     return @($bledy)

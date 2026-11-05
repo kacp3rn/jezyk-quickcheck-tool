@@ -2,6 +2,7 @@
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
 *.bat text eol=crlf
+*.cs  text eol=crlf
 
 # Instrukcja dla operatora otwierana w Notatniku - takze CRLF.
 *.txt text eol=crlf
