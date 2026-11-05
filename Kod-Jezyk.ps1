@@ -107,21 +107,44 @@ function Get-JezykTrescBezBom {
 # Blok skryptu czesci podpisany sama nazwa pliku - kod zyje w pamieci, bez powiazania z katalogiem wdrozenia.
 # Uwaga: blok z pelna sciezka pyta o plik przy kazdej pierwszej kompilacji (README: Pulapki).
 function Get-JezykBlokCzesci {
-    param([string]$Sciezka, [string]$Nazwa)
+    param([string]$Tresc, [string]$Nazwa)
 
     $tokeny = $null
     $bledy  = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput(
-        (Get-JezykTrescBezBom $Sciezka), $Nazwa, [ref]$tokeny, [ref]$bledy)
+        $Tresc, $Nazwa, [ref]$tokeny, [ref]$bledy)
 
     # Blad skladni odrzuca cala czesc - tak samo jak przy dolaczaniu pliku z dysku.
     if ($bledy.Count -gt 0) { throw [System.Management.Automation.ParseException]::new($bledy) }
     $ast.GetScriptBlock()
 }
 
+# Usuwa kopie programu rozpakowana przez Jezyk.exe - wylacznie folder <data>-<PID> w %TEMP%\Jezyk-exe.
+# Kazdy inny katalog (wdrozenia, repozytorium, zapasowy katalog biezacy) zostaje nietkniety.
+function Remove-JezykKopiaProgramu {
+    param([string]$Katalog)
 
-# Dolaczenie czesci - kazda we wlasnym try/catch, bo trap wznowilby prace dopiero za petla.
-# Kropka stoi tutaj, na poziomie skryptu: postawiona w funkcji zamknelaby czesc w jej zakresie.
+    try {
+        $ukosniki = [char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+        $folder   = [System.IO.Path]::GetFullPath($Katalog).TrimEnd($ukosniki)
+        $baza     = [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetTempPath()) 'Jezyk-exe')).TrimEnd($ukosniki)
+
+        $rodzic = [System.IO.Path]::GetDirectoryName($folder)
+        if (-not [string]::Equals($rodzic, $baza, [System.StringComparison]::OrdinalIgnoreCase)) { return $false }
+        if ([System.IO.Path]::GetFileName($folder) -notmatch '^[0-9]{8}-[0-9]{6}-[0-9]+$') { return $false }
+
+        [System.IO.Directory]::Delete($folder, $true)
+        return $true
+    }
+    catch {
+        # Nieudane sprzatanie nie zatrzymuje startu - kopie usunie nastepne uruchomienie Jezyk.exe.
+        return $false
+    }
+}
+
+
+# Pliki programu do pamieci: tresc czesci i ikona. Zaraz potem kopia z %TEMP% znika z dysku.
+$Script:TresciCzesci = [ordered]@{}
 foreach ($czesc in $Script:CzesciProgramu) {
     $nazwaPliku    = $czesc + '.ps1'
     $sciezkaCzesci = Join-Path $Script:KatalogSkryptu $nazwaPliku
@@ -131,7 +154,24 @@ foreach ($czesc in $Script:CzesciProgramu) {
         continue
     }
 
-    try   { . (Get-JezykBlokCzesci $sciezkaCzesci $nazwaPliku) }
+    try   { $Script:TresciCzesci[$nazwaPliku] = Get-JezykTrescBezBom $sciezkaCzesci }
+    catch { Register-JezykBladCzesci $_ }
+}
+
+# Ikona opcjonalna - jej brak nie przerywa startu.
+$Script:BajtyIkony = $null
+$plikIkony = Join-Path $Script:KatalogSkryptu 'Ikona-Jezyk.ico'
+if (Test-Path -LiteralPath $plikIkony) {
+    try   { $Script:BajtyIkony = [System.IO.File]::ReadAllBytes($plikIkony) }
+    catch { }
+}
+
+[void](Remove-JezykKopiaProgramu $Script:KatalogSkryptu)
+
+# Dolaczenie czesci z pamieci - kazda we wlasnym try/catch, bo trap wznowilby prace dopiero za petla.
+# Kropka stoi tutaj, na poziomie skryptu: postawiona w funkcji zamknelaby czesc w jej zakresie.
+foreach ($nazwaPliku in @($Script:TresciCzesci.Keys)) {
+    try   { . (Get-JezykBlokCzesci $Script:TresciCzesci[$nazwaPliku] $nazwaPliku) }
     catch { Register-JezykBladCzesci $_ }
 }
 

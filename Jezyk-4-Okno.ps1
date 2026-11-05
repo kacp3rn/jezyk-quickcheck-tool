@@ -2590,10 +2590,9 @@ function New-JezykForm {
     $form.MinimizeBox     = $true
     $form.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterScreen
 
-    # Ikona opcjonalna - jej brak nie przerywa startu.
-    $plikIkony = Join-Path $Script:KatalogSkryptu 'Ikona-Jezyk.ico'
-    if (Test-Path -LiteralPath $plikIkony) {
-        try   { $form.Icon = [System.Drawing.Icon]::new($plikIkony, 32, 32) }
+    # Ikona z pamieci (Kod-Jezyk.ps1 wczytal ja przed usunieciem kopii) - jej brak nie przerywa startu.
+    if ($Script:BajtyIkony) {
+        try   { $form.Icon = [System.Drawing.Icon]::new([System.IO.MemoryStream]::new($Script:BajtyIkony), 32, 32) }
         catch { }
     }
 

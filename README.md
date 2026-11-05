@@ -294,7 +294,11 @@ w całości.
 Plik wejściowy: wycisza preferencje, które po zwolnieniu konsoli pisałyby do hosta, wczytuje
 cztery części **z pamięci** (bajty bez znacznika BOM, parser z samą nazwą pliku bez
 powiązania z katalogiem wdrożenia), sprawdza ich kompletność i uruchamia okno w bloku, który
-zbiera wszystkie strumienie do obsługi błędów okna.
+zbiera wszystkie strumienie do obsługi błędów okna. Ładowanie idzie w trzech krokach:
+treść części i ikona trafiają do pamięci, potem znika kopia rozpakowana przez `Jezyk.exe`,
+a dopiero na końcu części są składane i dołączane — kod leży więc na dysku tylko przez
+odczyt, a nie przez kilka sekund dołączania. Usuwany jest wyłącznie folder `<data>-<PID>`
+w `%TEMP%\Jezyk-exe`; katalogu wdrożenia ani żadnego innego Jeżyk nie rusza.
 
 #### Jezyk-Kompilator.cmd
 
@@ -323,8 +327,10 @@ Exe nie trzyma też samego siebie: po starcie da się je nadpisać na udziale, a
 komputera z udziałem nie dotyka otwartych okien.
 
 Kopia w `%TEMP%` (~430 KB) i — wyłącznie po „Tak” — podmiana samego exe to jedyne zapisy
-lokalne poza plikami diagnostycznymi. Kopie starsze niż godzina usuwa następne
-uruchomienie; młodszych nie rusza, bo mogą należeć do okna, które właśnie wczytuje pliki.
+lokalne poza plikami diagnostycznymi. Kopię usuwa sam Jeżyk zaraz po wczytaniu plików do
+pamięci (`Kod-Jezyk.ps1`). Kopie, których nie zdążył usunąć (awaria przed odczytem), usuwa
+następne uruchomienie, gdy mają ponad godzinę; młodszych nie rusza, bo mogą należeć do okna,
+które właśnie wczytuje pliki.
 
 Przed rozpakowaniem exe sprawdza, czy w folderze `FolderAktualizacji` nie ma nowszej
 wersji. Folder i własną `Wersja` czyta z wkompilowanej kopii `Jezyk-1-Srodowisko.ps1`,
