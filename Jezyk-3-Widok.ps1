@@ -138,6 +138,19 @@ function Get-JezykTelefony {
     return ((@($Glowny, $Komorkowy) | Where-Object { $_ }) -join ', ')
 }
 
+# Adres w jednej linii: linie ulicy, potem kod z miastem - puste czesci pominiete.
+function Get-JezykAdres {
+    param([string]$Ulica, [string]$KodPocztowy, [string]$Miasto)
+
+    # Ulica bywa w AD wielolinijkowa - pole jest jednolinijkowe.
+    $czesci = @($Ulica -split '\r\n|\r|\n' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
+    $miejscowosc = ('{0} {1}' -f $KodPocztowy, $Miasto).Trim()
+    if ($miejscowosc) { $czesci += $miejscowosc }
+
+    return ($czesci -join ', ')
+}
+
 # Koloruje kontrolke wedlug ZNACZENIA i zapamietuje role (przezywa zmiane motywu).
 # Pole dostaje kolorowe tlo, werdykt (rola wygladu "Okno") - kolorowy napis; nigdy oba.
 function Set-JezykKolorPola {
@@ -213,6 +226,7 @@ function Clear-JezykKonto {
     foreach ($pole in @($k.TxtLoginKonta, $k.TxtImieNazwisko, $k.TxtEmail,
                         $k.TxtHasloWygasa, $k.TxtKontoWygasa, $k.TxtOstatniaZmiana,
                         $k.TxtKontoUtworzono, $k.TxtTelefon, $k.TxtMenedzer,
+                        $k.TxtFirma, $k.TxtStanowisko, $k.TxtDzial, $k.TxtAdres,
                         $k.TxtOstatnieLogowanie, $k.TxtKomputerUzytkownika,
                         $k.TxtKomputerIp, $k.TxtKomputerMac, $k.TxtKatalog, $k.TxtStatus)) {
         if ($pole) { $pole.Text = '' }
@@ -263,6 +277,19 @@ function Clear-JezykKonto {
     Set-JezykKolorPola $k.TxtKomputerUzytkownika 'Tekstu'
 }
 
+# Firma, stanowisko, dzial i adres - wspolne dla konta i kontaktu (to samo zapytanie).
+function Set-JezykPolaOrganizacji {
+    param($Result)
+
+    $k = $Script:Kontrolki
+
+    $k.TxtFirma.Text      = Get-JezykWartoscPola ([string]$Result.Firma)
+    $k.TxtStanowisko.Text = Get-JezykWartoscPola ([string]$Result.Stanowisko)
+    $k.TxtDzial.Text      = Get-JezykWartoscPola ([string]$Result.Dzial)
+    $k.TxtAdres.Text      = Get-JezykWartoscPola (Get-JezykAdres ([string]$Result.Ulica) `
+                                                     ([string]$Result.KodPocztowy) ([string]$Result.Miasto))
+}
+
 # Wypelnia widok konta z obiektu wyniku: werdykt (wniosek) i znaczniki (fakty zrodlowe).
 function Set-JezykResult {
     param($Result)
@@ -309,6 +336,8 @@ function Set-JezykResult {
 
             # Przelozony: pustka znaczy tylko "nie wpisano w AD" (nierozwiazany DN spada do CN).
             $k.TxtMenedzer.Text = if ($Result.Menedzer) { [string]$Result.Menedzer } else { 'nie wpisano w AD' }
+
+            Set-JezykPolaOrganizacji $Result
 
             # Trzy stany hasla, kazdy znaczy co innego dla osoby przy telefonie.
             if     ($Result.ZmianaHaslaWymuszona) { $k.TxtHasloWygasa.Text = 'nie dotyczy (zmiana wymagana)' }
@@ -357,6 +386,8 @@ function Set-JezykResult {
             $k.TxtEmail.Text          = Get-JezykWartoscPola ([string]$Result.Email)
             $telefonyKontaktu = Get-JezykTelefony ([string]$Result.TelefonGlowny) ([string]$Result.TelefonKomorkowy)
             $k.TxtTelefon.Text        = if ($telefonyKontaktu) { $telefonyKontaktu } else { 'nie wpisano w AD' }
+            # Wpis ksiazki adresowej - firma i adres sa tu najbardziej na miejscu.
+            Set-JezykPolaOrganizacji $Result
             $k.TxtKontoUtworzono.Text = Format-JezykData $Result.KontoUtworzono
             $k.TxtKatalog.Text        = Get-JezykWartoscPola ([string]$Result.Lokalizacja) 'brak danych'
             $k.TxtStatus.Text         = [string]$Result.Message

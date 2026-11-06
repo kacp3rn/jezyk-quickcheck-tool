@@ -298,6 +298,13 @@ function New-JezykResult {
         [string]$TelefonKomorkowy = '',
         [string]$Menedzer = '',
 
+        [string]$Firma = '',
+        [string]$Dzial = '',
+        [string]$Stanowisko = '',
+        [string]$Ulica = '',
+        [string]$KodPocztowy = '',
+        [string]$Miasto = '',
+
         # Grupy: pary "nazwa + DN" albo same nazwy - normalizacja tutaj, z niej oba pola wyniku.
         [object[]]$Grupy = @(),
 
@@ -339,6 +346,15 @@ function New-JezykResult {
         TelefonKomorkowy = $TelefonKomorkowy
 
         Menedzer = $Menedzer
+
+        Firma      = $Firma
+        Dzial      = $Dzial
+        Stanowisko = $Stanowisko
+
+        # Adres w trzech czesciach - sklejenie nalezy do widoku.
+        Ulica       = $Ulica
+        KodPocztowy = $KodPocztowy
+        Miasto      = $Miasto
 
         # Zakladka "Czlonek grupy" z konsoli AD: bez grupy podstawowej i bez czlonkostw zagniezdzonych.
         # Puste pozycje odsiane (@($null) ma jeden element) - Count to liczba grup.
@@ -2346,6 +2362,8 @@ function Get-JezykUserStatus {
                            -Properties LockedOut, Enabled, LockoutTime, DisplayName,
                                        GivenName, Surname, EmailAddress,
                                        OfficePhone, MobilePhone, Manager, MemberOf,
+                                       Company, Department, Title,
+                                       StreetAddress, PostalCode, City,
                                        CanonicalName, pwdLastSet, PasswordLastSet,
                                        'msDS-UserPasswordExpiryTimeComputed',
                                        AccountExpirationDate, Created, LastLogonDate `
@@ -2402,6 +2420,12 @@ function Get-JezykUserStatus {
                                -TelefonGlowny $telefonGlowny `
                                -TelefonKomorkowy $telefonKomorkowy `
                                -Menedzer $menedzer `
+                               -Firma ([string]$user.Company).Trim() `
+                               -Dzial ([string]$user.Department).Trim() `
+                               -Stanowisko ([string]$user.Title).Trim() `
+                               -Ulica ([string]$user.StreetAddress).Trim() `
+                               -KodPocztowy ([string]$user.PostalCode).Trim() `
+                               -Miasto ([string]$user.City).Trim() `
                                -Grupy $grupy `
                                -LockoutTime $czasBlokady `
                                -Lokalizacja $lokalizacja `
@@ -2679,6 +2703,8 @@ function Get-JezykKontaktStatus {
                                 -Server $Script:Config.Domena `
                                 -Properties displayName, givenName, sn, mail,
                                             telephoneNumber, mobile, memberOf,
+                                            company, department, title,
+                                            streetAddress, postalCode, l,
                                             CanonicalName, whenCreated `
                                 -ErrorAction Stop
 
@@ -2707,6 +2733,12 @@ function Get-JezykKontaktStatus {
                                -Email ([string]$kontakt.mail) `
                                -TelefonGlowny $telefonGlowny `
                                -TelefonKomorkowy $telefonKomorkowy `
+                               -Firma ([string]$kontakt.company).Trim() `
+                               -Dzial ([string]$kontakt.department).Trim() `
+                               -Stanowisko ([string]$kontakt.title).Trim() `
+                               -Ulica ([string]$kontakt.streetAddress).Trim() `
+                               -KodPocztowy ([string]$kontakt.postalCode).Trim() `
+                               -Miasto ([string]$kontakt.l).Trim() `
                                -Grupy @(Get-JezykCzlonkostwaGrup $kontakt.memberOf) `
                                -Lokalizacja $lokalizacja `
                                -KontoUtworzono $utworzono `

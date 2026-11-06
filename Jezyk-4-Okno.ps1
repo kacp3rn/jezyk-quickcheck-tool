@@ -2573,8 +2573,8 @@ function New-JezykForm {
     $drugaLinia      = [int][math]::Ceiling($form.Font.GetHeight())
     $wysokoscStatusu = $wysokoscPola + $drugaLinia
 
-    # Dziewiec wierszy (0-8); panel konczy sie na dolnej krawedzi pola "Status:".
-    $wysokoscPanelu = (Get-JezykWierszPole 8) + $wysokoscStatusu
+    # Jedenascie wierszy (0-10); panel konczy sie na dolnej krawedzi pola "Status:".
+    $wysokoscPanelu = (Get-JezykWierszPole 10) + $wysokoscStatusu
 
     # Pas podpisu: czcionka o punkt mniejsza, wysokosc = wieksze z boku ikonki i linii pisma.
     $czcionkaPasa               = [System.Drawing.Font]::new($form.Font.FontFamily, $form.Font.Size - 1)
@@ -2796,12 +2796,23 @@ function New-JezykForm {
     $lblMenedzer = New-JezykEtykieta 'Przełożony:' $P (Get-JezykWiersz 5)
     $txtMenedzer = New-JezykPole                 $P (Get-JezykWierszPole 5) $W
 
+    # Dane organizacyjne pod przelozonym: dwa wiersze po dwie kolumny.
+    $lblFirma      = New-JezykEtykieta 'Firma:'      $L (Get-JezykWiersz 6)
+    $txtFirma      = New-JezykPole                   $L (Get-JezykWierszPole 6) $W
+    $lblStanowisko = New-JezykEtykieta 'Stanowisko:' $P (Get-JezykWiersz 6)
+    $txtStanowisko = New-JezykPole                   $P (Get-JezykWierszPole 6) $W
+
+    $lblDzial = New-JezykEtykieta 'Dział:' $L (Get-JezykWiersz 7)
+    $txtDzial = New-JezykPole              $L (Get-JezykWierszPole 7) $W
+    $lblAdres = New-JezykEtykieta 'Adres:' $P (Get-JezykWiersz 7)
+    $txtAdres = New-JezykPole              $P (Get-JezykWierszPole 7) $W
+
     # Katalog konta w lewej polowie; prawa przyjela grupy AD (bez nowego wiersza).
-    $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 6)
-    $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 6) $W
+    $lblKatalog = New-JezykEtykieta 'Katalog konta:' $L (Get-JezykWiersz 8)
+    $txtKatalog = New-JezykPole                      $L (Get-JezykWierszPole 8) $W
 
     # Etykieta w linii etykiet, przycisk w linii pol; szerokosc z kolumny.
-    $lblGrupy = New-JezykEtykieta 'Grupy AD użytkownika:' $P (Get-JezykWiersz 6)
+    $lblGrupy = New-JezykEtykieta 'Grupy AD użytkownika:' $P (Get-JezykWiersz 8)
 
     # "Wyswietl grupy" - dostepnosc ustawia Set-JezykPrzyciskGrupy.
     $btnGrupyAd           = New-Object System.Windows.Forms.Button
@@ -2816,16 +2827,16 @@ function New-JezykForm {
     $btnGrupyAd.TabStop   = $false
 
     # Cala szerokosc, bo pole niesie dwie daty naraz.
-    $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 7)
-    $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 7) $C
+    $lblOstatnieLogowanie = New-JezykEtykieta 'Ostatnie logowanie:' $L (Get-JezykWiersz 9)
+    $txtOstatnieLogowanie = New-JezykPole                           $L (Get-JezykWierszPole 9) $C
     # Czerwony "!" - uscislenie nie doszlo do skutku; niebieski - data uscislona, ale nie ze wszystkich kontrolerow.
     $btnInfoLogowanie     = New-JezykPrzyciskInfo 'Logowanie'
     $btnInfoLogowanieNiepelne = New-JezykPrzyciskInfo 'LogowanieNiepelne'
     Set-JezykWyglad $btnInfoLogowanieNiepelne 'InfoNiebieski' -Rejestruj
 
     # "Status:" ma dwie linijki - niesie najdluzsze komunikaty.
-    $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 8)
-    $txtStatus = New-JezykPole               $L (Get-JezykWierszPole 8) $C
+    $lblStatus = New-JezykEtykieta 'Status:' $L (Get-JezykWiersz 10)
+    $txtStatus = New-JezykPole               $L (Get-JezykWierszPole 10) $C
     $txtStatus.Multiline = $true
 
     $pnlKonto.Controls.AddRange(@(
@@ -2835,6 +2846,8 @@ function New-JezykForm {
         $lblHasloWygasa, $txtHasloWygasa, $lblKontoWygasa, $txtKontoWygasa,
         $lblOstatniaZmiana, $txtOstatniaZmiana, $lblKontoUtworzono, $txtKontoUtworzono,
         $lblTelefon, $txtTelefon, $lblMenedzer, $txtMenedzer,
+        $lblFirma, $txtFirma, $lblStanowisko, $txtStanowisko,
+        $lblDzial, $txtDzial, $lblAdres, $txtAdres,
         $lblOstatnieLogowanie, $txtOstatnieLogowanie, $btnInfoLogowanie, $btnInfoLogowanieNiepelne,
         $lblKomputerUzytkownika, $txtKomputerUzytkownika, $btnInfoKomputer,
         $btnInfoKomputerWspoldzielony, $btnPinguj, $btnPolacz,
@@ -3171,6 +3184,10 @@ function New-JezykForm {
         TxtEmail          = $txtEmail
         TxtTelefon        = $txtTelefon
         TxtMenedzer       = $txtMenedzer
+        TxtFirma          = $txtFirma
+        TxtStanowisko     = $txtStanowisko
+        TxtDzial          = $txtDzial
+        TxtAdres          = $txtAdres
         PrzyciskOdblokuj       = $btnOdblokuj
         TxtOstatnieLogowanie   = $txtOstatnieLogowanie
         TxtKomputerUzytkownika = $txtKomputerUzytkownika

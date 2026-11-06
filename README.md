@@ -14,7 +14,7 @@ AD i konsolę SCCM, kolor werdyktu od razu mówi, czy wszystko jest w porządku.
 
 - **Konto użytkownika** — werdykt (aktywne, zablokowane, wyłączone), daty hasła i konta,
   dokładna data ostatniego logowania zebrana ze wszystkich kontrolerów domeny, telefon,
-  e-mail, przełożony i katalog w AD.
+  e-mail, przełożony, firma, dział, stanowisko, adres i katalog w AD.
 - **Wyszukiwanie** po loginie, imieniu i nazwisku (w dowolnej kolejności), adresie e-mail
   i numerze telefonu w dowolnym zapisie.
 - **Ostatnio używany komputer** z inwentaryzacji SCCM (ze stanem sesji), adresem IP i MAC,
@@ -369,6 +369,9 @@ celowych: przy podwójnym kliknięciu natywne zaznaczenie Windows jest tylko kot
 a zaznaczenia przeciągniętego przez kilka słów nie ruszamy. Przyciski „Połącz” i „Dyski”
 znikają przy stanie przejściowym, bo drogą powrotu jest „Pinguj”. Wybór grupy zapamiętuje się
 dopiero **po** przepisaniu pola nazwą z AD, bo `TextChanged` zeruje go przy każdej zmianie tekstu.
+Adres przychodzi z logiki w trzech częściach (ulica, kod pocztowy, miasto) i dopiero widok
+skleja go w jedną linię. Pole „Ulica” bywa w AD wielolinijkowe, a pole w oknie ma jedną linię,
+więc każde złamanie linii staje się przecinkiem.
 
 #### Jezyk-4-Okno.ps1
 
